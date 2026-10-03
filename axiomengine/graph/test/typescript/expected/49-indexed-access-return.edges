@@ -1,0 +1,6 @@
+known_edge	FUNCTION_CALL	main#use() @L20 -> main#getDog()
+known_edge	FUNCTION_CALL	main#use() @L21 -> main#getDogPlain()
+known_edge	FUNCTION_CALL	main#useGeneric() @L25 -> main#pick(T)
+known_edge	METHOD_CALL	main#use() @L20 -> Dog#fetch()
+known_edge	METHOD_CALL	main#use() @L21 -> Dog#fetch()
+known_edge	METHOD_CALL	main#useGeneric() @L25 -> Cat#purr()

@@ -1,0 +1,825 @@
+// ============================================================================
+// CALL-EDGE-GEN · CALL CHAIN  (the four tiers, and conservation)
+//
+// One classified row per (site, target), plus one row for every site that resolved to
+// nothing, so the CSV alone shows where each chain ends and WHY.
+//
+//   call_chain_edge(Site, Caller, ToExpr, Callee, Prov, EdgeStatus, Kind)
+//
+// FOUR TIERS, ALWAYS:
+//   known_edge        exactly ONE resolved client target. The chain continues.
+//   multi_inferred    2+ targets that form a SOUND dispatch set — the true target is
+//                     among them. Every rule that can produce this states its argument:
+//                       * self-dispatch over CONSTRUCTED subclasses (a language
+//                         guarantee plus RTA — resolution/dispatch.dl)
+//                       * a multi-write attribute's write union (resolution/field-flow.dl)
+//                       * two incomparable MRO definers, where C3's tie-break would
+//                         choose one and this engine declines to (resolution/mro.dl)
+//                     Nothing else is allowed to widen a site. Fanning to every
+//                     same-named method because a receiver is untyped is
+//                     over-approximation dressed as recall, and it is not done here.
+//   boundary_lib      the callee is outside the analysed code and is NAMED: a library
+//                     method reached by import path, or a catalogued CPython builtin.
+//   ambiguous_unknown a real site with no resolvable target. A DECLARED blind spot,
+//                     carrying a reason string. Never dropped.
+//
+// CONSERVATION IS THE HARD CONSTRAINT. The universe is py_call_site UNION py_decorator:
+// a decorator application IS a call site — `@deco` invokes `deco(fn)`, and CPython emits
+// a CALL for it — the parser just records it in a different relation. Counting only
+// call sites made CPython see 15 sites in 02-methods against the IR's 12, and 30
+// against 21 in 07-decorators; the shortfall was exactly the decorator rows. So both
+// are enumerated here, every one appears in the output, and test/python's coverage
+// guard asserts the count is exact.
+// ============================================================================
+
+// ── invocation_site — DECORATOR APPLICATIONS ─────────────────────────────────
+//
+// A PARENTHESISED DECORATOR IS TWO CALLS, NOT ONE, and CPython's own compiler says so:
+//
+//     @route("go")            ->  CALL route("go")            builds the decorator
+//     def handler(): ...          CALL <that result>(handler)  applies it
+//
+// The first is written in the source and the parser records it as an ordinary
+// py_call_site with callKind=DECORATOR_CALL. The second is written NOWHERE — the `@`
+// syntax is the only trace of it — and the parser records it as the py_decorator row.
+// MEASURED: treating them as one site left case 07-decorators at 26 of 30 accounted,
+// with the four shortfalls being exactly the three @functools.wraps(fn) and the one
+// @route("go"); CPython reports each as `<call-result> (via CALL_RESULT)`.
+//
+// A BARE decorator (`@staticmethod`, `@passthrough`) is ONE call: the application. There
+// is no factory call, so there is no py_call_site, and the decorator row is the site.
+//
+// (a) the APPLICATION of a parenthesised decorator — keyed on the DECORATOR hash, since
+//     the expression hash already belongs to the factory call.
+invocation_site(d, "DECORATOR_APPLICATION") :-
+    annotation_on("client", _, _, _, _, d),
+    decorator_expr("client", e, d), call_of_expr(e, _).
+// (b) a decorator with no factory call — the application IS the whole site.
+invocation_site(e, cat("DECORATOR_", kind)) :-
+    annotation_on("client", _, kind, _, _, d),
+    decorator_expr("client", e, d),
+    !call_of_expr(e, _).
+invocation_site(d, cat("DECORATOR_", kind)) :-
+    annotation_on("client", _, kind, _, _, d),
+    !decorator_expr("client", _, d).
+
+// ── decorator_site_from(SiteKey, CallerMethodHash) ───────────────────────────
+// A decorator runs at DEFINITION time, in the scope that contains the `def`/`class` —
+// so the caller is the enclosing method: <module> for a module-level def, <classbody>
+// for a method. Both are synthetic owners the parser mints (schema §4.2), which is why
+// there is never an empty caller to fall back from.
+decorator_site_from(e, caller) :-
+    annotation_on("client", _, _, _, _, d), decorator_expr("client", e, d),
+    decorator_target("client", _, m, d), m != "",
+    method_enclosing_member("client", caller, m).
+decorator_site_from(e, caller) :-
+    annotation_on("client", _, _, "METHOD_DECLARATION", _, d), decorator_expr("client", e, d),
+    decorator_target("client", _, m, d), m != "",
+    method_owner("client", t, m), type_scope("client", _, caller, t).
+decorator_site_from(e, caller) :-
+    annotation_on("client", _, _, _, _, d), decorator_expr("client", e, d),
+    decorator_target("client", _, m, d), m != "",
+    method_top_level("client", mod, m), module_init("client", caller, _, mod).
+decorator_site_from(e, caller) :-
+    annotation_on("client", _, _, "TYPE_DECLARATION", _, d), decorator_expr("client", e, d),
+    decorator_target("client", t, "", d), t != "",
+    type_module("client", mod, t), module_init("client", caller, _, mod).
+// The DECORATOR-HASH-keyed variants. These serve both the application site of a
+// parenthesised decorator (a) and a decorator with no expression node at all.
+decorator_site_from(d, caller) :-
+    annotation_on("client", _, _, _, _, d),
+    decorator_target("client", _, m, d), m != "",
+    method_enclosing_member("client", caller, m).
+decorator_site_from(d, caller) :-
+    annotation_on("client", _, _, "METHOD_DECLARATION", _, d),
+    decorator_target("client", _, m, d), m != "",
+    method_owner("client", t, m), type_scope("client", _, caller, t).
+decorator_site_from(d, caller) :-
+    annotation_on("client", _, _, _, _, d),
+    decorator_target("client", _, m, d), m != "",
+    method_top_level("client", mod, m), module_init("client", caller, _, mod).
+decorator_site_from(d, caller) :-
+    annotation_on("client", _, _, "TYPE_DECLARATION", _, d),
+    decorator_target("client", t, "", d), t != "",
+    type_module("client", mod, t), module_init("client", caller, _, mod).
+
+// ── decorator_resolves_to(SiteKey, MethodHash) ───────────────────────────────
+// A BARE decorator names a callable directly. `@audit("child")` is different: it has
+// its own DECORATOR_CALL py_call_site, resolved by the ordinary machinery, and this
+// rule deliberately does not duplicate it.
+decorator_resolves_to(e, m) :-
+    annotation_on("client", _, "BARE", _, _, d), decorator_expr("client", e, d),
+    expr_names_method("client", e, m).
+decorator_resolves_to(e, m) :-
+    annotation_on("client", _, "ATTRIBUTE", _, _, d), decorator_expr("client", e, d),
+    expr_attr_names_method("client", e, m).
+
+// ── THE APPLICATION OF A PARAMETERISED DECORATOR ─────────────────────────────
+// `@audit("child")` calls audit("child"), which RETURNS `middle`, and it is `middle`
+// that is then applied to the decorated function. So the application's target is the
+// factory's RETURN VALUE — real return flow, not a name match.
+//
+// Sound because the multiplicity is preserved: a factory with two `return` statements
+// naming two different defs yields two rows, and the site becomes multi_inferred. A
+// factory whose return the engine cannot type (a LIBRARY factory such as
+// functools.wraps) yields NO row, and the site is ambiguous_unknown with a reason —
+// which is the honest answer, since the object applied is library-internal.
+decorator_resolves_to(d, r) :- deco_applied(d, r), decorator_expr("client", e, d), call_of_expr(e, _).
+
+// ── method_return_value_expr / method_returns_method ─────────────────────────
+// A function that returns a bare name denoting a `def`. This is what a parameterised
+// decorator IS, and Python's first-class functions make it an ordinary idiom rather
+// than a special case — Java has no analogue to port.
+//
+// THE RETURNED EXPRESSION, NOT EVERY EXPRESSION INSIDE IT. rootContext is stamped on the
+// whole tree under a `return`, so without the root test `return self.compile(self.where)`
+// also "returned" `self` and `self.where`, and `return factory(name)(self, conn)` returned
+// its receiver and both arguments. Each consumer (call_returns_type (c2), return-of-
+// parameter, the property getter's type, element and builtin types) then typed the call by
+// its sub-expressions: `compiler = q.get_compiler(conn)` came out a Query, a Connection
+// and an Operations, and `compiler.execute()` was member_absent_from_type -- a wrong type,
+// not a missing one. The carriers that look inside a value (ternary, `or`, a tuple, a
+// dict display) have their own rules and start from this root.
+method_return_value_expr(p, m, e) :-
+    expr_root_context(p, "RETURN_VALUE", e),
+    !expr_parent(p, _, _, _, e),
+    expr_ultimate_method(p, e, m).
+method_returns_method(p, m, r) :-
+    method_return_value_expr(p, m, e),
+    expr_names_method(p, e, r).
+// A function returning what ANOTHER function returns: `def defer_text(func): return
+// defer_result(str)(func)` hands back whatever the inner factory produced. Sound for the same
+// reason as the bare-name case -- it is return flow, not a name match.
+method_returns_method("client", m, r) :-
+    method_return_value_expr("client", m, e),
+    call_of_expr(e, site),
+    expr_call_candidate(site, g),
+    method_returns_method("client", g, r).
+
+// ── decorator_hits_lib(SiteKey, LibMethodHash) ───────────────────────────────
+// `@abstractmethod` names `abc.abstractmethod`, which HAS Python source and is in the
+// staged stdlib IR — it is a library boundary, not a blind spot. A BARE decorator has no
+// py_call_site, so the ordinary library-linking path (which keys on call sites) never sees
+// it; this is the decorator-shaped half of the same mechanism. Measured: 5 of the
+// two-service project's last 16 declared unknowns were @abstractmethod applications.
+decorator_hits_lib(e, m) :-
+    annotation_on("client", _, _, _, _, d), decorator_expr("client", e, d),
+    !decorator_resolves_to(e, _),
+    expr_names_lib_function(e, m).
+
+// ── decorator_hits_builtin(SiteKey, TargetLabel) ─────────────────────────────
+// `@staticmethod` / `@classmethod` / `@property` are BUILTIN types, applied as
+// decorators. Known exactly, C-implemented, no Python source: boundary_lib, exactly as
+// for any other builtin call.
+decorator_hits_builtin(e, label) :-
+    annotation_on("client", n, _, _, _, d), decorator_expr("client", e, d),
+    !decorator_resolves_to(e, _),
+    builtin_target(n, label).
+// DELIBERATELY NOT: "any decorator with a known builtinKind is a builtin boundary".
+// @functools.wraps has builtinKind=WRAPS and IS a real library function with Python
+// source, which the library IR resolves — so that clause emitted BOTH a lib edge and a
+// spurious `builtin:wraps` for the same site. Only the catalogued C-level callables
+// (the clause above) are builtin boundaries.
+
+// ============================================================================
+// CALLER
+// ============================================================================
+
+// ============================================================================
+// PROPERTY READS — an EDGE that is not a SITE
+//
+// `print(w.doubled)` invokes the @property getter, and CPython's own compiler emits no
+// CALL for it: the descriptor protocol runs inside LOAD_ATTR. So there is no
+// py_call_site, no bytecode CALL, and nothing to conserve — but there IS a real
+// method->method edge, and 02-methods expects it (main -> Widget.doubled).
+//
+// It is therefore added to the exported graph and NOT to invocation_site. That keeps the
+// conservation denominator equal to CPython's own on both sides: adding it as a "site"
+// would invent a site the compiler never emitted, which normalisation Rule 10 exists to
+// prevent.
+// ============================================================================
+
+// ── with_protocol_edge(ContextExprHash, CallerMethodHash, MethodHash) ────────
+// `with cm:` CALLS __enter__ on entry and __exit__ on exit. Neither has a written call
+// site, exactly as a property read has none, so they are emitted on the same channel with
+// their own kind rather than being silently absent.
+//
+// Found by the fixture for #128 rather than by reading the source: family 27 scored 3 of 7
+// because the two dunder links the runtime executed had no edge, and marking them an
+// expected miss would have hidden a real gap in the same protocol the change is about.
+//
+// Keyed on the WITH_CONTEXT root and NOT on with_pair, so `with lock:` with no `as` clause
+// is covered too -- 1,059 context expressions against 176 targets, and the protocol runs
+// either way.
+// `async with c` RUNS A DIFFERENT PAIR — c.__aenter__ and c.__aexit__ — and until
+// parser#153 the IR could not say which statement a context expression came from: `with`
+// and `async with` produced byte-identical rows. It now carries ASYNC_WITH_CONTEXT, so the
+// slot is read off the root rather than assumed, and both dunders of both protocols are
+// listed in one place.
+context_manager_slot_of("WITH_CONTEXT", "__enter__").
+context_manager_slot_of("WITH_CONTEXT", "__exit__").
+context_manager_slot_of("ASYNC_WITH_CONTEXT", "__aenter__").
+context_manager_slot_of("ASYNC_WITH_CONTEXT", "__aexit__").
+
+with_protocol_edge(cm, caller, m) :-
+    context_manager_slot_of(rc, d),
+    expr_root_context("client", rc, cm), !expr_has_parent("client", cm),
+    expr_type("client", cm, ct),
+    mro_lookup("client", ct, d, m),
+    expr_ultimate_method("client", cm, caller).
+
+// ── ITERATION PROTOCOL — `for x in obj` calls obj.__iter__ ───────────────────
+// The third edge-that-is-not-a-site, on the same channel and for the same reason as a
+// property read and a context manager: CPython compiles `for` to GET_ITER / FOR_ITER,
+// not to a CALL, so there is no py_call_site and nothing to conserve — but
+// `type(obj).__iter__(obj)` runs, and it is a real method->method edge. 181 classes in
+// the measured corpus define __iter__ and not one of those edges existed.
+//
+// THE ASYNC PROBLEM, AND WHY THE GATE IS SOUND RATHER THAN A GUESS.
+// `async for` calls __aiter__, not __iter__, and the IR CANNOT TELL THE TWO APART: the
+// parser emits rootContext=FOR_ITERABLE for both (verified — an `async for` and a `for`
+// produce byte-identical rows but for the line). Emitting __iter__ for every
+// FOR_ITERABLE would therefore fabricate an edge on every `async for`. Filed against the
+// parser; until it distinguishes them, the TYPE decides, and it decides soundly:
+//
+//   a type with no __aiter__ CANNOT appear in `async for` — it is a TypeError — so every
+//   FOR_ITERABLE over it is a sync `for`, and __iter__ is the target.
+//   a type with no __iter__ cannot appear in a plain `for`, so the mirror holds.
+//
+// Measured over the five corpora: 181 classes define only __iter__, 18 only __aiter__,
+// and 3 define BOTH (a streaming response and two query sets). The gate answers 199 of
+// 202 and DECLINES on the 3, which is the honest outcome for a distinction the IR does
+// not carry.
+//
+// __next__ IS DELIBERATELY NOT EMITTED. `for` calls __next__ on whatever __iter__
+// RETURNED, which is a different object — commonly a generator, sometimes self, and the
+// engine cannot tell which without following the return. Emitting __next__ on the
+// container's own type would be right for a self-iterating class and wrong for every
+// class that returns a separate iterator, so it is left out rather than guessed.
+iteration_protocol_sync("__iter__").
+iteration_protocol_async("__aiter__").
+iteration_protocol_of("FOR_ITERABLE", "__iter__").
+iteration_protocol_of("ASYNC_FOR_ITERABLE", "__aiter__").
+
+type_defines_iter(t)  :- iteration_protocol_sync(d),  mro_lookup("client", t, d, _).
+type_defines_aiter(t) :- iteration_protocol_async(d), mro_lookup("client", t, d, _).
+
+// THE HEURISTIC ABOVE IS NOW THE COMPREHENSION'S ONLY, and that is the point of this
+// split. A `for` STATEMENT no longer needs the type to decide: parser#153 gives its
+// iterable ASYNC_FOR_ITERABLE, so the protocol is read rather than inferred, and the three
+// corpus classes defining BOTH __iter__ and __aiter__ — which the gate declined on — are
+// answered exactly. A COMPREHENSION still needs it: the comprehension node's kind does
+// carry ASYNC_LIST and friends, but one comprehension may hold an `async for` clause and a
+// plain `for` clause together, so the kind cannot say which of its iterables is which and
+// reading it would fabricate __aiter__ on the sync half.
+iter_protocol_target(t, m) :-
+    iteration_protocol_sync(d), mro_lookup("client", t, d, m), !type_defines_aiter(t).
+iter_protocol_target(t, m) :-
+    iteration_protocol_async(d), mro_lookup("client", t, d, m), !type_defines_iter(t).
+
+// A `for` statement's iterable is a depth-0 root, exactly as WITH_CONTEXT is.
+iter_protocol_edge(src, caller, m) :-
+    iteration_protocol_of(rc, d),
+    expr_root_context("client", rc, src), !expr_has_parent("client", src),
+    expr_type("client", src, t), mro_lookup("client", t, d, m),
+    expr_ultimate_method("client", src, caller).
+// A comprehension's iterable is PARENTED under the comprehension instead, so it needs
+// its own clause — the same split iter_pair already makes.
+//
+// AND A SYNC COMPREHENSION RUNS THE SYNC PROTOCOL, FULL STOP (issue #395). The type-based
+// gate above exists because the IR could not say which statement it was looking at; for a
+// comprehension it still cannot say which CLAUSE, since one comprehension may hold an
+// `async for` and a plain `for` together. But comprehensionKind is ASYNC whenever ANY
+// clause is, so its negative direction is exact: a LIST/SET/DICT/GENERATOR comprehension
+// contains no `async for` and nothing in it can call __aiter__.
+//
+// MEASURED, because the heuristic was emitting those edges as CERTAIN rather than wide —
+// the tier counts per protocol slot and each dunder had one target, so a union holding a
+// sync-only and an async-only iterable produced a known_edge to __aiter__ from a list
+// comprehension. 873 such edges over 296 sites on five open-source projects, 867 of them
+// on a held-out one, every one provably unexecutable. 6,586 of 6,622 comprehension
+// iterables in that corpus are in a sync comprehension, so this is the ordinary case and
+// not a corner.
+comprehension_kind_async("ASYNC_LIST").
+comprehension_kind_async("ASYNC_SET").
+comprehension_kind_async("ASYNC_DICT").
+comprehension_kind_async("ASYNC_GENERATOR").
+
+iter_protocol_edge(src, caller, m) :-
+    expr_parent("client", c, "COMPREHENSION_ITERABLE", _, src),
+    expr_comprehension_kind("client", k, c), !comprehension_kind_async(k),
+    expr_type("client", src, t),
+    iteration_protocol_sync(d), mro_lookup("client", t, d, m),
+    expr_ultimate_method("client", src, caller).
+// An ASYNC comprehension keeps the type-based gate: it may hold a plain `for` clause too,
+// so which of its iterables runs which protocol is genuinely not written down, and
+// declining to choose is the honest outcome rather than a guess in either direction.
+iter_protocol_edge(src, caller, m) :-
+    expr_parent("client", c, "COMPREHENSION_ITERABLE", _, src),
+    expr_comprehension_kind("client", k, c), comprehension_kind_async(k),
+    expr_type("client", src, t), iter_protocol_target(t, m),
+    expr_ultimate_method("client", src, caller).
+
+// ── property_read_edge(ReadExprHash, CallerMethodHash, GetterMethodHash) ─────
+property_read_edge(e, caller, getter) :-
+    expr_node("client", "ATTRIBUTE_ACCESS", _, n, e),
+    expr_name_context("client", "LOAD", e),
+    !call_receiver_of(e),
+    expr_parent("client", e, "ATTRIBUTE_OBJECT", _, obj),
+    expr_type("client", obj, t),
+    type_property_getter("client", t, n, getter),
+    expr_ultimate_method("client", e, caller).
+// A DATA DESCRIPTOR read is the same hidden call and gets the same visible edge (#326).
+// Without it the graph would type the result while never recording that `__get__` ran,
+// which is the one outcome the PROPERTY_READ edge exists to prevent.
+property_read_edge(e, caller, getter) :-
+    expr_node("client", "ATTRIBUTE_ACCESS", _, n, e),
+    expr_name_context("client", "LOAD", e),
+    !call_receiver_of(e),
+    expr_parent("client", e, "ATTRIBUTE_OBJECT", _, obj),
+    expr_type("client", obj, t),
+    type_descriptor_getter("client", t, n, getter),
+    expr_ultimate_method("client", e, caller).
+// ── THE LIB HALF, alongside the client one ───────────────────────────────────
+// A property read on a LIBRARY object: `Config("x").tag` invokes tag's getter, which
+// lives in the staged library. type_property_getter is ALREADY prov-parametric
+// (attribute-lookup.dl: mro_lookup(p,t,n,m) + method_kind(p,"PROPERTY_GETTER",_,m)),
+// and py_method / py_type_base are both LIB_SIG -- so the facts were there and only
+// this consumer pinned them out. The expression stays client (it is written in client
+// source); only the TYPE and the getter are library-side, which is the same split Java
+// uses. No new lookup path: the getter is found by the same MRO walk as the client case.
+property_read_edge(e, caller, getter) :-
+    expr_node("client", "ATTRIBUTE_ACCESS", _, n, e),
+    expr_name_context("client", "LOAD", e),
+    !call_receiver_of(e),
+    expr_parent("client", e, "ATTRIBUTE_OBJECT", _, obj),
+    expr_lib_type(obj, t),
+    type_property_getter("lib", t, n, getter),
+    expr_ultimate_method("client", e, caller).
+
+// ── A PROPERTY READ ON A CLASS OBJECT GOES THROUGH THE METACLASS ─────────────
+// `Model.model_fields` and `cls.model_fields` inside a classmethod: the object is the
+// CLASS, and a property defined on the class itself is not invoked by reading it on the
+// class (that yields the property object). A property defined on the class's METACLASS
+// is: the class is an instance of its metaclass, and the descriptor protocol runs the
+// metaclass's getter. A framework that keeps its model introspection on the metaclass
+// is read this way everywhere, and every one of those getters had zero callers (#704).
+// The object is typed by expr_type_class_object, never by expr_type, so the three
+// clauses above cannot fire for it and this one cannot double-count.
+property_read_edge(e, caller, getter) :-
+    expr_node("client", "ATTRIBUTE_ACCESS", _, n, e),
+    expr_name_context("client", "LOAD", e),
+    !call_receiver_of(e),
+    expr_parent("client", e, "ATTRIBUTE_OBJECT", _, obj),
+    expr_type_class_object("client", obj, t),
+    metaclass_of("client", t, mcls),
+    type_property_getter("client", mcls, n, getter),
+    expr_ultimate_method("client", e, caller).
+
+// An ATTRIBUTE_ACCESS that IS a call's callee is not a property read — it is the call.
+call_receiver_of(e) :- call_callee_expr(_, e).
+
+// ── site_caller(SiteKey, CallerMethodHash) ───────────────────────────────────
+// NEVER "". A module-level call belongs to the synthetic <module> MODULE_INITIALIZER
+// and a class-body call to <classbody>, so Java's enclosing-type fallback has no
+// analogue — and if that ever stopped being true, the conservation guard would say so
+// on the next run rather than at some later date.
+site_caller(site, caller) :- call_from(site, caller).
+site_caller(site, caller) :- decorator_site_from(site, caller).
+
+// ============================================================================
+// PER-SITE TARGET COUNT AND TIER
+// ============================================================================
+
+// ── site_client_target(SiteKey, MethodHash) ──────────────────────────────────
+site_client_target(site, m) :- client_calls_client("client", site, "client", m).
+site_client_target(site, m) :- decorator_resolves_to(site, m).
+
+// ── site_client_target_count(SiteKey, N) ─────────────────────────────────────
+// Aggregate in its own stratum; no negation inside the resolution fixpoint.
+site_client_target_count(site, n) :-
+    invocation_site(site, _),
+    n = count : { site_client_target(site, _) }.
+
+// ── site_has_boundary(SiteKey) ───────────────────────────────────────────────
+site_has_boundary(site) :- client_calls_lib("client", site, "lib", _).
+site_has_boundary(site) :- client_calls_builtin("client", site, _).
+site_has_boundary(site) :- client_calls_external(site, _).
+site_has_boundary(site) :- decorator_hits_builtin(site, _).
+site_has_boundary(site) :- decorator_hits_lib(site, _).
+
+// ── site_class(SiteKey, EdgeStatus) ──────────────────────────────────────────
+// EXACTLY ONE tier per (site, target-class). The four rules are mutually exclusive by
+// construction: the count partitions known/multi, and the zero case is split by whether
+// a NAMED boundary target exists.
+site_class(site, "known_edge")     :- site_client_target_count(site, 1).
+site_class(site, "multi_inferred") :- site_client_target_count(site, n), n >= 2.
+site_class(site, "boundary_lib")   :- site_client_target_count(site, 0), site_has_boundary(site).
+site_class(site, "ambiguous_unknown") :-
+    site_client_target_count(site, 0), !site_has_boundary(site).
+
+// A site can have BOTH client and boundary targets (a dispatch set spanning a client
+// override and a library base). The client tier governs the client rows; the boundary
+// rows are always labelled boundary_lib, below.
+
+// ── site_reason(SiteKey, Reason) ─────────────────────────────────────────────
+// WHY a site is unresolved. This is the difference between a report and a shrug, and it
+// is what makes an ambiguous_unknown auditable rather than a dumping ground.
+site_reason(site, r) :- call_unresolvable(site, r), site_class(site, "ambiguous_unknown").
+site_reason(site, "unmodelled_decorator") :-
+    site_class(site, "ambiguous_unknown"),
+    annotation_on("client", _, _, _, _, d), decorator_expr("client", site, d).
+// The APPLICATION of a parenthesised decorator whose factory return the engine cannot
+// type — a library factory such as functools.wraps. Named, not shrugged at.
+site_reason(site, "decorator_factory_result_untyped") :-
+    site_class(site, "ambiguous_unknown"),
+    invocation_site(site, "DECORATOR_APPLICATION").
+site_reason(site, "unmodelled_decorator") :-
+    site_class(site, "ambiguous_unknown"),
+    annotation_on("client", _, _, _, _, site), !decorator_expr("client", _, site),
+    !invocation_site(site, "DECORATOR_APPLICATION").
+// ── A SITE RESOLVED THROUGH AN AMBIGUOUS MODULE NAME (#89) ──────────────────
+// The set is SOUND — one of the same-named modules really is the target — but its width
+// comes from a NAME COLLISION and not from dispatch, and multi_inferred's three declared
+// sources (README decision 3) do not include it. Recorded per site so the condition is
+// countable and a consumer can tell the two apart; the edges are left in place, because
+// refusing a set that does contain the answer would trade a wrong label for a lost one.
+//
+// ITS OWN EXPORT, NOT site_reason. site_reason answers "why is this site unresolved" and
+// is derived only for ambiguous_unknown sites; these sites ARE resolved. Putting the
+// condition there would either be dropped on the floor or quietly redefine what a reason
+// means. It goes out beside the other assumption relations instead, which is the right
+// shelf: something the answer depends on that the analysis cannot itself verify.
+call_resolved_through_ambiguous_module(site) :-
+    call_callee_expr(site, e),
+    expr_binding("client", b, _, e),
+    binding_lookup("client", b, b2),
+    binding_through_ambiguous_module("client", b2).
+
+site_reason(site, "no_rule") :-
+    site_class(site, "ambiguous_unknown"), !call_unresolvable(site, _),
+    !site_is_decorator(site).
+site_is_decorator(site) :- annotation_on("client", _, _, _, _, d), decorator_expr("client", site, d).
+site_is_decorator(site) :- annotation_on("client", _, _, _, _, site).
+
+// ============================================================================
+// THE EXPORT — one self-describing row per edge
+// ============================================================================
+//   Site        the call site (py_call_site expression hash, or a decorator's)
+//   Caller      the enclosing method — never blank
+//   ToExpr      "-" (a method callee has no call-site expression; reserved)
+//   Callee      the resolved target, or a builtin: label, or "-"
+//   Prov        "client" | "lib" | "builtin" | "-"
+//   EdgeStatus  known_edge | multi_inferred | boundary_lib | ambiguous_unknown
+//   Kind        the schema's callKind, or DECORATOR_<kind>
+
+// resolved client -> client
+call_chain_edge(site, caller, "-", callee, "client", cls, kind) :-
+    site_client_target(site, callee),
+    site_caller(site, caller),
+    site_class(site, cls), cls != "boundary_lib", cls != "ambiguous_unknown",
+    invocation_site(site, kind).
+
+// client -> library (named by import path; not expanded)
+call_chain_edge(site, caller, "-", callee, "lib", "boundary_lib", kind) :-
+    client_calls_lib("client", site, "lib", callee),
+    site_caller(site, caller), invocation_site(site, kind).
+
+// client -> EXTERNAL (named by the written import path; outside every staged IR)
+call_chain_edge(site, caller, "-", label, "external", "boundary_lib", kind) :-
+    client_calls_external(site, label),
+    site_caller(site, caller), invocation_site(site, kind).
+
+// client -> CPython builtin (named, C-implemented, no Python source anywhere)
+call_chain_edge(site, caller, "-", label, "builtin", "boundary_lib", kind) :-
+    client_calls_builtin("client", site, label),
+    site_caller(site, caller), invocation_site(site, kind).
+call_chain_edge(site, caller, "-", m, "lib", "boundary_lib", kind) :-
+    decorator_hits_lib(site, m),
+    site_caller(site, caller), invocation_site(site, kind).
+call_chain_edge(site, caller, "-", label, "builtin", "boundary_lib", kind) :-
+    decorator_hits_builtin(site, label),
+    site_caller(site, caller), invocation_site(site, kind).
+
+// unresolved — the row is KEPT, with the reason in the callee slot's place taken by "-"
+// and the reason exported separately (call_site_unresolved). Conservation lives here.
+call_chain_edge(site, caller, "-", "-", "-", "ambiguous_unknown", kind) :-
+    site_class(site, "ambiguous_unknown"),
+    site_caller(site, caller), invocation_site(site, kind).
+
+// METACLASS CREATION — `class X(metaclass=M)` invokes M.__new__ / M.__init__ at import
+// time. An edge with no written call site (resolution/type-hierarchy.dl), kind
+// METACLASS_CREATION.
+call_chain_edge(t, caller, "-", m, "client", "known_edge", "METACLASS_CREATION") :-
+    metaclass_of("client", t, mcls),
+    class_creation_caller("client", t, caller),
+    mro_lookup("client", mcls, "__new__", m).
+call_chain_edge(t, caller, "-", m, "client", "known_edge", "METACLASS_CREATION") :-
+    metaclass_of("client", t, mcls),
+    class_creation_caller("client", t, caller),
+    mro_lookup("client", mcls, "__init__", m).
+// ...and `__init_subclass__` of the nearest BASE that defines it: the class statement
+// calls it on the new class with the class itself skipped (type.__new__ invokes
+// `super(cls, cls).__init_subclass__()`), which is exactly the after-anchor MRO walk
+// super() uses, anchored at the new class. No metaclass is needed for this hook; a plain
+// `class Plugin(Base)` runs Base.__init_subclass__ at import time (#704).
+call_chain_edge(t, caller, "-", m, "client", "known_edge", "METACLASS_CREATION") :-
+    type_decl("client", _, _, _, t),
+    class_creation_caller("client", t, caller),
+    mro_lookup_after("client", t, t, "__init_subclass__", m).
+
+// ── A SLOT REBOUND LATER IN THE SAME MODULE DID NOT REBIND IT YET ────────────
+// `Meta.__new__ = staticmethod(_closed)` written at the END of a module closes the
+// hierarchy for anyone who constructs a class AFTERWARDS. Every class statement ABOVE
+// that line already ran, and ran the `__new__` written in the class body.
+//
+// mro_lookup declines a rebound name, correctly and for a use it cannot place: a method
+// defined before the write may still be CALLED after it. A class statement is not that
+// kind of use. It is module-level code, it executes where it is written, and module
+// bodies run top to bottom -- so a class statement on an earlier line than the write
+// provably precedes it, and the class-body definition is what ran.
+//
+// MEASURED on a template engine whose node hierarchy is closed this way: 69 executed
+// class statements, every one of them with NO row of any kind -- not a resolved edge,
+// not an unresolved one -- because of one assignment on the module's last line.
+//
+// THE GATE IS THE ORDER AND NOTHING ELSE, and both halves are tested (case 17):
+//   * the class statement must be TOP-LEVEL in its module (type_nesting_decl "" ""),
+//     because a class nested in a function runs when that function is called, which the
+//     line numbers do not bound;
+//   * every rebinding of that slot must be in the SAME module and on a LATER line. A
+//     write in another module is unordered against this one and keeps the suppression.
+metaclass_creation_slot("__new__").
+metaclass_creation_slot("__init__").
+
+class_stmt_module_level(t, mod, line) :-
+    type_nesting_decl("client", "", "", t),
+    type_module("client", mod, t),
+    type_span("client", _, line, _, t).
+
+// A rebinding that this class statement CANNOT be shown to precede: a different module,
+// or the same module at an earlier line.
+metaclass_rebind_unordered(t, c, n) :-
+    class_stmt_module_level(t, cmod, _),
+    type_attr_rebind_site("client", c, n, wmod, _),
+    wmod != cmod.
+metaclass_rebind_unordered(t, c, n) :-
+    class_stmt_module_level(t, cmod, cline),
+    type_attr_rebind_site("client", c, n, cmod, wline),
+    to_number(wline) < to_number(cline).
+
+call_chain_edge(t, caller, "-", m, "client", "known_edge", "METACLASS_CREATION") :-
+    metaclass_of("client", t, mcls),
+    class_creation_caller("client", t, caller),
+    class_stmt_module_level(t, _, _),
+    metaclass_creation_slot(n),
+    mro_lookup_rebound_body("client", mcls, n, c, m),
+    !metaclass_rebind_unordered(t, c, n).
+
+// ── SUBSCRIPT PROTOCOL — `obj[k]`, `obj[k] = v`, `C[T]` (#930) ──────────────
+// The fourth and fifth edges-without-a-site, on the same channel and for the same
+// reason as a property read: CPython compiles a subscript to BINARY_SUBSCR /
+// STORE_SUBSCR, not to a CALL, so there is no py_call_site and nothing to conserve.
+// `type(obj).__getitem__(obj, k)` runs all the same, and it is a real method->method
+// edge.
+//
+// MEASURED with the Python runtime oracle over two public projects' own test suites,
+// counting only sites that EXECUTED and for which the engine emitted no row at all:
+// __class_getitem__ 17, __getitem__ 5, __setitem__ 2.
+//
+// AN ANNOTATION IS NOT A SUBSCRIPT THAT RUNS, and this is the whole risk in the rule.
+// 532 of 752 subscripts on one of the two projects sit in ANNOTATION context, and under
+// `from __future__ import annotations` every one of them is a string the interpreter
+// never evaluates. Emitting there would fabricate more edges than the rule creates. The
+// gate is positive on both halves rather than trying to read the future import:
+//   * the instance form needs expr_type on the receiver, which an annotation's
+//     class-name operand does not have, and ANNOTATION is excluded explicitly anyway;
+//   * the class form is restricted to BASE_CLASS_LIST, which is evaluated whatever the
+//     future import says. All 17 measured sites are base class lists.
+// Every other context for __class_getitem__ is left out rather than guessed.
+subscript_slot("LOAD", "__getitem__").
+subscript_slot("STORE", "__setitem__").
+// The two root contexts whose subscripts are type syntax, not evaluated expressions.
+subscript_context_unevaluated("ANNOTATION").
+subscript_context_unevaluated("ANNOTATED_ASSIGNMENT").
+// The one context in which a subscript on a CLASS is always evaluated.
+class_subscript_context("BASE_CLASS_LIST").
+
+subscript_protocol_edge(sub, caller, m) :-
+    expr_node("client", "SUBSCRIPT", _, _, sub),
+    expr_name_context("client", nc, sub), subscript_slot(nc, d),
+    expr_root_context("client", rc, sub), !subscript_context_unevaluated(rc),
+    expr_parent("client", sub, "SUBSCRIPT_OBJECT", _, obj),
+    expr_type("client", obj, t),
+    mro_lookup("client", t, d, m),
+    expr_ultimate_method("client", sub, caller).
+
+// `C[T]` where C NAMES A CLASS runs `type(C).__class_getitem__`, which C itself
+// declares; the receiver is the class, not an instance, so it resolves through
+// expr_names_type rather than expr_type. A class that inherits __class_getitem__ from
+// a library `Generic` has no client definition and gets nothing, correctly.
+subscript_protocol_edge(sub, caller, m) :-
+    expr_node("client", "SUBSCRIPT", _, _, sub),
+    expr_root_context("client", rc, sub), class_subscript_context(rc),
+    expr_parent("client", sub, "SUBSCRIPT_OBJECT", _, obj),
+    expr_names_type("client", obj, t),
+    mro_lookup("client", t, "__class_getitem__", m),
+    expr_ultimate_method("client", sub, caller).
+
+// ── THE THREE PROTOCOL EDGES ARE TIERED BY TARGET COUNT, like every other edge ──
+//
+// A property read, a context-manager entry and an iteration all reach their target
+// through expr_type, which WIDENS a declared type over constructed subclasses
+// (resolution/dispatch.dl). So one of these expressions can reach many targets, and all
+// three kinds used to be emitted as `known_edge` unconditionally. That contradicts the
+// vocabulary the README defines and every consumer relies on: known_edge is ONE resolved
+// target, multi_inferred is a sound dispatch SET. A 26-member set labelled known_edge is
+// not imprecision, it is a mislabelled certainty.
+//
+// MEASURED over five open-source projects, targets per site (mean / max):
+//   PROPERTY_READ        1.0-1.8 / 6
+//   CONTEXT_MANAGER      2.0-2.4 / 12
+//   ITERATION_PROTOCOL   1.3-1.5 on three, 6.9 / 14 and 18.7 / 26 on the other two
+// The iteration fan is worst where an iterable base class has many implementors, and it
+// is exactly why it went unnoticed: the three projects the rule was developed against
+// average 1.3-1.5, and the two HELD-OUT ones average 6.9 and 18.7.
+//
+// The SETS are sound — RTA plus declared-type widening, the same argument multi_inferred
+// rests on everywhere else — so nothing is dropped here. Only the label changes, and it
+// changes for all three kinds rather than for the one that exposed it.
+// THE COUNT IS PER PROTOCOL SLOT, NOT PER EXPRESSION, and getting that wrong is a way
+// to invent ambiguity rather than report it. `with cm:` emits BOTH __enter__ and
+// __exit__ against the same context expression: two DIFFERENT dunders, each certain,
+// and counting them together makes every context manager in the corpus look like a
+// two-way dispatch set. Measured while writing this: per-expression counting turned 186
+// of 199 context-manager edges on one project into multi_inferred, and all 42 on
+// another, when the real fan there is one target per slot.
+//
+// The slot is the TARGET'S OWN NAME — a protocol edge always lands on the dunder that
+// names the slot — so two __enter__ candidates count as a fan of two and an
+// __enter__/__exit__ pair counts as one each.
+//
+// PROVENANCE IS NOT PINNED on that name lookup, and it cost an edge to learn why: a
+// property read can resolve to a LIBRARY getter (`lib:tlib.descriptors.Config.tag` in
+// family 04), so `method_decl("client", ...)` matched nothing there and the edge vanished
+// from the graph rather than being re-tiered. A dropped edge is worse than a mislabelled
+// one, and the golden caught it.
+protocol_edge(e, d, caller, m) :- property_read_edge(e, caller, m), method_decl(_, d, _, _, _, m).
+protocol_edge(e, d, caller, m) :- with_protocol_edge(e, caller, m), method_decl(_, d, _, _, _, m).
+protocol_edge(e, d, caller, m) :- iter_protocol_edge(e, caller, m), method_decl(_, d, _, _, _, m).
+protocol_edge(e, d, caller, m) :- subscript_protocol_edge(e, caller, m), method_decl(_, d, _, _, _, m).
+
+// Aggregate in its own stratum, mirroring site_client_target_count above.
+protocol_edge_target_count(e, d, n) :-
+    protocol_edge(e, d, _, _),
+    n = count : { protocol_edge(e, d, _, _) }.
+
+protocol_edge_class(e, d, "known_edge")     :- protocol_edge_target_count(e, d, 1).
+protocol_edge_class(e, d, "multi_inferred") :- protocol_edge_target_count(e, d, n), n >= 2.
+
+// ── THE PROTOCOL ROUTES ARE NOT CAPPED, AND THE WIDTH IS REPORTED (issue #371) ──
+// dispatch_cap bounds a call site by gating expr_resolves_to_method. The three protocol
+// edges do not pass through that relation — they reach the output from expr_type directly
+// — so a property read or an iteration can commit past a bound every written call obeys.
+// REPRODUCED in 40 lines: one receiver widened over 31 constructed subclasses, read twice.
+// `widened.tag()` is refused with dispatch_cap_exceeded and its 31 candidates are reported
+// in dispatch-dropped-by-cap.csv; `widened.meta` emitted all 31 getters as multi_inferred
+// and reported nothing at all.
+//
+// THE ASYMMETRY IS REAL AND EXTENDING THE CAP IS STILL THE WRONG FIX, measured rather
+// than argued. Over five open-source projects, per protocol SLOT (the unit
+// protocol_edge_target_count already uses — `with cm:` emits __enter__ and __exit__
+// against one expression and a shared bound would count that pair as a fan of two):
+//
+//   project    slots > 20   edges in them   widest slot   CALL sites > 20
+//   A (dev)             0               0             2                 0
+//   B (dev)             0               0             4                 0
+//   C (dev)             0               0             5                 0
+//   D (held)           84            1765            22                 0
+//   E (held)          408            9011            24                 0
+//
+// The last column is the whole argument. The cap currently refuses NOTHING on the call
+// route anywhere in this corpus — not one site of 490,130 exceeds it — so "make the
+// routes consistent" would import a bound that is doing no work into the one place where
+// it would do 10,776 edges of damage, all of it on HELD-OUT projects. Those sets are
+// sound by the same RTA-plus-declared-widening argument multi_inferred rests on
+// everywhere else, and nothing measures them as harmful; refusing them would trade
+// measured recall for an unmeasured precision claim.
+//
+// SO THE FIX IS THE OTHER HALF OF THE REPORT: the width becomes a row. A protocol edge is
+// not a call site (README decision 5), so it has no place in call_site_unresolved to carry
+// the fact, and without this export a 24-target read and a 2-target one are
+// indistinguishable downstream. That, not the commitment itself, is what made this
+// invisible. If a later measurement does show wide protocol sets costing precision, this
+// export is the population to measure it on — and the bound it would use is already here.
+protocol_edge_over_cap(e, d) :-
+    protocol_edge_target_count(e, d, n), dispatch_capped_at(cap), n > cap.
+
+// ── protocol_edge_wide(ExprHash, Slot, N) ────────────────────────────────────
+// Exported as protocol-wide-sites.csv, the counterpart to dispatch-dropped-by-cap.csv on
+// the call route: same bound, same visibility, and the difference — that these edges are
+// KEPT — is the decision recorded above rather than an oversight.
+protocol_edge_wide(e, d, n) :-
+    protocol_edge_over_cap(e, d), protocol_edge_target_count(e, d, n).
+
+// PROPERTY READ — an edge with no call site. Kind PROPERTY_READ, so it is filterable
+// and can never be mistaken for a written call.
+call_chain_edge(e, caller, "-", getter, "client", cls, "PROPERTY_READ") :-
+    property_read_edge(e, caller, getter), method_decl(_, d, _, _, _, getter),
+    protocol_edge_class(e, d, cls).
+
+// CONTEXT MANAGER — the same shape: an edge with no call site, its own kind so it can
+// never be mistaken for a written call.
+call_chain_edge(cm, caller, "-", m, "client", cls, "CONTEXT_MANAGER") :-
+    with_protocol_edge(cm, caller, m), method_decl(_, d, _, _, _, m),
+    protocol_edge_class(cm, d, cls).
+
+// ITERATION PROTOCOL — likewise. Own kind, so a consumer can filter it and it can never
+// be counted as a written call.
+call_chain_edge(src, caller, "-", m, "client", cls, "ITERATION_PROTOCOL") :-
+    iter_protocol_edge(src, caller, m), method_decl(_, d, _, _, _, m),
+    protocol_edge_class(src, d, cls).
+
+// SUBSCRIPT PROTOCOL — likewise. Own kind, so a consumer can filter it and it can never
+// be counted as a written call.
+call_chain_edge(sub, caller, "-", m, "client", cls, "SUBSCRIPT_PROTOCOL") :-
+    subscript_protocol_edge(sub, caller, m), method_decl(_, d, _, _, _, m),
+    protocol_edge_class(sub, d, cls).
+
+// A site whose caller could not be determined AT ALL would vanish from every rule
+// above. That must be impossible (the parser guarantees a non-empty owner), so it is
+// asserted rather than assumed: any such site is emitted with caller "-" so the
+// coverage guard sees it and the defect surfaces as a visible row.
+call_chain_edge(site, "-", "-", "-", "-", "ambiguous_unknown", kind) :-
+    invocation_site(site, kind), !site_caller(site, _).
+
+// ── call_site_unresolved(SiteKey, CallerMethodHash, Reason, Kind) ─────────────
+// The declared blind spots, with reasons, as their own export. A blind spot you can
+// name is a work item; one you cannot is a mystery.
+call_site_unresolved(site, caller, r, kind) :-
+    site_class(site, "ambiguous_unknown"), site_caller(site, caller),
+    site_reason(site, r), invocation_site(site, kind).
+
+// ── unresolved_value_callee(SiteKey, Binding) ────────────────────────────────
+// An unresolved call whose callee is a VALUE, not a name: `cb()` on a parameter, `f()`
+// on a loop or comprehension variable, `table[k]()`, `hook()` on what getattr returned,
+// `self.cb()` on a function stored in a field. Nothing about the name narrows what it
+// calls, so a question that finds no chain from its caller must answer "unknown", never
+// "independent" (the same relation, and the same Binding words, as the JavaScript rules).
+// A call on an untyped receiver (`obj.save()`) is not one: its name is the lead the
+// by-name search follows.
+// `cls(...)` in a classmethod constructs the class or a subclass of it, never an arbitrary
+// function, so it is not one.
+value_callee_site(site, c) :-
+    site_class(site, "ambiguous_unknown"), call_callee_is_value(site), call_callee_expr(site, c),
+    !expr_node("client", "CLS_REFERENCE", _, _, c).
+value_callee_binding(site, origin, kind, b2) :-
+    value_callee_site(site, c), expr_binding("client", b, ctx, c), ctx != "STORE",
+    binding_lookup("client", b, b2), binding_decl("client", _, _, kind, origin, b2).
+// what a local was assigned, when that is a getattr call: the attribute is picked by a
+// name the program computes
+value_callee_from_getattr(site) :-
+    value_callee_binding(site, _, _, b2), expr_binding("client", b2, "STORE", tgt),
+    assign_pair("client", tgt, val), call_of_expr(val, g), call_name(g, "getattr").
+value_callee_from_getattr(site) :-
+    value_callee_site(site, c), call_of_expr(c, g), call_name(g, "getattr").
+unresolved_value_callee(site, "getattr") :- value_callee_from_getattr(site).
+unresolved_value_callee(site, "parameter") :-
+    value_callee_binding(site, origin, _, _), (origin = "PARAMETER" ; origin = "LAMBDA_PARAM").
+unresolved_value_callee(site, "loop_variable") :-
+    value_callee_binding(site, origin, _, _), (origin = "FOR_TARGET" ; origin = "COMPREHENSION_TARGET").
+value_callee_names_value(origin) :- binding_decl("client", _, _, _, origin, _),
+    origin != "PARAMETER", origin != "LAMBDA_PARAM", origin != "FOR_TARGET", origin != "COMPREHENSION_TARGET",
+    origin != "FUNCTION_DEF", origin != "CLASS_DEF", origin != "IMPORT", origin != "TYPE_PARAM",
+    origin != "TYPE_ALIAS", origin != "MULTIPLE".
+unresolved_value_callee(site, "local") :-
+    value_callee_binding(site, origin, "LOCAL", _), value_callee_names_value(origin),
+    !value_callee_from_getattr(site).
+unresolved_value_callee(site, "module_variable") :-
+    value_callee_binding(site, origin, kind, _), kind != "LOCAL", value_callee_names_value(origin),
+    !value_callee_from_getattr(site).
+// `table[k]()`: an element of a collection
+unresolved_value_callee(site, "computed") :-
+    value_callee_site(site, c), expr_node("client", "SUBSCRIPT", _, _, c).
+// `make()()`, `(a or b)()`: the callee is what an expression evaluates to
+unresolved_value_callee(site, "expression") :-
+    value_callee_site(site, c), expr_node("client", k, _, _, c),
+    k != "NAME_REFERENCE", k != "SUBSCRIPT", k != "CLS_REFERENCE", k != "ATTRIBUTE_ACCESS",
+    !value_callee_from_getattr(site).
+// `self.cb()` where the class gives `cb` a field and no method: the function stored
+// there is whatever the constructor or a setter was handed
+unresolved_value_callee(site, "field") :-
+    site_class(site, "ambiguous_unknown"), invocation_site(site, "SELF_CALL"),
+    call_name(site, n), call_enclosing_type(site, t),
+    type_defines_field("client", t, n, _), !mro_lookup("client", t, n, _).
+
+// ── method_has_unknown_call(CallerMethodHash, SiteKey) ───────────────────────
+method_has_unknown_call(caller, site) :-
+    site_class(site, "ambiguous_unknown"), site_caller(site, caller).
+
+// ── call_chain_summary(EdgeStatus, N) ────────────────────────────────────────
+// The conservation ledger, as a relation: the tier counts must sum to the site count.
+call_chain_summary(cls, n) :-
+    site_class(_, cls),
+    n = count : { site_class(_, cls) }.
+call_chain_summary("_total_sites", n) :- n = count : { invocation_site(_, _) }, n > 0.

@@ -1,0 +1,24 @@
+# axiomengine
+
+For any why, what or where question about code — how it works, where something lives, who calls it,
+what a change breaks, which tests an edit reaches, whether something is safe to delete — ask the
+repository's call graph FIRST, through the `axiomengine_*` MCP tools:
+
+    axiomengine_context      where the work is, when you have a task in words and no name yet; for "how does X
+                           work", explain=True, source=True (and from_=<where it starts>) returns the call
+                           flow with each step's code
+    axiomengine_impact       what a change reaches: must-change-with-it, users, tests
+    axiomengine_path         how A reaches B, each hop verified
+    axiomengine_changed      which declarations an edit changed, and how
+    axiomengine_test_impact  which tests the edit in front of you has to run
+    axiomengine_index        build the graph, when .axiomengine/out/graph.sqlite is absent
+    axiomengine_graph        draw the graph as one interactive HTML page, for a person
+
+**Trust the answer, and know what it is.** A `[resolved]` / `[sound]` row has already been looked up again
+in the graph (the `verified:` line) — do not re-derive it by grepping. Every answer ends with `next:`, the
+one step to take. For a CHANGE, read only the lines you will cite or change. To EXPLAIN how something
+works, the graph gives the reading order: answer from the flow's code, and read further only where a step's
+body was cut or a `⚠` marks a call the graph lost.
+`[by name]` / `[text]` rows are leads, not facts. An unresolved call means *unknown*, not *absent*.
+
+Text search is still right for a string, a comment, a config value, or a file you already know.

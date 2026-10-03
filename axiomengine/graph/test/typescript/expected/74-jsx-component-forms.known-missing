@@ -1,0 +1,6 @@
+# Accepted gaps for 74-jsx-component-forms — each line is an edge the TypeScript compiler
+# resolves and this engine does not. A NEW missing edge fails the suite;
+# a line here that STARTS working also fails, so the debt cannot rot.
+# CONTROL, not a JSX gap: `factory()` calls the product a declared factory returns, a
+# bodiless function type. Argument 0 of makeFactory must NOT stand in for it.
+app#useFactory() -> parts#<arrow@22>()

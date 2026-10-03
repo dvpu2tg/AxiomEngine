@@ -1,0 +1,32 @@
+{
+ "run_date_utc": "2026-09-24",
+ "bugs": 828,
+ "scored": 828,
+ "repositories": {
+  "anonymous-org/axiom-code-graph (AxiomEngine parser + engine; no release version, pinned by commit)": "ENGINE-COMMIT",
+  "anonymous-org/benchmark-test-impact (private; truth, walk, scorer)": "d9599b49ffe399d0602f5d8fcdf437cd63ae3f07",
+  "anonymous-org/benchmark-test-impact (private; packaging: publish.py only)": "7a8835fe962cc56aacb0d37f1f7c885e7438ab15",
+  "anonymous-org/callgraph-benchmark (private; adapters, resolver; submodule)": "dd3bf981e19d326bdb67c3b6c1f027a0cfeb8a14"
+ },
+ "tools": {
+  "AxiomEngine": "axiom-code-graph @ ENGINE-COMMIT",
+  "code-review-graph": "2.3.8 (callgraph-benchmark java/adapters/code_review_graph/requirements.lock)",
+  "graphify (graphifyy)": "0.9.58 (callgraph-benchmark java/adapters/graphify/requirements.lock)",
+  "codegraph (@colbymchenry/codegraph)": "1.6.0 (callgraph-benchmark java/adapters/codegraph/package-lock.json)",
+  "gitnexus": "1.6.11 (callgraph-benchmark java/adapters/gitnexus/package-lock.json)"
+ },
+ "toolchain": {
+  "java": "openjdk version \"24.0.2\" 2025-07-15",
+  "node": "v25.2.1",
+  "python": "3.12.3",
+  "souffle": "Version: 2.5 (2.5)"
+ },
+ "paths": "Absolute paths inside the archives have the operator's home directory replaced by one of the same length: /home/benchmark-user/ (the VM) and /Users/benchmark-user/ (where the JDK platform IR was built). SQLite databases were rewritten through SQL and VACUUMed, and pass PRAGMA integrity_check; nothing else in any file changed, so the scores cannot move.",
+ "machine": {
+  "cloud": "GCP c3-standard-22",
+  "cpu": "Intel(R) Xeon(R) Platinum 8481C CPU @ 2.70GHz",
+  "vcpu": "22",
+  "os": "Ubuntu 24.04.5 LTS",
+  "parallelism": "runall.py -j 16 (bugs in parallel; each bug runs its tools one after another; every tool warmed once before). isolation-audit.txt lists what was written outside the per-bug directories; sequential-check.json compares two bugs per project run again one at a time"
+ }
+}

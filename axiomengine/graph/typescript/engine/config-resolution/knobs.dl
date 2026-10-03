@@ -1,0 +1,204 @@
+// ============================================================================
+// CONFIG-RESOLUTION · KNOBS  (framework name lists — the only per-ecosystem edit)
+//
+// The counterpart of java/ and python/engine/config-resolution/knobs.dl, in the
+// matching phase and for the same reason: every framework-specific NAME lives here
+// and nowhere else, so adding an ecosystem is a matter of adding facts, and NO RULE
+// MENTIONS A FRAMEWORK BY NAME.
+//
+// ── WHY TYPESCRIPT'S VERSION IS NOT A PORT OF JAVA'S ────────────────────────
+// Java registers a handler with an ANNOTATION, so its knobs are annotation names and
+// `ann_on_method` finds the handler directly. TypeScript's dominant form is a CALL
+// that takes the handler as an ARGUMENT:
+//
+//     app.get('/api/orders/:id', handler)        // Express, Fastify, Hono, Koa
+//     it('does a thing', async () => { … })      // every test runner
+//
+// So the knobs here are CALLEE names, and the handler is reached through
+// `callback_arg` rather than through an attach point. Decorators (Nest, Angular) are
+// the minority form in this ecosystem and are not covered yet: the parser emits
+// decorator rows but nothing projects them, and #233 records that a bare decorator
+// application produces no call site at all.
+// ============================================================================
+
+// ── ts_http_route_verb(Verb) — the method name a route registration is called by ──
+// The set is HTTP's, not any project's — RFC 9110's methods — plus the three
+// verb-agnostic registrations every router in this ecosystem spells the same way:
+// `use` (middleware), `all` (any method), `route` (a path with verbs hung off it).
+// Choosing HTTP's own vocabulary rather than a sampled one is what makes this
+// generalise to a framework it was never written against.
+//
+// THE NAME IS NOWHERE NEAR SUFFICIENT AND IS NEVER MATCHED ALONE.
+// Python's knobs record that `patch` is both an HTTP method and the stdlib's mock
+// entry point, and that `<receiver>.<verb>` alone was wrong for 229 of 253 matches.
+// TypeScript is far worse: `get` and `set` are Map, Set, Headers, URLSearchParams,
+// Reflect, every cache and every accessor pair in the language. `delete` is Map and
+// Set. `head` and `options` are ordinary identifiers.
+//
+// So config-resolution/entry-points.dl additionally requires (a) a STRING ARGUMENT
+// THAT LOOKS LIKE A PATH — it begins with `/` — and (b) a FUNCTION ARGUMENT at the
+// site. `map.get(key)` has neither; `cache.set(k, v)` has no path; `app.get('/x', h)`
+// has both. The verb list can therefore move a declaration from "no entry point" to
+// "entry point" and never silently the other way.
+ts_http_route_verb("get").     ts_http_route_verb("post").    ts_http_route_verb("put").
+ts_http_route_verb("delete").  ts_http_route_verb("patch").   ts_http_route_verb("head").
+ts_http_route_verb("options"). ts_http_route_verb("trace").   ts_http_route_verb("connect").
+// verb-agnostic registrations
+ts_http_route_verb("use").     ts_http_route_verb("all").     ts_http_route_verb("route").
+
+// ── ts_test_registrar(Name) — a function the TEST RUNNER invokes ────────────
+// A test body is not dead code: the runner calls it, and on a library it is the only
+// thing in the repository that calls the library at all. Left unmarked, a project's
+// own suite is invisible to reachability — measured on zustand, whose 25 entry
+// modules ARE its test files and whose closure from them reached ONE declaration,
+// because the module body calls `it(cb)` and `cb` was reachable from nothing.
+//
+// These are deliberately the BARE names. A test registrar is called unqualified
+// (`it(...)`, not `runner.it(...)`) in every runner in this ecosystem, and requiring
+// a receiver would match none of them. The names are distinctive enough to stand
+// alone -- but see entry-points.dl, which still requires a FUNCTION ARGUMENT, so a
+// variable named `test` being called is not a test.
+//
+// The KIND these produce is "test", separately from "http", precisely so a consumer
+// asking "is this dead in production?" can exclude them. Reachable-only-from-tests is
+// a real and useful distinction, and collapsing it into one kind would destroy it.
+ts_test_registrar("it").         ts_test_registrar("test").
+ts_test_registrar("describe").   ts_test_registrar("suite").
+ts_test_registrar("beforeEach"). ts_test_registrar("afterEach").
+ts_test_registrar("beforeAll").  ts_test_registrar("afterAll").
+ts_test_registrar("before").     ts_test_registrar("after").
+ts_test_registrar("bench").
+
+// ── ts_route_decorator(Name) — a method decorator that registers a route ────
+// The DECORATOR form of the same fact ts_http_route_verb carries for the call form.
+// Nest spells HTTP's methods capitalised, plus `All` (any verb) and `Sse` (a stream).
+// No path guard is needed or possible here and that is the point: unlike `app.get`,
+// `@Get` cannot collide with Map.get or Headers.get, because a decorator is not a
+// method call on an arbitrary receiver. The name alone is the discriminator.
+.decl ts_route_decorator(c0:symbol)
+ts_route_decorator("Get").     ts_route_decorator("Post").    ts_route_decorator("Put").
+ts_route_decorator("Delete").  ts_route_decorator("Patch").   ts_route_decorator("Head").
+ts_route_decorator("Options"). ts_route_decorator("Search").  ts_route_decorator("All").
+ts_route_decorator("Sse").
+
+// ── ts_framework_class_decorator(Name) — the container OWNS this class ──────
+// A class carrying one of these is constructed by a framework, not by the program:
+// nothing in the repository calls `new OrderService()`, the container does. That is
+// why its constructor is a root and why its dependencies are reachable at all.
+//
+// Nest and Angular are listed together deliberately. They are two DI containers with
+// one shape, and a rule that read them separately would say the same thing twice.
+// `Module` and `NgModule` are included because a module class is itself instantiated
+// and its providers are named in its arguments.
+.decl ts_framework_class_decorator(c0:symbol)
+ts_framework_class_decorator("Injectable").  ts_framework_class_decorator("Controller").
+ts_framework_class_decorator("Component").   ts_framework_class_decorator("Directive").
+ts_framework_class_decorator("Pipe").        ts_framework_class_decorator("NgModule").
+ts_framework_class_decorator("Module").      ts_framework_class_decorator("Catch").
+ts_framework_class_decorator("Resolver").
+
+// ── ts_provider_class_decorator(Name) — the container HANDS this class out ──
+// A narrower set than the one above. A controller or a component is constructed by
+// the container but never injected into anything; a provider is what a constructor
+// parameter receives. Both containers spell it the same way.
+.decl ts_provider_class_decorator(c0:symbol)
+ts_provider_class_decorator("Injectable").
+
+// ── ts_token_param_decorator(Name) — the slot is wired by TOKEN, not by type ──
+// `@Inject(TOKEN) x: Foo` asks the container for whatever TOKEN names, and Foo is
+// only the static type of the result, often an interface. Matching the declared type
+// there would invent a wiring, so a parameter carrying one is not an injection point.
+// The integrations spell their tokens the same way (`@InjectRepository(User)`,
+// `@InjectModel(Cat.name)`, `@InjectQueue('mail')`), so di.dl also treats any
+// `Inject<Upper>…` name as a token decorator rather than listing each package.
+.decl ts_token_param_decorator(c0:symbol)
+ts_token_param_decorator("Inject").
+
+// ── ts_framework_lifecycle_method(Name) — the container CALLS this by name ──
+// A hook is invoked by the framework through an interface it checks for at runtime,
+// so no call site exists anywhere in the repository. The name is the whole contract,
+// which is what makes it safe to match on: these are reserved names, not ordinary
+// ones — `ngOnInit` means one thing and `onModuleInit` means one thing.
+//
+// GUARDED BY THE CLASS DECORATOR, never by the name alone. A method called
+// `onModuleInit` on a plain class is not a lifecycle hook and must not become a root.
+.decl ts_framework_lifecycle_method(c0:symbol)
+ts_framework_lifecycle_method("ngOnInit").             ts_framework_lifecycle_method("ngOnDestroy").
+ts_framework_lifecycle_method("ngOnChanges").          ts_framework_lifecycle_method("ngDoCheck").
+ts_framework_lifecycle_method("ngAfterViewInit").      ts_framework_lifecycle_method("ngAfterViewChecked").
+ts_framework_lifecycle_method("ngAfterContentInit").   ts_framework_lifecycle_method("ngAfterContentChecked").
+ts_framework_lifecycle_method("onModuleInit").         ts_framework_lifecycle_method("onModuleDestroy").
+ts_framework_lifecycle_method("onApplicationBootstrap").
+ts_framework_lifecycle_method("onApplicationShutdown").
+ts_framework_lifecycle_method("beforeApplicationShutdown").
+
+// ============================================================================
+// CROSS-PROCESS DESTINATIONS (framework-behavior/destinations.dl)
+//
+// The names the remote_edge rules key on. As in Java and C#, no rule there names a
+// framework: adding an HTTP client or a route decorator is a fact added here.
+// ============================================================================
+
+// ── the vocabulary of the edge itself ───────────────────────────────────────
+.decl ts_remote_transport_http(c0:symbol)
+ts_remote_transport_http("http").
+.decl ts_remote_confidence_exact(c0:symbol)
+ts_remote_confidence_exact("exact").
+// a placeholder on one end stood in for a literal on the other
+.decl ts_remote_confidence_route_shape(c0:symbol)
+ts_remote_confidence_route_shape("route_shape").
+// the verb that matches every other one: `app.all`, `@All`, a request whose method
+// is computed
+.decl ts_http_verb_any(c0:symbol)
+ts_http_verb_any("ANY").
+
+// ── ts_http_verb_name(Written, Verb) — a verb as a program spells it ─────────
+// A router method is lower case, a `method:` option is either. `all` is any verb.
+// `use` and `route` are deliberately absent: `use` mounts middleware or a router
+// under a PREFIX, which is not a route a client can name.
+.decl ts_http_verb_name(c0:symbol, c1:symbol)
+ts_http_verb_name("get", "GET").         ts_http_verb_name("GET", "GET").
+ts_http_verb_name("post", "POST").       ts_http_verb_name("POST", "POST").
+ts_http_verb_name("put", "PUT").         ts_http_verb_name("PUT", "PUT").
+ts_http_verb_name("delete", "DELETE").   ts_http_verb_name("DELETE", "DELETE").
+ts_http_verb_name("patch", "PATCH").     ts_http_verb_name("PATCH", "PATCH").
+ts_http_verb_name("head", "HEAD").       ts_http_verb_name("HEAD", "HEAD").
+ts_http_verb_name("options", "OPTIONS"). ts_http_verb_name("OPTIONS", "OPTIONS").
+ts_http_verb_name("all", "ANY").
+
+// ── ts_route_decorator_verb(Decorator, Verb) — a Nest method route ──────────
+.decl ts_route_decorator_verb(c0:symbol, c1:symbol)
+ts_route_decorator_verb("Get", "GET").         ts_route_decorator_verb("Post", "POST").
+ts_route_decorator_verb("Put", "PUT").         ts_route_decorator_verb("Delete", "DELETE").
+ts_route_decorator_verb("Patch", "PATCH").     ts_route_decorator_verb("Head", "HEAD").
+ts_route_decorator_verb("Options", "OPTIONS"). ts_route_decorator_verb("All", "ANY").
+
+// ── ts_route_prefix_decorator(Name) — a class decorator whose argument prefixes
+// every route of its methods (`@Controller('orders')`)
+.decl ts_route_prefix_decorator(c0:symbol)
+ts_route_prefix_decorator("Controller").
+
+// ── the client end ──────────────────────────────────────────────────────────
+// ts_http_fetch_function(Name): a function that sends its first argument as a URL,
+// with the verb in the `method` of its second. The platform's `fetch` is an ambient
+// global; the packages that polyfill it export the same function.
+.decl ts_http_fetch_function(c0:symbol)
+ts_http_fetch_function("fetch").
+.decl ts_http_fetch_module(c0:symbol)
+ts_http_fetch_module("node-fetch").   ts_http_fetch_module("cross-fetch").
+ts_http_fetch_module("undici").       ts_http_fetch_module("isomorphic-fetch").
+// ts_http_init_method_key(Key): the option of a request init that names the verb
+.decl ts_http_init_method_key(c0:symbol)
+ts_http_init_method_key("method").
+
+// ts_http_client_module(Specifier): a package whose default or named export is a
+// client called as `<client>.<verb>(url, …)`. Matched on the IMPORT, never on the
+// receiver's spelling: a variable that happens to be called `axios` is not one.
+.decl ts_http_client_module(c0:symbol)
+ts_http_client_module("axios").
+// ts_http_client_factory(Name): `axios.create({ baseURL })` returns a client whose
+// every URL is relative to the base
+.decl ts_http_client_factory(c0:symbol)
+ts_http_client_factory("create").
+.decl ts_http_base_url_key(c0:symbol)
+ts_http_base_url_key("baseURL").

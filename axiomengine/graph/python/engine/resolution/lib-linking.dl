@@ -1,0 +1,525 @@
+// ============================================================================
+// RESOLUTION · LIBRARY LINKING  (name-based, because hashes cannot cross a parse)
+//
+// THE MEASUREMENT THIS FILE IS BUILT ON, and it is the single most important fact about
+// the Python IR: py_call_site.resolvedCalleeHash IS RUN-LOCAL. On linkage-sample, 39 of
+// 49 sites carry one and every one resolves inside that same parse. The 3.10.4 stdlib IR
+// was parsed as a separate run, so its hashes CANNOT match a client run's — not because
+// the staging is wrong (staging the library correctly took the relation count from 13 to
+// 25 and changed nothing), but by construction of the hash.
+//
+// So consuming the parser's pre-resolution buys client->client edges and NOTHING across
+// a library boundary. Cross-module linking must go through NAMES, and the durable names
+// are exactly two:
+//   py_import.importedPath      the client's view of what it imported
+//   qualifiedName               the library's view of what it declares
+// (Library qualifiedNames are plain dotted paths — verified: `typing.overload`,
+// `_aix_support._aix_tag`, `_collections_abc.Hashable`.)
+//
+// THE DISCIPLINE. Name matching is where a resolver gets things quietly wrong, so every
+// rule here is anchored on an IMPORT the client actually wrote. Nothing matches a bare
+// simple name against the library, ever: `from .models import Base` and
+// `from thirdparty import Base` are different edges and only the import statement
+// distinguishes them. A match that is not unique is emitted as a set, never picked from.
+// ============================================================================
+
+// ── lib_module_qname(QualifiedName, LibModuleHash) ───────────────────────────
+lib_module_qname(q, h) :- module_decl("lib", _, q, _, h).
+
+// ── lib_type_qname(QualifiedName, LibTypeHash) ───────────────────────────────
+lib_type_qname(q, h) :- type_decl("lib", _, q, _, h).
+
+// ── lib_function_qname(QualifiedName, LibMethodHash) ─────────────────────────
+// MODULE-LEVEL library functions only. A method's qualifiedName includes its class, so
+// restricting to method_module_level keeps `from x import f` from matching a class
+// method that happens to share the dotted path.
+lib_function_qname(q, h) :- method_top_level("lib", _, h), method_decl("lib", _, _, q, _, h).
+
+// ── client_external_import(ImportHash, ImportedPath, BindingHash) ────────────
+// THE FRONTIER: an import the parser could not resolve inside the repo. Everything in
+// this file starts here, which is what keeps name matching honest — an in-repo import
+// never reaches these rules, so a same-named local class can never be shadowed by a
+// library one.
+client_external_import(i, path, b) :-
+    import_decl("client", _, path, _, i),
+    import_binding("client", b, i),
+    !import_resolved_target("client", _, _, i),
+    !import_resolved_kind("client", _, i).
+
+// ── import_links_lib_function(BindingHash, LibMethodHash) ────────────────────
+// `from typing import overload` -> importedPath "typing.overload" -> the library's
+// module-level `overload`.
+// GATED ON THE DECORATOR REPLACEMENT, exactly as the client path is. A `def` whose
+// decorator replaces it is NOT what its name means, and resolution/decorators.dl
+// derives method_target_replaced for EITHER provenance — but the client route enforces
+// it inside binding_binds_method (name-resolution.dl) while these lib routes reach the
+// method directly and skipped the check.
+// MEASURED on test/python/torture: `wrapped_fn` is `@tagged`-decorated in the library,
+// so the name denotes tagged's `inner`; ungated, the call resolved to the raw `def
+// wrapped_fn` — a CONFIDENT WRONG EDGE, and the only one in the whole suite. Gated, the
+// site becomes a declared unknown, which is the honest answer: knowing what `tagged`
+// returns needs the library's BODY, and lib_py_expression is staged empty by design.
+import_links_lib_function(b, m) :-
+    client_external_import(_, path, b), lib_function_qname(path, m),
+    !method_target_replaced("lib", m).
+
+// ── import_links_lib_type(BindingHash, LibTypeHash) ──────────────────────────
+import_links_lib_type(b, t) :- client_external_import(_, path, b), lib_type_qname(path, t).
+
+// ── THE SAME RE-EXPORT PROBLEM, IN THE IMPORT PATH ───────────────────────────
+// The qname clauses above assume what Java gets from the language and Python does
+// not: that a declaration's qualifiedName is also its importable name. It is not.
+// `from mylib import L5` writes the path `mylib.L5`; L5's qualifiedName is
+// `mylib.base.L5`, so lib_type_qname misses and the class comes out `external:L5`
+// even though its IR is staged. Attribute form (`mylib.L5`) already works, because
+// that goes through module_member_type — so the SAME import resolved two ways gave
+// two different answers, which is the tell.
+//
+// MEASURED on the torture corpus (a library and a client parsed separately, linked
+// with --library): 19 of 28 executed call sites came back as an `external:` LABEL
+// naming the right class, with no link to the staged declaration. Both forms now
+// consult the module's member surface, which re-export following already populates.
+// Mixed provenance on purpose: a CLIENT import binding against a LIB module.
+import_links_lib_type(b, t) :-
+    import_binding("client", b, i),
+    import_relative("client", _, pkg, i), pkg != "",
+    import_alias("client", orig, _, i), orig != "",
+    module_decl("lib", _, pkg, _, mod),
+    module_member_type("lib", mod, orig, t).
+import_links_lib_function(b, m) :-
+    import_binding("client", b, i),
+    import_relative("client", _, pkg, i), pkg != "",
+    import_alias("client", orig, _, i), orig != "",
+    module_decl("lib", _, pkg, _, mod),
+    module_member_method("lib", mod, orig, m),
+    !method_target_replaced("lib", m).
+
+// ── import_links_lib_module(BindingHash, LibModuleHash) ──────────────────────
+// `import os` / `from . import models` where the target is a library module. Note
+// py_import's own rule: `import a.b.c` binds only `a`, and importedPath is the full
+// path, so the bound name and the matched path are different columns on purpose.
+import_links_lib_module(b, mod) :- client_external_import(_, path, b), lib_module_qname(path, mod).
+
+// ── import_link_ambiguous(BindingHash, ImportedPath, N) ──────────────────────
+// The same dotted path matched more than one library declaration (shadowed modules, a
+// re-export). Counted rather than arbitrated.
+import_link_ambiguous(b, path, n) :-
+    client_external_import(_, path, b),
+    n = count : { lib_function_qname(path, _) },
+    n > 1.
+
+// ============================================================================
+// FROM A LINKED IMPORT TO A CALL TARGET
+// ============================================================================
+
+// ── expr_names_lib_function(ClientExprHash, LibMethodHash) ───────────────────
+// A client NAME_REFERENCE whose LEGB walk lands on an externally-imported binding that
+// matched a library function.
+expr_names_lib_function(e, m) :-
+    expr_binding("client", b, ctx, e), ctx != "STORE",
+    binding_lookup("client", b, b2),
+    import_links_lib_function(b2, m).
+expr_names_lib_function(e, m) :-
+    expr_binding("client", b, ctx, e), ctx != "STORE",
+    import_links_lib_function(b, m).
+
+// ── expr_names_lib_type(ClientExprHash, LibTypeHash) ─────────────────────────
+expr_names_lib_type(e, t) :-
+    expr_binding("client", b, ctx, e), ctx != "STORE",
+    binding_lookup("client", b, b2), import_links_lib_type(b2, t).
+expr_names_lib_type(e, t) :-
+    expr_binding("client", b, ctx, e), ctx != "STORE", import_links_lib_type(b, t).
+
+// ── expr_names_lib_module(ClientExprHash, LibModuleHash) ─────────────────────
+expr_names_lib_module(e, mod) :-
+    expr_binding("client", b, ctx, e), ctx != "STORE",
+    binding_lookup("client", b, b2), import_links_lib_module(b2, mod).
+expr_names_lib_module(e, mod) :-
+    expr_binding("client", b, ctx, e), ctx != "STORE", import_links_lib_module(b, mod).
+
+// ── lib_link_missed(SiteHash, CalleeDottedPath) ───────────────────────────────
+// A call whose written dotted path names something outside the client, and which no
+// import link explained. THE MEASURABLE GAP for python-library-linking: the size of this
+// relation is the size of the remaining work, stated rather than absorbed.
+// A call is a LIBRARY-LINKING miss only if its callee name resolved to nothing in the
+// client at all. A callee that resolves to a PARAMETER (`fn(*args)`) or to a
+// classmethod's unknown `cls` is unresolved for a reason that has nothing to do with
+// library linking, and counting it here would inflate another owner's backlog with work
+// that is not theirs.
+lib_link_missed(site, d) :-
+    call_dotted(site, d),
+    !expr_call_candidate(site, _),
+    !call_hits_lib_method(site, _),
+    !call_hits_builtin(site, _),
+    call_callee_expr(site, callee),
+    expr_binding("client", b, _, callee),
+    binding_lookup_unresolved("client", b, _, _).
+// The attribute-call form: a dotted callee whose receiver the engine could not type and
+// which no import link explained.
+lib_link_missed(site, d) :-
+    call_dotted(site, d),
+    !expr_call_candidate(site, _),
+    !call_hits_lib_method(site, _),
+    !call_hits_builtin(site, _),
+    call_recv_kind(site, rk), rk != "NONE",
+    call_receiver_object(site, obj),
+    !expr_any_type("client", obj).
+
+// ============================================================================
+// THE EXTERNAL BOUNDARY — a callee that is provably outside every staged IR
+//
+// `import math` then `math.sqrt(16)`. `math` is a C extension: no Python source, so no
+// py_module in the stdlib IR and nothing for an import link to match. The call is not a
+// blind spot — the written path names it exactly — it is a boundary this build cannot
+// cross, which is what 12-blind-spots means by "it must read boundary/native; a
+// 'resolved' one is a fabrication".
+//
+// The label carries the WRITTEN PATH and is prefixed `external:` so it can never be
+// confused with a py_method FK. Gated on the root name being bound by an import that
+// resolved neither in-repo NOR against the library, so a local name can never fall in
+// here by accident.
+// ============================================================================
+
+// ── import_unlinked(BindingHash, ImportedPath) ───────────────────────────────
+import_unlinked(b, path) :-
+    client_external_import(_, path, b),
+    !import_links_lib_function(b, _),
+    !import_links_lib_type(b, _),
+    !import_links_lib_module(b, _).
+
+// ── call_hits_external(SiteKey, TargetLabel) ─────────────────────────────────
+call_hits_external(site, cat("external:", d)) :-
+    call_dotted(site, d), d != "",
+    !expr_call_candidate(site, _),
+    !call_hits_lib_method(site, _),
+    !call_hits_builtin(site, _),
+    call_receiver_object(site, obj),
+    expr_parent("client", obj, "ATTRIBUTE_OBJECT", _, root),
+    expr_binding("client", rb, _, root),
+    binding_lookup("client", rb, rb2),
+    import_unlinked(rb2, _).
+call_hits_external(site, cat("external:", d)) :-
+    call_dotted(site, d), d != "",
+    !expr_call_candidate(site, _),
+    !call_hits_lib_method(site, _),
+    !call_hits_builtin(site, _),
+    call_receiver_object(site, obj),
+    expr_binding("client", rb, _, obj),
+    binding_lookup("client", rb, rb2),
+    import_unlinked(rb2, _).
+
+// ── call_hits_lib_unresolved(SiteKey, TargetLabel) ───────────────────────────
+// THE FLOOR: a call whose root DID link to a staged library module, but for which the
+// library produced no member.
+//
+// Every clause above requires import_unlinked — "this import linked to nothing". Staging
+// a library makes that false, correctly, and the clauses stop firing. But the replacement
+// does not always arrive: library BODIES are staged empty by design, so a member reached
+// through the library's own value flow (`os.environ.get`) cannot be resolved. The site
+// then had a name with no library and NO name with one, so supplying more information
+// made the answer strictly worse.
+//
+// That non-monotonicity is the defect. A bigger library IR could lower the linked rate,
+// which inverts the incentive to supply one and makes measurements taken against
+// different library inputs incomparable.
+//
+// These mirror the external clauses exactly and keep every guard, so they fire only where
+// the library was consulted and yielded nothing — a member that DOES resolve keeps its
+// concrete answer.
+//
+// Labelled `lib:` rather than `external:` on purpose. With the library staged the call is
+// not external: the engine knows which staged library it lands in and failed only to
+// resolve the member. Reusing `external:` would assert something untrue and merge two
+// cases that need telling apart, since this one is a resolvable gap and that one is not.
+call_hits_lib_unresolved(site, cat("lib:", d)) :-
+    call_dotted(site, d), d != "",
+    !expr_call_candidate(site, _),
+    !call_hits_lib_method(site, _),
+    !call_hits_builtin(site, _),
+    !lib_unresolved_typed(site, _, _),
+    !lib_unresolved_via_call(site, _, _),
+    call_receiver_object(site, obj),
+    expr_parent("client", obj, "ATTRIBUTE_OBJECT", _, root),
+    expr_binding("client", rb, _, root),
+    binding_lookup("client", rb, rb2),
+    import_links_lib_any(rb2).
+call_hits_lib_unresolved(site, cat("lib:", d)) :-
+    call_dotted(site, d), d != "",
+    !expr_call_candidate(site, _),
+    !call_hits_lib_method(site, _),
+    !call_hits_builtin(site, _),
+    !lib_unresolved_typed(site, _, _),
+    !lib_unresolved_via_call(site, _, _),
+    call_receiver_object(site, obj),
+    expr_binding("client", rb, _, obj),
+    binding_lookup("client", rb, rb2),
+    import_links_lib_any(rb2).
+
+// ── import_links_lib_any(BindingHash) ────────────────────────────────────────
+// The import linked into the staged library by ANY of the three routes. Stated as one
+// relation because it is the exact complement of import_unlinked, which negates the same
+// three: covering fewer of them leaves the floor with holes that look arbitrary — a
+// module-qualified call kept its name while a call on an imported FUNCTION's result, or
+// on an imported TYPE, still lost one.
+import_links_lib_any(b) :- import_links_lib_module(b, _).
+import_links_lib_any(b) :- import_links_lib_function(b, _).
+import_links_lib_any(b) :- import_links_lib_type(b, _).
+
+// ── the receiver is a CALL RESULT whose callee linked into the library ───────
+// `_("Windows error: {error}").format(...)` — `_` is an imported library function, so the
+// receiver is not a name at all but the call's result. None of the name-keyed clauses
+// reach it, and with no library staged the site got its name from the unlinked-import
+// path instead. Without this the floor has a hole exactly where the translation and
+// factory idioms live, both of which call a library function and then a method on what it
+// returned.
+call_hits_lib_unresolved(site, cat("lib:", d)) :-
+    call_dotted(site, d), d != "",
+    !expr_call_candidate(site, _),
+    !call_hits_lib_method(site, _),
+    !call_hits_builtin(site, _),
+    !lib_unresolved_typed(site, _, _),
+    !lib_unresolved_via_call(site, _, _),
+    call_receiver_object(site, obj),
+    call_of_expr(obj, inner),
+    call_callee_expr(inner, icallee),
+    expr_binding("client", ib, _, icallee),
+    binding_lookup("client", ib, ib2),
+    import_links_lib_any(ib2).
+
+// ── the receiver HAS a library type, but the library has no such member ──────
+// `c = Counter(...)` then `c.items()`. The receiver is a local, so no import binding is
+// involved; what is known is its TYPE, which is a library class. The member is inherited
+// from a base the staged library may not carry, so the lookup yields nothing — and
+// without this the name is lost even though the engine knows the receiver's library type
+// exactly. Reaching the member is a library-completeness problem; naming the target is
+// not, and the name is the floor.
+// AND THE NAME IS THE DECLARING TYPE'S, NOT THE RECEIVER EXPRESSION'S (issue #311). Every
+// other clause in this section labels the target `cat("lib:", d)` where d is call_dotted —
+// the call AS WRITTEN. For a module-qualified call that is a library path and reads
+// correctly; for a call on a local or a parameter it is the CLIENT's own variable name:
+//
+//     e = Engine(); e.connect()       ->  lib:e.connect
+//     def go(m: Engine): m.connect()  ->  lib:m.connect
+//     make_engine().connect()         ->  lib:connect
+//
+// which is weaker than a basename, and SCORING.md §8 already argues why that matters: two
+// clients with different local names produce different targets for the same library
+// method, and one client with `m` in two functions produces the same target for two
+// different ones. With no library staged the same site is `external:Engine.connect`, so
+// staging — strictly more information — made the target LESS identifiable.
+//
+// The type is bound here already; it was being discarded. type_decl's qualifiedName is
+// what this file's header calls "the durable cross-run key that name-based library
+// linking joins on", so it is the right half to key identity on.
+// NOT FIXED HERE: the third shape #311 lists, a CHAINED receiver.
+// `make_engine().connect()` has no dotted prefix in the source, so call_dotted is just
+// `connect` and the label stays `lib:connect` — a bare member name. The obvious clause,
+// keyed on the imported function the receiver came from, was written and MEASURED WORSE:
+// it suppressed the text form via this negation and then did not fire itself
+// (import_links_lib_function does not carry the stub-declared function, so the join was
+// empty), turning `lib:connect` into ambiguous_unknown. Reverted rather than shipped. A
+// bare member name is weak identity; no answer is worse, so that half stays open on #311.
+// THE CHAINED RECEIVER, which #348 left open. `make_engine().connect()` has no dotted
+// prefix in the source, so call_dotted is just `connect` and the label was `lib:connect` —
+// a bare member name with no library, no module and no type in it. The information is
+// there: the receiver is the result of calling an imported library FUNCTION, and that
+// function has a qualified name. With no library staged the same site reads
+// `external:make_engine.connect`, so this is the last of the three shapes where staging
+// made the target less identifiable rather than more.
+lib_unresolved_via_call(site, q, n) :-
+    call_receiver_object(site, obj),
+    call_of_expr(obj, inner),
+    call_callee_expr(inner, icallee),
+    expr_binding("client", ib, _, icallee),
+    binding_lookup("client", ib, ib2),
+    import_links_lib_function(ib2, lm),
+    method_decl("lib", _, _, q, _, lm), q != "",
+    call_name(site, n), n != "".
+
+lib_unresolved_typed(site, qn, n) :-
+    call_receiver_object(site, obj),
+    expr_lib_type(obj, t),
+    type_decl("lib", _, qn, _, t), qn != "",
+    call_name(site, n), n != "".
+call_hits_lib_unresolved(site, cat("lib:", cat(qn, cat(".", n)))) :-
+    !expr_call_candidate(site, _),
+    !call_hits_lib_method(site, _),
+    !call_hits_builtin(site, _),
+    lib_unresolved_typed(site, qn, n).
+call_hits_lib_unresolved(site, cat("lib:", cat(q, cat(".", n)))) :-
+    !expr_call_candidate(site, _),
+    !call_hits_lib_method(site, _),
+    !call_hits_builtin(site, _),
+    !lib_unresolved_typed(site, _, _),
+    lib_unresolved_via_call(site, q, n).
+
+
+// ── CONSTRUCTING a library class, where no library initializer resolved ──────
+// `Counter(opts)`, `deque(args)`, `ExitStack()`. Every clause above keys on a RECEIVER;
+// a construction has none, because the callee IS the class. So the floor never fired, and
+// once the class is present in the library `import_unlinked` is false and the external
+// clause that used to supply the name stops.
+//
+// This is the monotonicity invariant of #72 violated by a shape that fix did not reach,
+// and it was invisible there because #72 was validated against a library parsed from
+// standard-library SOURCE, where these classes -- being C-implemented -- are absent and so
+// stayed external. Staging stubs makes them present, and the hole appears.
+//
+// NOTE on the guards: !call_constructs_lib_type was tried here and is WRONG. That relation
+// fires as soon as the callee names a library class, whether or not an initializer was
+// found in the library -- so a construction whose __init__ the stubs do not expose has a
+// lib TYPE and no target, and guarding on it suppressed the floor at exactly the sites
+// that need it. The three remaining guards already establish that the site has no answer,
+// which is the only precondition the floor requires.
+// CONSTRUCTING one: the same identity point. `Deferred()` labelled `lib:Deferred` is a
+// BASENAME, which is what SCORING.md §8 rules out directly; the class is bound here, so
+// the qualified name costs one more join.
+lib_unresolved_construct(site, qn) :-
+    call_callee_is_value(site),
+    call_callee_expr(site, callee),
+    expr_names_lib_type(callee, t),
+    type_decl("lib", _, qn, _, t), qn != "".
+lib_unresolved_construct(site, qn) :-
+    call_callee_is_value(site),
+    call_callee_expr(site, callee),
+    expr_binding("client", cb, _, callee),
+    binding_lookup("client", cb, cb2),
+    import_links_lib_type(cb2, t),
+    type_decl("lib", _, qn, _, t), qn != "".
+call_hits_lib_unresolved(site, cat("lib:", qn)) :-
+    !expr_call_candidate(site, _),
+    !call_hits_lib_method(site, _),
+    !call_hits_builtin(site, _),
+    !lib_unresolved_typed(site, _, _),
+    lib_unresolved_construct(site, qn).
+call_hits_lib_unresolved(site, cat("lib:", d)) :-
+    call_dotted(site, d), d != "",
+    !expr_call_candidate(site, _),
+    !call_hits_lib_method(site, _),
+    !call_hits_builtin(site, _),
+    !lib_unresolved_typed(site, _, _),
+    !lib_unresolved_via_call(site, _, _),
+    !lib_unresolved_construct(site, _),
+    call_callee_is_value(site),
+    call_callee_expr(site, callee),
+    expr_names_lib_type(callee, _).
+call_hits_lib_unresolved(site, cat("lib:", d)) :-
+    call_dotted(site, d), d != "",
+    !expr_call_candidate(site, _),
+    !call_hits_lib_method(site, _),
+    !call_hits_builtin(site, _),
+    !lib_unresolved_typed(site, _, _),
+    !lib_unresolved_via_call(site, _, _),
+    !lib_unresolved_construct(site, _),
+    call_callee_is_value(site),
+    call_callee_expr(site, callee),
+    expr_binding("client", cb, _, callee),
+    binding_lookup("client", cb, cb2),
+    import_links_lib_type(cb2, _).
+call_hits_external(site, cat("external:", d)) :-
+    call_dotted(site, d), d != "",
+    !expr_call_candidate(site, _),
+    !call_hits_lib_method(site, _),
+    !call_hits_builtin(site, _),
+    call_callee_is_value(site),
+    call_callee_expr(site, callee),
+    expr_binding("client", rb, _, callee),
+    binding_lookup("client", rb, rb2),
+    import_unlinked(rb2, _).
+
+// ── THE LINKED-BUT-UNRESOLVED FALLBACK ───────────────────────────────────────
+// The three clauses above all require import_unlinked: the name is external only if
+// its import matched NOTHING in the staged IR. That gate has a hole, and staging a
+// library is what opens it. `from torch import nn` DOES link (import_links_lib_module,
+// 4,322 of them), so import_unlinked is false — but if no member of that module
+// resolves, every clause above is blocked and the site falls all the way through to
+// ambiguous_unknown with an empty callee. The site is strictly WORSE OFF for the
+// library having been staged: without it the same call reads `external:nn.Linear`.
+//
+// MEASURED on transformers + the torch IR: 35,450 sites lost a name they had when no
+// library was staged. So the fallback is restored for the case the gate misses — the
+// receiver names a linked library module, but nothing in it resolved.
+//
+// This is a LABEL, not a target: it claims the call leaves the client for a module
+// with this written name, which is exactly what the source says and needs no
+// resolution to be true. It stays boundary_lib, never known_edge, and it is
+// suppressed the moment real resolution succeeds — so as re-export following widens
+// module_member_*, sites move off this clause rather than double-counting.
+call_hits_external(site, cat("external:", d)) :-
+    call_dotted(site, d), d != "",
+    !expr_call_candidate(site, _),
+    !call_hits_lib_method(site, _),
+    !call_hits_builtin(site, _),
+    !call_constructs_lib_type(site, _),
+    call_receiver_object(site, obj),
+    expr_names_lib_module(obj, _).
+
+
+// And when the hierarchy IS incomplete — an unresolved or dynamic base somewhere above it
+// — the constructor may exist where the engine cannot see it. A declared unknown WITH a
+// reason, rather than silence.
+call_unresolvable(site, "lib_construction_no_visible_constructor") :-
+    call_constructs_lib_type(site, t),
+    !type_constructor("lib", t, _),
+    type_hierarchy_incomplete("lib", t).
+
+// ============================================================================
+// A LOCAL OR ATTRIBUTE HOLDING A LIBRARY INSTANCE
+//
+//     _lock = threading.RLock()          # module level
+//     def _acquireLock(): _lock.acquire()
+//
+// The construction resolves (threading.RLock is in the library IR) and the name that
+// receives it did not, so `.acquire()` had no receiver type. This is the library twin of
+// binding_value_type / field_type_from_construction, which only ever tracked CLIENT
+// classes — measured as the single largest remaining bucket on the stdlib shards, where
+// `x = somelib.Thing()` followed by `x.method()` is the dominant call shape.
+// ============================================================================
+
+
+// ============================================================================
+// CARRYING A LIBRARY TYPE TO A CLIENT CALL SITE
+// ============================================================================
+// This section is BOUNDARY WIRING ONLY. Every answer it moves was derived in the layer
+// that owns the semantics -- annotations.dl resolves an annotation naming a library
+// class, value-flow.dl widens it, generics.dl substitutes a type argument, call_chain.dl
+// owns property reads. Nothing here re-implements a lookup, which is the property that
+// keeps a second resolution path from disagreeing with the client one.
+
+
+// ── expr_names_lib_module — the DOTTED form: `os.path` -> the posixpath module.
+expr_names_lib_module(e, child) :-
+    expr_node("client", "ATTRIBUTE_ACCESS", _, n, e),
+    expr_parent("client", e, "ATTRIBUTE_OBJECT", _, obj),
+    expr_names_lib_module(obj, parent),
+    module_member_module("lib", parent, n, child).
+
+// ============================================================================
+// RE-EXPORT — a library module's members are not only what it DECLARES
+// ============================================================================
+//
+// MEASURED, and it is the single join that decides whether a library IR is worth
+// staging at all. `torch/nn/__init__.py` DECLARES ZERO TYPES. `nn.Linear` is
+// `from .modules import *` in `nn/__init__.py`, then `from .linear import Linear`
+// in `nn/modules/__init__.py`. So module_member_type("lib", torch.nn, "Linear", _)
+// — which until now covered only types declared in the module itself — was empty,
+// call_constructs_lib_type never fired, field_lib_type was starved, and every
+// `self.q_proj = nn.Linear(...)` / `self.q_proj(x)` pair came out ambiguous_unknown.
+//
+// Worse than a miss: import_links_lib_module DID succeed for `nn`, which makes
+// import_unlinked false and gates OFF the external-name fallback below. Staging the
+// torch IR therefore cost 35,450 sites their honest `external:nn.Linear` label and
+// gave nothing back — 19,665 under `torch.*`, 14,610 under `nn.*`. A library that
+// makes the graph worse is a library nobody stages.
+//
+// Both hops are WITHIN-LIBRARY FKs, resolved in the library's own parse, so they are
+// valid for the same reason lib_py_type_base.resolvedTypeLinkHash is (clause (c)
+// above): 63.2% of torch's 22,286 import rows carry resolvedModuleLinkHash and 38.7%
+// carry resolvedTargetHash. Nothing here matches on a name across parses.
+
+
+// module_reexports_all moved to resolution/name-resolution.dl and generalised over
+// provenance (issue #77). It states what a module EXPOSES, which is a fact about module
+// structure rather than about the client/library boundary, and the client half is needed
+// whenever a package is analysed on its own.
+

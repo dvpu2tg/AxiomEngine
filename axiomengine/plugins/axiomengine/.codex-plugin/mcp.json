@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "axiomengine": {
+      "command": "node",
+      "args": ["mcp/launch.js"],
+      "cwd": "."
+    }
+  }
+}

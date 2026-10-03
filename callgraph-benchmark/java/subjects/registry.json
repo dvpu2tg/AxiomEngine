@@ -1,0 +1,169 @@
+{
+  "_comment": [
+    "The subjects, and the DEV / HELD-OUT split that keeps the harness honest.",
+    "",
+    "A benchmark whose normalisation rules were tuned until the numbers looked right is not a",
+    "measurement, it is a fit. Every convention in docs/PROTOCOL.md was written while looking at a",
+    "DEV subject; a HELD-OUT subject is scored once, and if a result there is bad, the finding is",
+    "reported rather than the rule adjusted. run/subject.sh refuses to run a held-out subject unless",
+    "--heldout is passed explicitly, so it cannot be used for iteration by accident.",
+    "",
+    "WHERE GROUND TRUTH COMES FROM AT SCALE. For a Maven subject the oracle reads the project's OWN",
+    "PUBLISHED JAR \u2014 the bytecode its maintainers built and shipped \u2014 and the tools read the",
+    "-sources.jar from the same coordinate. Nothing is compiled here. That removes the entire class",
+    "of error where a benchmark scores tools against bytecode produced by a build it performed",
+    "itself with different flags, a different JDK, or a different compiler than the project uses.",
+    "It also makes the subject reproducible from two URLs and two hashes rather than from a working",
+    "build toolchain.",
+    "",
+    "sha256 is recorded on first fetch and verified on every fetch after. A changed hash means the",
+    "artefact changed under a fixed coordinate, which must stop the run rather than move the numbers."
+  ],
+  "subjects": [
+    {
+      "name": "torture",
+      "split": "dev",
+      "kind": "local",
+      "description": "Eleven families of Java construct in one 592-line project; per-construct diagnostic.",
+      "source_roots": [
+        "subjects/torture/client"
+      ],
+      "classpath_roots": [
+        "subjects/torture/lib"
+      ],
+      "families": true
+    },
+    {
+      "name": "netty-transport",
+      "split": "dev",
+      "kind": "maven",
+      "coordinate": "io.netty:netty-transport:4.1.115.Final",
+      "description": "Netty's transport layer. Deep interface hierarchies and heavy virtual dispatch through ChannelHandler/ChannelPipeline \u2014 the population where a CHA envelope is widest and a tool's over-fan is most visible.",
+      "include_prefix": [
+        "io.netty"
+      ],
+      "sha256": {
+        "jar": "c3d71faaa736ffd2c9260ab0b498024b814c39c7d764bea8113fa98de6e2bdd2",
+        "sources": "162c3531b2819f6b51ca9c59b54508b782e462549b1fffeed9771a1a718a84eb"
+      }
+    },
+    {
+      "name": "maven-core",
+      "split": "dev",
+      "kind": "maven",
+      "coordinate": "org.apache.maven:maven-core:3.9.9",
+      "description": "Maven's own core. Plexus/Sisu dependency injection, so a large fraction of the real call graph runs through container-wired interfaces rather than written constructors.",
+      "include_prefix": [
+        "org.apache.maven"
+      ],
+      "sha256": {
+        "jar": "7fab37fc6044f20ae004376ab8414373636cf51e26ad0b1efa6b3f1cd2bec503",
+        "sources": "7511afaf127c99eb938efdfcac9c83565d9fb047d2e6770a3e89e48cd2c20494"
+      }
+    },
+    {
+      "name": "spring-boot",
+      "split": "dev",
+      "kind": "maven",
+      "coordinate": "org.springframework.boot:spring-boot:3.3.5",
+      "description": "Spring Boot's core module. Annotation-driven wiring, heavy generics, functional interfaces and callbacks throughout.",
+      "include_prefix": [
+        "org.springframework.boot"
+      ],
+      "sha256": {
+        "jar": "6a4a5c8a5b58c209705881e487b49445679ab69c858623fef700f634e24eb9c2",
+        "sources": "07d0d5bb4e39a20e6b04ccde091655e89e17426187c147067bce7a750301f253"
+      }
+    },
+    {
+      "name": "hibernate-core",
+      "split": "heldout",
+      "kind": "maven",
+      "coordinate": "org.hibernate.orm:hibernate-core:6.6.3.Final",
+      "description": "HELD OUT. Very large, generics-dense, with extensive use of proxies and bytecode enhancement.",
+      "include_prefix": [
+        "org.hibernate"
+      ],
+      "sha256": {
+        "jar": "6e341ca061766070f455473bc90e893b51260cffe91ada628ae3fa482dd1da72",
+        "sources": "a9e3d834d84e5a795b96f759865da5dced6c8f84f568667f230f9463adf7cd90"
+      },
+      "pinned": "2026-09-13, before any run of this subject (issue #38)"
+    },
+    {
+      "name": "tomcat-embed-core",
+      "split": "heldout",
+      "kind": "maven",
+      "coordinate": "org.apache.tomcat.embed:tomcat-embed-core:10.1.33",
+      "description": "HELD OUT. Servlet container internals; large, old-style Java with deep inheritance and few lambdas.",
+      "include_prefix": [
+        "org.apache"
+      ],
+      "sha256": {
+        "jar": "66af498c219b95ff611545ab7963a88d97bcedc04c384a07e2312c4b96dab3c6",
+        "sources": "a23bb77777a91a4e21e3fc9b59f4e5ed79a27780716de22b94f6264f180ec8da"
+      },
+      "pinned": "2026-09-13, before any run of this subject (issue #38)"
+    },
+    {
+      "name": "kafka-clients",
+      "split": "blocked",
+      "kind": "maven",
+      "owner": "anonymous",
+      "coordinate": "org.apache.kafka:kafka-clients:3.8.1",
+      "description": "BLOCKED: 17% of the published jar's types have no source in the sources jar \u2014 the protocol message classes are GENERATED at build time. Gate 4 refuses it: ground truth for code no tool could read is a `missed` against every tool at once. Kept in the registry with the reason, because a manifest that silently drops what it cannot measure is how a held-out set drifts.",
+      "include_prefix": [
+        "org.apache.kafka"
+      ],
+      "sha256": {
+        "jar": "d6d8c4ad7ab00c6adb03ad9ad7188af32fa7c5de62ca1d8625e086512987a584",
+        "sources": "e6781fd5c61c9503f232e921bd5f391106c21dabc474ae197cb83f7d3ac48744"
+      }
+    },
+    {
+      "name": "apache-ant",
+      "split": "dev",
+      "kind": "maven",
+      "owner": "anonymous",
+      "coordinate": "org.apache.ant:ant:1.10.15",
+      "description": "Ant's core. Old-style Java: deep inheritance, reflection-driven task dispatch, few lambdas.",
+      "include_prefix": [
+        "org.apache.tools"
+      ],
+      "sha256": {
+        "jar": "763acda4a69588c9ea8817a952851ff0c2fc4bffa1d081c2565dc407f29d5794",
+        "sources": "817ebf06c0a01d5d59cae996815b154b7b7172d40d75304f39ab107e8133c0d6"
+      }
+    },
+    {
+      "name": "rxjava",
+      "split": "dev",
+      "kind": "maven",
+      "owner": "anonymous",
+      "coordinate": "io.reactivex.rxjava3:rxjava:3.1.9",
+      "description": "RxJava 3. Very large; operator classes, deep generic hierarchies, functional interfaces everywhere.",
+      "include_prefix": [
+        "io.reactivex"
+      ],
+      "sha256": {
+        "jar": "88cba16c7f0fe78a8cc9b8c46469c8596cf166037ce22c2adfc4440cd6312e20",
+        "sources": "e5a2a1f069dea12a063428146eccd6712af77da3f9ef15e408144765d02396fc"
+      }
+    },
+    {
+      "name": "gson",
+      "split": "dev",
+      "kind": "maven",
+      "coordinate": "com.google.code.gson:gson:2.11.0",
+      "description": "Google's JSON library: reflection-driven type adapters, a generics-heavy TypeToken hierarchy, many small package-private classes. Added 2026-09-14 at the user's request as a sixth Java subject; pinned before any run.",
+      "include_prefix": [
+        "com.google.gson"
+      ],
+      "pinned": "2026-09-14, before any run of this subject",
+      "sha256": {
+        "jar": "57928d6e5a6edeb2abd3770a8f95ba44dce45f3b23b7a9dc2b309c581552a78b",
+        "sources": "49a853f71bc874ee1898a4ad5009b57d0c536e5a998b3890253ffbf4b7276ad3"
+      }
+    }
+  ]
+}

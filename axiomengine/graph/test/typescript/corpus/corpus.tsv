@@ -1,0 +1,60 @@
+# The TypeScript evaluation corpus — the DEFINITION, not a description of one.
+#
+# Why this file exists: every held-out figure ever quoted for this front end came from
+# a corpus that lived in /tmp and a dev/holdout split that lived in an agent's head.
+# `git grep held-out` on main returned nothing. So no rate was reproducible, and a
+# corpus member could stop producing ground truth without anyone noticing — which is
+# what issue #143 found, and what a full run at the current head confirms: SEVEN of the
+# nine projects below cannot be measured at all, and the two sets between them were
+# reporting on subtrees nobody chose.
+#
+# ── FIELDS ───────────────────────────────────────────────────────────────────
+#   name  set  path  repo  commit  note
+# `note` is the last field and may contain spaces. `path` is relative to the clone;
+# `.` means the repository root IS the project.
+#
+# ── SET ──────────────────────────────────────────────────────────────────────
+# dev      designed against. A rule may be derived from what these projects show.
+# holdout  DESIGN-BLIND. Measured, never used to derive a rule. When it surfaces a
+#          defect class, the shape is reproduced SYNTHETICALLY under cases/ and the
+#          rule designed from that — never from the held-out site itself.
+#          A change that closes the dev/holdout gap is suspicious, not good: that gap
+#          IS the generalisation cost.
+# blocked  IN THE CORPUS AND NOT MEASURABLE. Kept here, with the reason, because a
+#          manifest that silently drops what it cannot measure is how a held-out set
+#          came to be three projects none of which worked. Each carries the issue that
+#          would return it to service. run-corpus.sh skips these.
+#
+# ── PATH: why package level, not repository root (issue #143) ────────────────
+# On a workspace repository the IR carries `filePath` relative to each package with no
+# package qualifier, so two packages' `src/index.ts` collide on one key and nothing
+# joins (parser#70). The parser handles a SINGLE package correctly, so a workspace repo
+# is entered at its principal published package. But package-level entry has its own
+# cost, visible in the blocked rows: the harness mirrors the project directory, and a
+# package tsconfig that `extends` or `references` ABOVE its own root loses the target.
+#
+# ── WHERE THE CLONES LIVE ────────────────────────────────────────────────────
+# $TS_CORPUS, defaulting to ~/.cache/axiom-ts-corpus. Deliberately NOT /tmp: the corpus
+# was kept there and the system reaper removed every source file from all nine projects
+# mid-session — directories and node_modules left standing, .git gone — which surfaced
+# as four harness failures that looked like four unrelated bugs. fetch.sh reclones at the
+# pinned commits, which is the only reason that was recoverable.
+#
+# ── SCORING IS PRODUCTION-ONLY ───────────────────────────────────────────────
+# run-corpus.sh sets SCORE_PRODUCTION=1. A repository's test tree is routinely larger
+# than the library it tests — typeorm 70,534 test sites against 17,062 production, and
+# its conservation loss is 11.58% over the former and 0.04% over the latter. Unfiltered,
+# that project reads as 9.3% lost and gets discarded; filtered, it is the only sound
+# held-out project there is.
+#
+# ── name      set      path                   repo                                        commit   note
+immer         dev      .                      https://github.com/immerjs/immer.git         061c242  566 production sites, 0.00% loss
+remeda        dev      packages/remeda        https://github.com/remeda/remeda.git         e11dcf2  652 production sites, 0.00% loss. Was recorded as 11,818 until #280: 23,011 sites analysed, and the production filter matched `.test.ts` but not the `.test-d.ts` type-test convention, so 11,055 of that 11,818 were type tests. They score far better than real code — an expectTypeOf chain is about as easy as a call site gets — so the leak RAISED the development rate rather than diluting it. The 652 is the real figure and this is now the SMALLEST dev member, not the largest
+zustand       dev      .                      https://github.com/pmndrs/zustand.git        b57db4f  218 production sites, 0.00% loss (3.54% loss over its test tree alone)
+trpc          dev      packages/server        https://github.com/trpc/trpc.git             6a70335  3,048 production sites, 0% loss, 0 diagnostics. Was oracle-refused at 1791/3023 with 658 diagnostics until the mirror carried its extends chain (#240); its tsconfig extends ../../tsconfig.json. Exact 0.577, below the other dev members - it is a harder project, not a broken one
+typeorm       holdout  .                      https://github.com/typeorm/typeorm.git       b495ed4  17,062 production sites, 0.04% loss. Larger than the whole dev set, which is what makes it a real check
+axios         blocked  .                      https://github.com/axios/axios.git           fede1d1  NOT A TYPESCRIPT PROJECT. 192 .js files; the only .ts are index.d.ts and deno/bun smoke tests. Oracle resolved 348/1139 with 103 diagnostics. Remove rather than fix
+nest          holdout  packages/core          https://github.com/nestjs/nest.git           1eeccd3  2,926 oracle sites, 12,581 IR call sites, 0.3% loss, 0 diagnostics, exact 0.664. Was blocked at BOTH readers until #337 and #351: its packages/core/tsconfig.json is solution-style (files:[] include:[] references:[./tsconfig.build.json]), so the oracle honoured the empty file list and built a program with NO roots, while the parser discovers projects by scanning and took test/tsconfig.json - the only config under the package naming any files - giving 97 modules all under test/ out of 285 files and 100% conservation loss. HOLDOUT rather than dev: nothing here was developed against it, and it is a different architecture from every existing member. Note for anyone hoping it supplies decorator coverage: all 216 of its decorator rows are CALL kind and none MARKER, and it has 0 namespace declarations, 0 asserts predicates and 0 generators, so it does NOT exercise the shapes #233, #340 or #355 are about
+vue-core      dev      .                      https://github.com/vuejs/core.git            d63616c  7,924 scored sites, 55,152 oracle sites, 0.0% loss, 64 diagnostics across 55k sites, exact 0.816. Entered at the REPOSITORY ROOT, not packages/runtime-core: that package has no tsconfig.json of its own and the governing one is at the root, so the mirror never carried it and the oracle refused with 'no tsconfig.json under <mirror>'. The root config governs the whole monorepo and typechecks it cleanly. The blocked reason was the PATH, not the project. DEV deliberately: the development set was 2,632 sites against a held-out 19,201, so it could barely move and had stopped being a design surface
+ts-pattern    holdout  .                      https://github.com/gvergnaud/ts-pattern.git  c92ca43  305 oracle sites, 0 diagnostics, 0% loss, exact 0.885 - the highest of any member, which is what a small idiomatic library looks like. HELD OUT and chosen for GENERIC DENSITY: the recent engine work is all type-argument substitution and shape resolution, so a project whose whole surface is generics tests whether those generalise rather than fitting the existing members. Small at 305 scored sites, so it is a generalisation probe and not a weight in the aggregate. zod was tried first and rejected: it pins its toolchain to a bespoke package manager (nub) that neither npm nor pnpm stands in for, so node_modules cannot be installed reproducibly and the oracle resolved 60% of sites with only 224 diagnostics
+rxjs          blocked  packages/rxjs          https://github.com/ReactiveX/rxjs.git        54796b3  STILL BLOCKED after #337 and #351, and not for the reason those fixed. Its packages/rxjs/tsconfig.json names no files, include or exclude, so it sweeps in the spec helpers: oracle refused at 20,051 of 69,451 resolved with 26,011 diagnostics. Tried packages/rxjs/src (no tsconfig there) and the repository root (refused at 29,968 of 79,828 with 24,501). No entry point in this repository typechecks cleanly under a single config, so this is a project property rather than a harness one

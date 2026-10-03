@@ -1,0 +1,403 @@
+// ============================================================================
+// CONFIG-RESOLUTION · KNOBS  (framework name lists — the only per-ecosystem edit)
+//
+// Every framework-specific NAME lives here and nowhere else, grouped by role and
+// commented, the way call-edge-generation/annotation_flow.dl does it. Adding an
+// ecosystem (Guice, CDI, Micronaut, Jakarta, a house framework) is a matter of
+// adding facts to these relations — no rule in value-interpretation.dl,
+// annotation-args.dl, xml-wiring.dl or config-keys.dl mentions a framework by name.
+//
+// A name is matched on its SIMPLE name (the parser records @org.x.Bean as "Bean"),
+// so the same fact covers javax./jakarta./org.springframework. spellings.
+// ============================================================================
+
+// ── (1) STEREOTYPES: an annotation that makes its TYPE a bean ────────────────
+// Spring stereotypes …
+cfg_bean_ann("Component").      cfg_bean_ann("Service").        cfg_bean_ann("Repository").
+cfg_bean_ann("Controller").     cfg_bean_ann("RestController"). cfg_bean_ann("Configuration").
+cfg_bean_ann("ControllerAdvice"). cfg_bean_ann("RestControllerAdvice").
+// … Spring Boot auto-config / test stereotypes …
+cfg_bean_ann("SpringBootApplication"). cfg_bean_ann("TestConfiguration").
+// … gRPC (grpc-spring-boot-starter and friends) …
+cfg_bean_ann("GrpcService").
+// … JSR-330 / CDI / Jakarta.
+cfg_bean_ann("Named").          cfg_bean_ann("Singleton").      cfg_bean_ann("ManagedBean").
+cfg_bean_ann("ApplicationScoped"). cfg_bean_ann("RequestScoped"). cfg_bean_ann("SessionScoped").
+
+// ── (2) FACTORY METHODS: an annotation that makes a METHOD produce a bean ────
+// The bean's type is the method's declared return type.
+cfg_factory_ann("Bean").        // Spring @Bean
+cfg_factory_ann("Produces").    // CDI @Produces
+cfg_factory_ann("Provides").    // Guice @Provides
+
+// ── (3) INJECTION POINTS: an annotation that requests a bean ─────────────────
+cfg_inject_ann("Autowired").    cfg_inject_ann("Inject").       cfg_inject_ann("Resource").
+cfg_inject_ann("Value").        // @Value("${k}") — a CONFIG-KEY injection (impact.dl)
+cfg_inject_ann("PersistenceContext").
+
+// ── (4) QUALIFIERS: narrows a candidate set to a named bean ──────────────────
+cfg_qualifier_ann("Qualifier"). cfg_qualifier_ann("Named").     cfg_qualifier_ann("Resource").
+
+// ── (4b) PRIMARY: breaks a tie between several candidates of the same type ───
+// Not a name filter but a RANK. Without it, every real multi-implementation
+// codebase — the exact case where narrowing pays — scores as ambiguous, while the
+// container resolves it deterministically.
+cfg_primary_ann("Primary").     cfg_primary_ann("Default").
+
+// ── (5) CONFIG-KEY BINDINGS ─────────────────────────────────────────────────
+cfg_value_ann("Value").                             // @Value("${a.b:default}")
+cfg_props_ann("ConfigurationProperties").           // @ConfigurationProperties(prefix="a.b")
+cfg_props_ann("ConfigurationProperties").
+
+// ── (6) CONTAINER-INVOKED METHODS (entry points sourced from annotations that
+//        carry a config VALUE — the name-only cases stay in annotation_flow.dl) ──
+cfg_lifecycle_ann("PostConstruct").  cfg_lifecycle_ann("PreDestroy").
+cfg_scheduled_ann("Scheduled").
+cfg_listener_ann("EventListener").   cfg_listener_ann("KafkaListener").
+cfg_listener_ann("TransactionalEventListener").
+cfg_listener_ann("RabbitListener").  cfg_listener_ann("JmsListener").
+cfg_listener_ann("SqsListener").     cfg_listener_ann("StreamListener").
+cfg_listener_ann("RabbitHandler").   cfg_listener_ann("SqsHandler").
+cfg_listener_ann("KafkaHandler").    cfg_listener_ann("JmsHandler").
+
+// ── (7) XML: element/attribute names that NAME A CLASS ───────────────────────
+// (a) attribute carrying a class name:  <bean class="com.x.Y"/>
+cfg_xml_class_attr("class").          cfg_xml_class_attr("value-type").
+cfg_xml_class_attr("key-type").       cfg_xml_class_attr("factory-bean-class").
+// (b) element whose TEXT is a class name: <servlet-class>com.x.Y</servlet-class>
+cfg_xml_class_elem("servlet-class").  cfg_xml_class_elem("filter-class").
+cfg_xml_class_elem("listener-class"). cfg_xml_class_elem("resource-class").
+cfg_xml_class_elem("provider-class"). cfg_xml_class_elem("handler-class").
+cfg_xml_class_elem("ejb-class").      cfg_xml_class_elem("mapper-class").
+// (c) the element that DEFINES a bean (its class comes from cfg_xml_class_attr)
+cfg_xml_bean_elem("bean").            cfg_xml_bean_elem("alias").
+
+// ── (8) XML: attributes naming a METHOD the container invokes ────────────────
+// cfg_xml_lifecycle_attr(AttributeName, EntryKind)
+cfg_xml_lifecycle_attr("init-method",    "lifecycle_init").
+cfg_xml_lifecycle_attr("destroy-method", "lifecycle_destroy").
+cfg_xml_lifecycle_attr("factory-method", "lifecycle_factory").
+
+// ── (9) XML: the servlet/filter/listener triple in web.xml ───────────────────
+// cfg_xml_container_elem(ClassElementTag, EntryKind)
+cfg_xml_container_elem("servlet-class",  "web_servlet").
+cfg_xml_container_elem("filter-class",   "web_filter").
+cfg_xml_container_elem("listener-class", "web_listener").
+
+// ── (10) XML: wiring elements (a bean depends on another bean) ───────────────
+// cfg_xml_wire_elem(Tag, WireKind)
+cfg_xml_wire_elem("property",        "property").
+cfg_xml_wire_elem("constructor-arg", "constructor_arg").
+cfg_xml_wire_elem("lookup-method",   "lookup").
+
+// ── (11) CONFIG KEYS whose VALUE names a handler class ───────────────────────
+// A key SUFFIX. `x.y.handler: com.acme.H` and `x.y.class=com.acme.H` are the two
+// idioms; the suffix list keeps this from firing on every string in the file.
+cfg_handler_key_suffix("class").      cfg_handler_key_suffix("handler").
+cfg_handler_key_suffix("handler-class"). cfg_handler_key_suffix("handlerClass").
+cfg_handler_key_suffix("listener").   cfg_handler_key_suffix("processor").
+cfg_handler_key_suffix("factory").    cfg_handler_key_suffix("provider").
+cfg_handler_key_suffix("serializer"). cfg_handler_key_suffix("deserializer").
+cfg_handler_key_suffix("converter").  cfg_handler_key_suffix("filter").
+cfg_handler_key_suffix("interceptor"). cfg_handler_key_suffix("impl").
+cfg_handler_key_suffix("implementation").
+
+// ── (12) DI NARROWING SWITCH ─────────────────────────────────────────────────
+// Present  = an injection point satisfied by exactly one bean collapses from
+//            multi_inferred to known_edge (di.dl, section 5).
+// Comment out this ONE line to keep every reporting relation (bean_def, di_edge,
+// config_binding, config_affects_method, config_entry_point) and drop only the
+// call-graph narrowing — the setting to use if a project registers beans
+// programmatically, which is the one construct that can make the narrowing
+// over-narrow. Modelled on dispatch_cap: a policy knob, stated in one place.
+cfg_di_narrowing_enabled().
+
+// ── (12b) LIBRARY-BEAN NARROWING SWITCH ─────────────────────────────────────
+// Present = a slot declared as a type from a staged --library tree is narrowed on the
+// same "exactly one bean" test the client side uses (config-resolution/lib-bean-scope.dl).
+// Comment out this ONE line to keep every reporting relation and close only the
+// narrowing. Modelled on cfg_di_narrowing_enabled above: a policy knob, stated once.
+cfg_lib_bean_narrowing_enabled().
+
+// ── (13) GENERATED-STUB BASE CLASSES (gRPC, and anything shaped like it) ─────
+// A gRPC service is a class extending a GENERATED abstract base (GreeterImplBase)
+// and overriding its rpc methods. The container/server calls those overrides; no
+// client call site does, and there is no annotation on the METHOD to key on — so
+// without this the whole service body looks like dead code.
+// Matched on the SUPERTYPE's simple-name suffix, because the generated name is
+// derived from the .proto service name and cannot be enumerated.
+// cfg_stub_base_suffix(Suffix, EntryKind)
+cfg_stub_base_suffix("ImplBase", "grpc_service").      // gRPC (protoc java)
+cfg_stub_base_suffix("Grpc", "grpc_service").          // gRPC outer holder
+cfg_stub_base_suffix("Skeleton", "rpc_service").       // older RPC generators
+
+// cfg_stub_client_suffix(Suffix) — the simple-name suffix of a GENERATED CLIENT stub, the other end
+// of the same .proto. protoc java emits <S>BlockingStub, <S>Stub and <S>FutureStub nested in the same
+// <S>Grpc holder as <S>ImplBase, so the holder's qualified name pairs a client call with the handler
+// that serves it without reading the .proto (#1108). Listed rather than matched on "Stub" alone: a
+// hand-written class called RequestStub is not a generated client.
+.decl cfg_stub_client_suffix(c0:symbol)
+cfg_stub_client_suffix("BlockingStub").
+cfg_stub_client_suffix("FutureStub").
+cfg_stub_client_suffix("Stub").
+
+// ── (8) DESTINATIONS: a name that identifies a place a message or request goes ──
+// A producer and the consumer that serves it live in different deployables and never
+// call each other, so the only thing tying them together is this string. These lists
+// are what destinations.dl joins on; adding a broker or an HTTP client is a fact here.
+
+// (a) an annotation that declares the destination a method SERVES, and the argument
+//     that carries it. @KafkaListener(topics = "orders.created") serves "orders.created".
+cfg_serves_ann("KafkaListener",  "kafka", "topics").
+cfg_serves_ann("KafkaHandler",   "kafka", "topics").
+cfg_serves_ann("RabbitListener", "amqp",  "queues").
+cfg_serves_ann("RabbitListener", "amqp",  "value").
+cfg_serves_ann("JmsListener",    "jms",   "destination").
+cfg_serves_ann("SqsListener",    "sqs",   "value").
+cfg_serves_ann("StreamListener", "stream", "value").
+
+// (b) an annotation that declares an HTTP ROUTE. On a type it is a prefix; on a
+//     method it is the remainder. Both the server (@GetMapping) and a declarative
+//     client (@GetExchange, @FeignClient) spell a route this way, which is what makes
+//     the two ends joinable at all.
+cfg_route_ann("RequestMapping"). cfg_route_ann("GetMapping").    cfg_route_ann("PostMapping").
+cfg_route_ann("PutMapping").     cfg_route_ann("DeleteMapping"). cfg_route_ann("PatchMapping").
+cfg_route_ann("Path").                                            // JAX-RS
+cfg_route_ann("FeignClient").    // its url= is the client's base
+cfg_route_ann("HttpExchange").   cfg_route_ann("GetExchange").   cfg_route_ann("PostExchange").
+cfg_route_ann("PutExchange").    cfg_route_ann("DeleteExchange"). cfg_route_ann("PatchExchange").
+
+// (c) a route annotation that marks the SERVER end. A route annotation that is not
+//     one of these is a client declaration, and the two must not be confused: a
+//     client interface and a controller in one repository would otherwise link to
+//     themselves.
+cfg_route_server_ann("RequestMapping"). cfg_route_server_ann("GetMapping").
+cfg_route_server_ann("PostMapping").    cfg_route_server_ann("PutMapping").
+cfg_route_server_ann("DeleteMapping").  cfg_route_server_ann("PatchMapping").
+cfg_route_server_ann("Path").
+
+// (d) the argument names a route annotation uses for the path.
+cfg_route_arg("value"). cfg_route_arg("path"). cfg_route_arg("url").
+
+// (e) a library method that SENDS to a destination, and which argument names it.
+//     KafkaTemplate.send(topic, key, value) names it first; RabbitTemplate's
+//     convertAndSend(exchange, routingKey, payload) names the routing key second.
+cfg_sends_method("send",           "kafka", "0").
+cfg_sends_method("sendDefault",    "kafka", "0").
+cfg_sends_method("convertAndSend", "amqp",  "1").
+cfg_sends_method("convertSendAndReceive", "amqp", "1").
+cfg_sends_method("convertAndSend", "jms",   "0").
+
+// (f) a library method that sends an HTTP request whose first argument is the URL.
+cfg_sends_http("getForObject").   cfg_sends_http("getForEntity").
+cfg_sends_http("postForObject").  cfg_sends_http("postForEntity").
+cfg_sends_http("postForLocation"). cfg_sends_http("put").
+cfg_sends_http("delete").         cfg_sends_http("patchForObject").
+cfg_sends_http("exchange").       cfg_sends_http("execute").
+cfg_sends_http("uri").            // RestClient / WebClient fluent builders
+
+// (g) the receiver type that makes a call a send. Without this a method merely NAMED
+//     `send` is read as a broker produce — measured: a notification dispatcher's own
+//     send("email", …) was reported as a Kafka topic called "email".
+cfg_sends_owner("KafkaTemplate", "kafka").      cfg_sends_owner("KafkaOperations", "kafka").
+cfg_sends_owner("RabbitTemplate", "amqp").      cfg_sends_owner("AmqpTemplate", "amqp").
+cfg_sends_owner("JmsTemplate", "jms").
+cfg_sends_owner("RestTemplate", "http").        cfg_sends_owner("RestClient", "http").
+cfg_sends_owner("WebClient", "http").
+// … and the builders those clients are reached through, because the fluent chain
+// starts on the builder: webClientBuilder.build().get().uri(path).
+cfg_sends_owner("WebClient.Builder", "http").   cfg_sends_owner("RestClient.Builder", "http").
+cfg_sends_owner("RestTemplateBuilder", "http").
+
+// (h) the HTTP verb each end names. A route is a path AND a verb; without the verb a
+//     GET to /owners is an edge to the @PostMapping that creates one.
+cfg_route_verb("GetMapping", "GET").       cfg_route_verb("PostMapping", "POST").
+cfg_route_verb("PutMapping", "PUT").       cfg_route_verb("DeleteMapping", "DELETE").
+cfg_route_verb("PatchMapping", "PATCH").
+cfg_route_verb("GetExchange", "GET").      cfg_route_verb("PostExchange", "POST").
+cfg_route_verb("PutExchange", "PUT").      cfg_route_verb("DeleteExchange", "DELETE").
+cfg_route_verb("PatchExchange", "PATCH").
+// @RequestMapping and @HttpExchange name no verb on their own, so they stay "any".
+// @Path does not either, but JAX-RS declares the verb in a SIBLING annotation on the
+// same method, so the verb is present and simply lives somewhere else. A verb-only
+// annotation contributes the verb and NO path of its own: the handler's path is the
+// one it inherits from its resource class.
+cfg_route_verb_ann("GET", "GET").         cfg_route_verb_ann("POST", "POST").
+cfg_route_verb_ann("PUT", "PUT").         cfg_route_verb_ann("DELETE", "DELETE").
+cfg_route_verb_ann("PATCH", "PATCH").     cfg_route_verb_ann("HEAD", "HEAD").
+cfg_route_verb_ann("OPTIONS", "OPTIONS").
+
+cfg_sends_verb("getForObject", "GET").     cfg_sends_verb("getForEntity", "GET").
+cfg_sends_verb("postForObject", "POST").   cfg_sends_verb("postForEntity", "POST").
+cfg_sends_verb("postForLocation", "POST"). cfg_sends_verb("put", "PUT").
+cfg_sends_verb("delete", "DELETE").        cfg_sends_verb("patchForObject", "PATCH").
+cfg_sends_verb("get", "GET").              cfg_sends_verb("post", "POST").
+cfg_sends_verb("patch", "PATCH").
+
+// (i) an annotation that makes a TYPE a declarative HTTP CLIENT. Its methods carry the
+//     same mapping annotations a controller does, so without this a Feign interface is
+//     read as a handler and answers "who serves this route".
+cfg_client_type_ann("FeignClient").  cfg_client_type_ann("HttpExchange").
+cfg_client_type_ann("RegisterRestClient").   // MicroProfile
+
+// ── (10) PERSISTENCE: a query is a reference to a schema ────────────────────
+cfg_entity_ann("Entity").         cfg_entity_ann("MappedSuperclass").
+cfg_query_ann("NamedQuery").      cfg_query_ann("NamedNativeQuery").
+
+// the EntityManager-like receivers that make a call a query, for the same reason a
+// broker send is gated on its template: `createQuery` is not a rare method name.
+cfg_query_owner("EntityManager"). cfg_query_owner("Session").
+cfg_query_owner("StatelessSession"). cfg_query_owner("EntityManagerFactory").
+
+cfg_query_method("createNamedQuery", "named").
+cfg_query_method("createNamedStoredProcedureQuery", "named").
+cfg_query_method("createQuery", "inline").
+cfg_query_method("createNativeQuery", "inline").
+// a query annotation on the METHOD, where the framework generates the implementation
+// and there is no call site anywhere (Spring Data, and Micronaut Data's @Query).
+cfg_method_query_ann("Query").    cfg_method_query_ann("NativeQuery").
+cfg_query_arg("value").           cfg_query_arg("query").
+// ── (15) CONDITIONS: an annotation that decides whether a bean EXISTS ────────
+// A bean the container did not create has no methods that run, so a condition is
+// the difference between a live filter chain and a dead one. Three families, kept
+// apart because only the first is decidable from configuration alone.
+//
+// (a) PROPERTY conditions. The annotation names a config key and the value it
+//     expects; conditions.dl joins that against the resolved key space.
+//     cfg_property_condition_ann(Name, KeyArg, ExpectedArg)
+cfg_property_condition_ann("ConditionalOnProperty", "name", "havingValue").
+
+// (b) PROFILE conditions. The same question keyed on the active profile set,
+//     which is itself a config key (spring.profiles.active).
+cfg_profile_condition_ann("Profile").
+cfg_active_profile_key("spring.profiles.active").
+
+// (c) UNDECIDABLE conditions. These depend on the whole context and on the order
+//     the container evaluates it in, which this analysis does not model. They are
+//     listed so that a bean carrying one is reported as DECLARED UNDECIDED rather
+//     than silently assumed live: the blind spot is named, not hidden.
+//     cfg_opaque_condition_ann(Name, Reason)
+cfg_opaque_condition_ann("ConditionalOnBean",           "depends_on_context").
+cfg_opaque_condition_ann("ConditionalOnMissingBean",    "depends_on_context").
+cfg_opaque_condition_ann("ConditionalOnExpression",     "spel_expression").
+cfg_opaque_condition_ann("ConditionalOnClass",          "depends_on_classpath").
+cfg_opaque_condition_ann("ConditionalOnMissingClass",   "depends_on_classpath").
+cfg_opaque_condition_ann("Conditional",                 "custom_condition_class").
+
+// ── (16) REPOSITORY BASES: a bean with no stereotype and no implementation ───
+// Spring Data, and every framework shaped like it, registers a proxy for an
+// INTERFACE the application declares and never implements. There is no class in any
+// source tree and no annotation on the interface, so the two things that make a bean
+// elsewhere in this folder are both absent. Matched on the SUPERTYPE's simple-name
+// SUFFIX, the way cfg_stub_base_suffix matches a generated gRPC base, because the
+// base is chosen per store (MongoRepository, JpaRepository, ElasticsearchRepository,
+// a house base named FooRepository) and the list cannot be enumerated.
+//
+// The suffix is deliberately the whole word, so `PersonFinder` is not a repository
+// and neither is a plain interface. A base that carries the suffix is not itself a
+// bean: the rule requires a type to EXTEND one, so CrudRepository is excluded by
+// having no such supertype of its own.
+cfg_repository_base_suffix("Repository").
+cfg_repository_base_suffix("Dao").
+// An annotation that marks a repository base as NOT itself a bean. A house base over
+// a framework base carries it, and the framework does not register a proxy for it.
+cfg_no_repository_ann("NoRepositoryBean").
+
+// ── (17) REGISTRIES THAT NAME CONFIGURATION CLASSES ─────────────────────────
+// Spring Boot registers a starter's classes from a FILE, not from a scan:
+// META-INF/spring/<service>.imports (every entry is a configuration class) and, in the
+// older form, META-INF/spring.factories. In spring.factories only these keys name
+// configuration classes, which the container registers as beans named by their
+// fully-qualified name; every other key (ApplicationContextInitializer,
+// EnvironmentPostProcessor, …) names a class SpringFactoriesLoader instantiates and
+// calls, which is a registered type and not a bean.
+cfg_config_registry_key("org.springframework.boot.autoconfigure.EnableAutoConfiguration").
+cfg_config_registry_key("org.springframework.boot.actuate.autoconfigure.web.ManagementContextConfiguration").
+cfg_config_registry_key("org.springframework.cloud.bootstrap.BootstrapConfiguration").
+
+// ── (18) CLASSES AN ANNOTATION ARGUMENT REGISTERS AS BEANS ──────────────────
+// @EnableConfigurationProperties({A.class, B.class}) registers each listed class as a
+// bean named "<prefix>-<fully.qualified.Name>" (the fully-qualified name alone when the
+// class names no prefix), the name Boot's registrar gives it.
+cfg_enable_props_ann("EnableConfigurationProperties").
+
+// ── (19) PACKAGE SCANS THAT REGISTER BEANS WITHOUT A STEREOTYPE ─────────────
+// cfg_pkg_scan_ann(Annotation, Kind). The annotation names base packages (value /
+// basePackages, Ant-style `*` and `**` allowed) or classes whose packages are scanned
+// (basePackageClasses); with none of the three, the annotated class's own package.
+//   mapper      every INTERFACE in a scanned package becomes a MyBatis mapper proxy bean
+//               (mybatis-spring's ClassPathMapperScanner)
+//   properties  every @ConfigurationProperties class that is not also a @Component
+cfg_pkg_scan_ann("MapperScan", "mapper").
+cfg_pkg_scan_ann("ConfigurationPropertiesScan", "properties").
+cfg_pkg_scan_arg("value").  cfg_pkg_scan_arg("basePackages").
+
+// An annotation that makes the INTERFACE it sits on a proxy bean, as a Spring Data
+// repository base does for its children: MyBatis @Mapper (registered by the Boot
+// starter's scan of the application package).
+cfg_mapper_ann("Mapper").
+// The same simple name imported from this package is a different annotation. MapStruct's
+// @Mapper marks an interface it GENERATES an implementation of, and whether that is a
+// bean depends on its componentModel, so it is not a proxy bean.
+cfg_foreign_ann("Mapper", "org.mapstruct").
+
+// ── (20) APPLICATION EVENTS: publishEvent(e) runs every listener e's type fits ──
+// Spring hands a published event to each listener whose declared event type the
+// event's type is assignable to. No call site names the listener, so without a model
+// the publisher and the listener are independent in the graph
+// (call-edge-generation/event_dispatch.dl).
+//
+// cfg_event_publisher(TypeSimpleName, Method): a call to Method on a receiver declared
+// as this type publishes its first argument. Simple names, matched against an
+// external node (`external:<qualified name>`) or a staged library type. A project
+// class that happens to declare its own publishEvent is neither, so a call on it stays
+// the ordinary call it is.
+cfg_event_publisher("ApplicationEventPublisher", "publishEvent").
+cfg_event_publisher("ApplicationContext", "publishEvent").
+cfg_event_publisher("ConfigurableApplicationContext", "publishEvent").
+cfg_event_publisher("AbstractApplicationContext", "publishEvent").
+cfg_event_publisher("GenericApplicationContext", "publishEvent").
+cfg_event_publisher("AnnotationConfigApplicationContext", "publishEvent").
+cfg_event_publisher("WebApplicationContext", "publishEvent").
+cfg_event_publisher("ConfigurableWebApplicationContext", "publishEvent").
+cfg_event_publisher("ApplicationEventMulticaster", "multicastEvent").
+cfg_event_publisher("SimpleApplicationEventMulticaster", "multicastEvent").
+// A method annotation that makes the method a listener. Its event type is the one
+// parameter's type, or the types named in cfg_event_listener_arg when given.
+cfg_event_listener_ann("EventListener").
+cfg_event_listener_ann("TransactionalEventListener").
+cfg_event_listener_arg("classes").   cfg_event_listener_arg("value").
+// cfg_event_listener_type(TypeSimpleName, Method): implementing this type makes
+// Method a listener, for the type of its one parameter (ApplicationListener<E> is
+// implemented by onApplicationEvent(E)).
+cfg_event_listener_type("ApplicationListener", "onApplicationEvent").
+// A listener declared for one of these receives every published event: a plain object
+// is wrapped in a PayloadApplicationEvent, which is an ApplicationEvent.
+cfg_event_catch_all("ApplicationEvent").
+cfg_event_catch_all("Object").
+
+// ── (21) ENTITY LIFECYCLE CALLBACKS: save(entity) runs its @PrePersist … listeners ──
+// A JPA provider runs an entity's lifecycle callbacks, and those of the listener classes
+// @EntityListeners names, when the entity is written. No call site names them
+// (call-edge-generation/entity_lifecycle.dl).
+//
+// cfg_entity_store(TypeSimpleName): a write call on a receiver declared as this type, or
+// as a subtype of it (a project repository interface), writes its first argument.
+cfg_entity_store("Repository").            cfg_entity_store("CrudRepository").
+cfg_entity_store("ListCrudRepository").    cfg_entity_store("PagingAndSortingRepository").
+cfg_entity_store("JpaRepository").         cfg_entity_store("EntityManager").
+cfg_entity_store("Session").
+// cfg_entity_write(Method, Phase): the callbacks of which phase a write method runs. A
+// save or merge may insert or update, so it runs both.
+cfg_entity_write("save", "persist").         cfg_entity_write("save", "update").
+cfg_entity_write("saveAndFlush", "persist"). cfg_entity_write("saveAndFlush", "update").
+cfg_entity_write("merge", "persist").        cfg_entity_write("merge", "update").
+cfg_entity_write("saveOrUpdate", "persist"). cfg_entity_write("saveOrUpdate", "update").
+cfg_entity_write("persist", "persist").      cfg_entity_write("update", "update").
+cfg_entity_write("delete", "remove").        cfg_entity_write("remove", "remove").
+// cfg_entity_callback_ann(Annotation, Phase)
+cfg_entity_callback_ann("PrePersist", "persist").  cfg_entity_callback_ann("PostPersist", "persist").
+cfg_entity_callback_ann("PreUpdate", "update").    cfg_entity_callback_ann("PostUpdate", "update").
+cfg_entity_callback_ann("PreRemove", "remove").    cfg_entity_callback_ann("PostRemove", "remove").
+// a type annotation whose class arguments are listener classes
+cfg_entity_listeners_ann("EntityListeners").

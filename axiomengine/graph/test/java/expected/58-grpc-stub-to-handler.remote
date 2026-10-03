@@ -1,0 +1,2 @@
+grpc	exact	probe.GreeterGrpc/sayBye	probe.GrpcProbe#async(GreeterStub) -> probe.GreeterService#sayBye(String,Observer)
+grpc	exact	probe.GreeterGrpc/sayHello	probe.GrpcProbe#blocking(GreeterBlockingStub) -> probe.GreeterService#sayHello(String,Observer)

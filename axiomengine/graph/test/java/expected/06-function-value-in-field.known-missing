@@ -1,0 +1,4 @@
+# (empty) — the two gaps that lived here are closed. `Asset#<init> -> Asset#readInit(String)` and
+# `-> Asset#readRef(String)` are calls written in FIELD INITIALIZERS, which javac compiles into the
+# constructor. They were invisible to this comparison rather than unresolved: the engine keys such
+# a call by the owning TYPE and normalize_edges dropped those rows, so neither side could see them.

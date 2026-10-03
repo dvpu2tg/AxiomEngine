@@ -1,0 +1,65 @@
+// ============================================================================
+// FRAMEWORK-BEHAVIOR · ENTRY POINTS
+//
+// entry_point(Method, Reason): a method the RUNTIME calls, which is why nothing in the
+// project does. The bundle's entry_points table and entry_reachable are built from it,
+// and impact and context read it to name a dependent as a declared root. Same relation
+// and the same reason vocabulary as java/, python/ and typescript/.
+//
+// Every framework name is in knobs.dl. The route, rpc and consumer rules reuse what
+// destinations.dl already derives, so an entry point and a remote edge cannot disagree
+// about which method is the handler.
+// ============================================================================
+
+// main: a static Main, and the method top-level statements compile to
+entry_point(m, "main") :- method_name("client", m, "Main"), method_modifier("client", m, "static").
+entry_point(m, "main") :- method_is_top_level_entry("client", m).
+
+// test: a test method, and the set-up and tear-down around it
+entry_point(m, "test") :- attr_on(m, "METHOD", n, _), cs_test_attr(n).
+entry_point(m, "test") :- attr_on(m, "METHOD", n, _), cs_test_lifecycle_attr(n).
+entry_point(m, "test") :- attr_on(m, "METHOD", n0, _), cs_attr_suffix(n0, n), cs_test_attr(n).
+entry_point(m, "test") :- attr_on(m, "METHOD", n0, _), cs_attr_suffix(n0, n), cs_test_lifecycle_attr(n).
+// `[FactAttribute]` is the same attribute as `[Fact]`
+cs_attr_suffix(n0, n) :- attr_on(_, "METHOD", n0, _), strlen(n0) > 9,
+    substr(n0, strlen(n0) - 9, 9) = "Attribute", n = substr(n0, 0, strlen(n0) - 9).
+
+// http, grpc_service, queue: the handlers the destination rules found
+entry_point(m, "http") :- serves_destination(m, tr, _), cs_remote_transport_http(tr).
+entry_point(m, "grpc_service") :- serves_destination(m, tr, _), cs_remote_transport_grpc(tr).
+entry_point(m, "queue") :- serves_destination(m, tr, _), !cs_remote_transport_http(tr), !cs_remote_transport_grpc(tr).
+
+// lifecycle, framework_hook, hub, orm_hook: a method the framework calls because its
+// type derives from a framework base or implements a framework interface. The pairs are
+// cs_framework_callback in knobs.dl.
+//
+// The base is matched by its written name, since the framework is not in the source and
+// usually not staged. A name that resolves to a type IN the source is the project's own
+// `Hub` or `Migration`, not the framework's, and is skipped.
+cs_framework_type_direct(gk, bn) :- heritage_slot("client", t, pos, bn0, _, _), last_segment(bn0, bn),
+    cs_framework_base(bn), !cs_heritage_in_source(t, pos), type_group("client", t, gk).
+cs_framework_base(bn) :- cs_framework_callback(bn, _, _).
+cs_heritage_in_source(t, pos) :- heritage_slot("client", t, pos, _, _, tr), tr != "",
+    type_ref_resolves("client", tr, bgk), type_group("client", _, bgk).
+cs_heritage_in_source(t, pos) :- heritage_slot("client", t, pos, bn, ba, ""), type_module("client", t, mod),
+    type_name_resolves("client", mod, bn, ba, bgk), type_group("client", _, bgk).
+// ... and through the project's own bases: `WidgetWorker : WorkerBase`, `WorkerBase : BackgroundService`.
+cs_framework_type(gk, bn) :- cs_framework_type_direct(gk, bn).
+cs_framework_type(gk, bn) :- type_ancestor("client", gk, agk), cs_framework_type_direct(agk, bn).
+
+entry_point(m, r) :- cs_framework_type(gk, bn), cs_framework_callback(bn, mn, r), mn != "*",
+    method_in_type("client", gk, m), method_name("client", m, mn).
+entry_point(m, r) :- cs_framework_type(gk, bn), cs_framework_callback(bn, "*", r),
+    method_in_type("client", gk, m), method_kind("client", m, "METHOD"),
+    member_access("client", m, "PUBLIC"), !method_is_static("client", m).
+entry_point(m, r) :- cs_framework_type(gk, bn), cs_framework_callback_prefix(bn, p, r),
+    method_in_type("client", gk, m), method_kind("client", m, "METHOD"), method_name("client", m, mn),
+    strlen(mn) >= strlen(p), substr(mn, 0, strlen(p)) = p,
+    member_access("client", m, "PUBLIC"), !method_is_static("client", m).
+cs_framework_callback_prefix(bn, p, r) :- cs_framework_callback(bn, mn, r), strlen(mn) > 1,
+    substr(mn, strlen(mn) - 1, 1) = "*", p = substr(mn, 0, strlen(mn) - 1).
+last_segment_demand(n) :- heritage_slot("client", _, _, n, _, _).
+
+// Everything the runtime can reach from an entry point over resolved in-source calls.
+entry_reachable(m) :- entry_point(m, _).
+entry_reachable(callee) :- entry_reachable(caller), call_chain_edge(_, caller, _, callee, "client", _, _).

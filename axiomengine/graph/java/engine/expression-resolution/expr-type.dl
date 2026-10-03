@@ -1,0 +1,724 @@
+// ============================================================================
+// Expression Resolution · EXPRESSION TYPE  (receiver typing — base cases)
+//
+// expr_type(Prov, ExprHash, TypeHash): the static type of a receiver expression,
+// so a call on it can be dispatched. Consumes the resolution substrate —
+// reference-types (declared types of fields/params/locals) and the type hierarchy
+// (this/super) — through which the generic and type-variable-bound resolutions
+// already folded into type_ref_resolves flow in. Provenance rides through: a
+// field/param/local typed to a library type yields prov="lib" (the receiver-side
+// external boundary).
+//
+// Uses raw java_expression rather than the expr_* projections — those, once
+// consumed, materialize one row per expression (hundreds of thousands, mostly
+// irrelevant); the raw import is already loaded and indexed. expr_ultimate_type /
+// expr_ultimate_method (containment) are kept: they are already materialized and
+// carry the enclosing type / caller (including synthetic <clinit>/<init> methods for
+// initializer blocks).
+//
+// BASE CASES only: field / parameter / local / this / super / object-creation / cast
+// receivers. Chained-call (a().b()) and static-qualifier receivers are mutually
+// recursive with callee resolution and are added in the call-graph phase.
+//
+// java_expression (25): 0 kind  10 literalValue  14 referencedEntityKind
+//   24 expressionUniqueHash
+// java_field (14): 0 name 8 typeRegistryLinkHash(owner) 13 uniqueHash
+// java_method_parameter (13): 0 paramName 2 methodRegistryLinkHash 12 uniqueHash
+// java_local_variable (19): 0 name 14 methodRegistryLinkHash 18 uniqueHash
+// ============================================================================
+
+// ── Field receiver (field.m()) — the field declared in the enclosing type ───
+// PREFERRED/FALLBACK, the same shape this file already uses for a monomorphic local
+// and for a monomorphic return: when config-resolution/di.dl has pinned this
+// receiver to the ONE bean the container can inject (di_recv_mono), the DECLARED
+// (usually interface) type is the wrong answer and must not also be emitted —
+// otherwise the site keeps the abstract declaration as a second candidate and stays
+// multi_inferred instead of collapsing to a known_edge.
+// STRATIFICATION: di_recv_mono reads base facts + containment + type_ancestor only
+// (never expr_type / expr_call_candidate), so this negation sits below the expr_type
+// fixpoint — the identical argument made for !method_return_mono further down.
+// NO-OP without a container: di_recv_mono is empty for any project with no
+// injection annotations, so every non-DI receiver keeps its declared type exactly.
+expr_type(prov, e, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "FIELD", _, _, _, _, _, _, _, _, _, e),
+    !di_recv_mono(e, _),
+    expr_ultimate_type("client", e, encl),
+    java_field(name, _, _, _, _, _, _, _, encl, _, _, _, _, field),
+    field_type_resolves(prov, field, _, t).
+
+// ── Parameter receiver ──────────────────────────────────────────────────────
+expr_type(prov, e, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "PARAMETER", _, _, _, _, _, _, _, _, _, e),
+    expr_ultimate_method("client", e, m),
+    java_method_parameter(name, _, m, _, _, _, _, _, _, _, _, _, param),
+    method_param_type_resolves(prov, param, _, t).
+
+// ── Local-variable receiver — FLOW-TYPED (monomorphic) then declared (fallback) ─
+// RTA/CHA answers the wrong question: for `Closeable x = new FileImageInputStream()`,
+// the DECLARED type Closeable fans x.close() to all 127 implementers, but x HOLDS a
+// FileImageInputStream — one target. Type the receiver by what flows into it, not by
+// what it's declared as. This is tighter AND more sound (removes the 126 false edges).
+//
+// local_new_type — the concrete type(s) of the local's OBJECT_CREATION initializer
+// (LOCAL_VAR_INITIALIZER root, owned by the local).
+local_new_type(local, prov, t) :-
+    java_expression("OBJECT_CREATION", "ROOT", "LOCAL_VAR_INITIALIZER", "LOCAL_VARIABLE", _, local, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, obj),
+    object_creation_type_resolves(prov, obj, _, t).
+// local_other_flow — flow we can't pin to a concrete `new`, so declared+RTA must
+// stand: (a) a non-`new` initializer (method call / cast / ternary / another var),
+// (b) a reassignment of the local. Either makes the held type not fully known.
+local_other_flow(local) :-
+    java_expression(k, "ROOT", "LOCAL_VAR_INITIALIZER", "LOCAL_VARIABLE", _, local, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _),
+    k != "OBJECT_CREATION".
+local_other_flow(local) :-
+    java_local_variable(name, _, _, _, _, _, _, _, _, _, _, _, _, m, _, _, _, _, local),
+    java_expression(_, "ASSIGNMENT_TARGET", _, _, _, _, _, _, _, _, name, _, _, _, "LOCAL_VARIABLE", _, _, _, _, _, _, _, _, _, e),
+    expr_ultimate_method("client", e, m).
+// Monomorphic when a concrete `new` pins it and nothing else flows in.
+local_monomorphic(local) :- local_new_type(local, _, _), !local_other_flow(local).
+
+// (1) Flow-typed: receiver takes the concrete initializer type — PREFERRED.
+expr_type(prov, e, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "LOCAL_VARIABLE", _, _, _, _, _, _, _, _, _, e),
+    expr_ultimate_method("client", e, m),
+    java_local_variable(name, _, _, _, _, _, _, _, _, _, _, _, _, m, _, _, _, _, local),
+    local_monomorphic(local),
+    local_new_type(local, prov, t).
+// expr_exact_type(e, t) — the receiver's EXACT runtime type is known (a monomorphic
+// local, or a direct `new C()`). CHA fan-out is unnecessary AND wrong for these: the
+// runtime type is C, not the interface, so x.close() dispatches to exactly one method.
+// callee-resolution gates the virtual_override fan-out off for these receivers.
+expr_exact_type(e, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "LOCAL_VARIABLE", _, _, _, _, _, _, _, _, _, e),
+    expr_ultimate_method("client", e, m),
+    java_local_variable(name, _, _, _, _, _, _, _, _, _, _, _, _, m, _, _, _, _, local),
+    local_monomorphic(local),
+    local_new_type(local, _, t).
+expr_exact_type(e, t) :- java_expression("OBJECT_CREATION", _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    object_creation_type_resolves(_, e, _, t).
+
+// (2) Declared type — FALLBACK only when the held type isn't a known concrete `new`
+// (RTA then fans, as before, but only where flow is genuinely unknown).
+expr_type(prov, e, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "LOCAL_VARIABLE", _, _, _, _, _, _, _, _, _, e),
+    expr_ultimate_method("client", e, m),
+    java_local_variable(name, _, _, _, _, _, _, _, _, _, _, _, _, m, _, _, _, _, local),
+    !local_monomorphic(local),
+    local_var_type_resolves(prov, local, _, t).
+// (2b) The same, for a PATTERN BINDING — `instanceof Leaf l`, a switch arm's `case Leaf l`, and a
+// record deconstruction's components. The parser tags these use sites PATTERN_BINDING_VARIABLE, so
+// neither clause above matched them. There is no flow-typed counterpart: a pattern binding has no
+// initializer, its type is the one written in the pattern, and the match already guarantees it.
+expr_type(prov, e, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "PATTERN_BINDING_VARIABLE", _, _, _, _, _, _, _, _, _, e),
+    expr_ultimate_method("client", e, m),
+    java_local_variable(name, _, _, _, _, _, _, _, _, _, _, _, _, m, _, _, _, _, local),
+    local_var_type_resolves(prov, local, _, t).
+
+// ── this — the enclosing type (always client) ───────────────────────────────
+// A QUALIFIED this is excluded: it names its own type and is handled below. Without the guard the
+// site acquires BOTH types and an exact answer degrades to a two-way multi_inferred, which trades
+// a wrong answer for an imprecise one instead of fixing it.
+expr_type("client", e, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, _, _, _, _, "THIS", _, _, _, _, _, _, _, _, _, e),
+    !qualified_this(e, _),
+    expr_ultimate_type("client", e, t).
+
+// ── QUALIFIED this (`Outer.this`) — the type it NAMES, not the innermost enclosing one ──────
+// The parser emits it as a THIS-kinded node carrying a TYPE-kinded QUALIFIER child, with the
+// enclosing type already resolved in potentialQualifiedName (or, for a simple name the extractor
+// could not qualify, resolvable in the file's scope exactly as a static qualifier is).
+//
+// Typed as the enclosing class instead, an inner class calling `Outer.this.m()` is answered with
+// its OWN m whenever the names collide — a wrong known_edge, and one that reads as a self-recursive
+// method to any consumer traversing it — and with nothing at all when they do not collide. The
+// collision is not the rare case: a name clash is what forces the qualification in the first place.
+//
+// These rules deliberately do NOT read expr_type for the qualifier. Doing so would put expr_type in
+// a cycle with the negation above and leave the rule set unstratified; resolving the qualifier from
+// the same base facts the static-qualifier rules use keeps qualified_this in a lower stratum.
+qualified_this_names(e, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, _, _, _, _, "THIS", _, _, _, _, _, _, _, _, _, e),
+    java_expression(_, "QUALIFIER", _, _, _, _, e, _, _, _, _, _, _, _, "TYPE", _, _, pqn, _, _, _, _, _, _, _),
+    pqn != "",
+    java_type(_, pqn, _, _, _, _, _, _, _, _, _, _, _, t).
+qualified_this_names(e, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, _, _, _, _, "THIS", _, _, _, _, _, _, _, _, _, e),
+    java_expression(_, "QUALIFIER", _, _, _, _, e, _, _, _, name, _, _, _, "TYPE", _, _, "", _, _, _, _, _, _, _),
+    name != "",
+    expr_ultimate_type("client", e, encl),
+    java_type(_, _, _, _, _, _, _, file, _, _, _, _, _, encl),
+    type_resolves_in_file("client", name, file, t).
+
+// ...and only when the named type actually ENCLOSES the expression. `Outer.this` is legal only
+// inside Outer or something nested in it, so requiring the nesting (type_in_type, reconstructed
+// from line ranges in containment/type-nesting.dl) keeps the rule from typing a receiver off an
+// unrelated type whose simple name happens to resolve. The second clause is `Outer.this` written
+// in Outer itself, where the named type IS the enclosing one and nothing is strictly nested.
+qualified_this(e, t) :- qualified_this_names(e, t),
+    expr_ultimate_type("client", e, encl),
+    type_in_type("client", encl, t).
+qualified_this(e, t) :- qualified_this_names(e, t),
+    expr_ultimate_type("client", e, t).
+
+expr_type("client", e, t) :- qualified_this(e, t).
+
+// ── super — the enclosing type's direct parent (client or lib) ──────────────
+expr_type("client", e, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, _, _, _, _, "SUPER", _, _, _, _, _, _, _, _, _, e),
+    expr_ultimate_type("client", e, encl),
+    type_parent(encl, t),
+    java_type(_, _, _, _, _, _, _, _, _, _, _, _, _, t).
+expr_type("lib", e, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, _, _, _, _, "SUPER", _, _, _, _, _, _, _, _, _, e),
+    expr_ultimate_type("client", e, encl),
+    type_parent(encl, t),
+    lib_type(_, _, _, _, _, _, _, _, _, _, _, _, _, t).
+
+// ── new X() — the created type ──────────────────────────────────────────────
+expr_type(prov, e, t) :- java_expression("OBJECT_CREATION", _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    object_creation_type_resolves(prov, e, _, t).
+
+// ── new Iface(){...} anonymous class — its value's type is the named super/interface, resolved
+// through the same OBJECT_CREATION_TYPE reference (object_creation_type_resolves keys on the ref
+// context, not the expr kind). Lets the anon-ctor candidate route via the super constructor. ──
+expr_type(prov, e, t) :- java_expression("ANONYMOUS_CLASS_CREATION", _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    object_creation_type_resolves(prov, e, _, t).
+// ...AND the anonymous class itself (col 17, anonymousTypeHash). The value's RUNTIME type is the
+// anon subclass, and its overrides are the code that actually runs: without this the interface
+// declaration is the only type flowing out, so `Runnable r = new Runnable(){...}; r.run();`
+// resolves to java.lang.Runnable#run() (an empty lib declaration) and the anon body is
+// unreachable — a call the JVM really makes (verified with the dynamic oracle). Keeping BOTH
+// types is the sound superset: the declaration (for the boundary) plus the override (the body).
+// java_expression (25): 17 anonymousTypeHash
+expr_type("client", e, anon) :- java_expression("ANONYMOUS_CLASS_CREATION", _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, anon, _, _, _, _, _, _, _, e),
+    anon != "".
+
+// ── (Foo) x — the cast target type ──────────────────────────────────────────
+expr_type(prov, e, t) :- java_expression("CAST_EXPRESSION", _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    cast_type_resolves(prov, e, _, t).
+
+// ── Inherited-field receiver — the field is declared in a supertype, not the
+// enclosing type (class Sub extends Base; using Base's field). Fields are inherited
+// like methods, so walk type_ancestor. (The same-type case above stays for the
+// common, cheaper path; this adds the ancestor reach.)
+expr_type(prov, e, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "FIELD", _, _, _, _, _, _, _, _, _, e),
+    !di_recv_mono(e, _),
+    expr_ultimate_type("client", e, encl),
+    type_ancestor(encl, anc),
+    java_field(name, _, _, _, _, _, _, _, anc, _, _, _, _, field),
+    field_type_resolves(prov, field, _, t).
+
+// ── Outer-class field receiver — an inner class uses a field of a lexically
+// enclosing OUTER class (Java scoping: an inner class sees the outer's members
+// directly, no qualifier). The field is not declared in the inner type or its
+// ancestors, but in an enclosing type — walk type_in_type (transitive nesting). This
+// is the field analog of the outer-type method lookup; without it a bare `field.m()`
+// inside an inner class, where `field` belongs to the outer class, drops.
+expr_type(prov, e, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "FIELD", _, _, _, _, _, _, _, _, _, e),
+    !di_recv_mono(e, _),
+    expr_ultimate_type("client", e, encl),
+    type_in_type("client", encl, outer),
+    java_field(name, _, _, _, _, _, _, _, outer, _, _, _, _, field),
+    field_type_resolves(prov, field, _, t).
+
+// ── Qualified field-access receiver (obj.f.m(), a.b.f.m(), Type.F.m()) — the
+// field is resolved in the QUALIFIER's type, not the enclosing type. The field name
+// is on the FIELD_ACCESS node (col 10); its QUALIFIER child is typed recursively (a
+// local / parameter / field / this / static type / nested field-access), then the
+// field is looked up there. Without this, a FIELD_ACCESS receiver falls through to
+// the implicit-this field rule above, which searches the wrong (enclosing) type and
+// drops the call. Direct declaration first, inherited fields via type_ancestor next.
+expr_type(prov, e, t) :- java_expression("FIELD_ACCESS", _, _, _, _, _, _, _, _, _, name, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    java_expression(_, "QUALIFIER", _, _, _, _, e, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, q),
+    expr_type(_, q, qtype),
+    java_field(name, _, _, _, _, _, _, _, qtype, _, _, _, _, field),
+    field_type_resolves(prov, field, _, t).
+expr_type(prov, e, t) :- java_expression("FIELD_ACCESS", _, _, _, _, _, _, _, _, _, name, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    java_expression(_, "QUALIFIER", _, _, _, _, e, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, q),
+    expr_type(_, q, qtype),
+    type_ancestor(qtype, anc),
+    java_field(name, _, _, _, _, _, _, _, anc, _, _, _, _, field),
+    field_type_resolves(prov, field, _, t).
+
+// ── Library field-access — the field lives on a library type: a static field of a
+// JDK/third-party type (Type.FIELD.m()), a field whose qualifier resolved to a
+// library type (libObj.field.m()), or a field a client class inherits from a library
+// superclass. lib_field supplies the declaration and field_type_resolves prov="lib"
+// (lib-hierarchy.dl) its declared type. Direct on the qualifier type, then inherited
+// via type_ancestor; plus the implicit-this / receiver case inheriting from a lib
+// ancestor of the enclosing type.
+expr_type(prov, e, t) :- java_expression("FIELD_ACCESS", _, _, _, _, _, _, _, _, _, name, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    java_expression(_, "QUALIFIER", _, _, _, _, e, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, q),
+    expr_type(_, q, qtype),
+    lib_field(name, _, _, _, _, _, _, _, qtype, _, _, _, _, field),
+    field_type_resolves(prov, field, _, t).
+expr_type(prov, e, t) :- java_expression("FIELD_ACCESS", _, _, _, _, _, _, _, _, _, name, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    java_expression(_, "QUALIFIER", _, _, _, _, e, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, q),
+    expr_type(_, q, qtype),
+    type_ancestor(qtype, anc),
+    lib_field(name, _, _, _, _, _, _, _, anc, _, _, _, _, field),
+    field_type_resolves(prov, field, _, t).
+// Implicit-this / bare field receiver inheriting from a library ancestor.
+expr_type(prov, e, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "FIELD", _, _, _, _, _, _, _, _, _, e),
+    !di_recv_mono(e, _),
+    expr_ultimate_type("client", e, encl),
+    type_ancestor(encl, anc),
+    lib_field(name, _, _, _, _, _, _, _, anc, _, _, _, _, field),
+    field_type_resolves(prov, field, _, t).
+
+// ── Enum-constant receiver (EnumType.CONSTANT.method(), CONSTANT.method()) — the
+// parser emits an enum-constant access as a FIELD_ACCESS (qualified) or a bare
+// IDENTIFIER_REFERENCE (unqualified), both with referencedEntityKind=FIELD, but an
+// enum constant is NOT a java_field — it lives in java_enum_constant (owner enum in
+// col 9). The receiver's type is that owning enum, so a call on it dispatches the
+// enum's methods (declared, or inherited from java.lang.Enum). Qualified: the
+// QUALIFIER resolves to the enum type and the name is one of its constants. Bare: the
+// name is a constant of the enclosing enum (constant used inside its own enum body).
+// java_enum_constant (13): 0 name  9 typeRegistryLinkHash(owner enum)
+expr_type("client", e, enum) :- java_expression("FIELD_ACCESS", _, _, _, _, _, _, _, _, _, name, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    java_expression(_, "QUALIFIER", _, _, _, _, e, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, q),
+    expr_type(_, q, enum),
+    java_enum_constant(name, _, _, _, _, _, _, _, _, enum, _, _, _).
+expr_type("lib", e, enum) :- java_expression("FIELD_ACCESS", _, _, _, _, _, _, _, _, _, name, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    java_expression(_, "QUALIFIER", _, _, _, _, e, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, q),
+    expr_type(_, q, enum),
+    lib_enum_constant(name, _, _, _, _, _, _, _, _, enum, _, _, _).
+expr_type("client", e, enum) :- java_expression("IDENTIFIER_REFERENCE", _, _, _, _, _, _, _, _, _, name, _, _, _, "FIELD", _, _, _, _, _, _, _, _, _, e),
+    expr_ultimate_type("client", e, enum),
+    java_enum_constant(name, _, _, _, _, _, _, _, _, enum, _, _, _).
+
+// ── STATIC-IMPORTED member as a bare receiver (import static Outer.Mode.FAST; FAST.label(),
+// import static Entities.EscapeMode.extended; extended.codepointForName(..)) ─────────────
+// The bare name is a constant or field of the type the file's static import names (owner in
+// packageOrTypeName, resolved by qualifiedName, so a nested owner needs the full chain), not of
+// the enclosing type. The rules above only look at the enclosing type and its ancestors, so the
+// receiver stayed untyped and every call on it died. An enum constant types as its enum; a field
+// as its declared type. Both single (static_import_owner) and on-demand (static_import_star_owner)
+// forms, client and library owners. static_import_* read java_import only, so no stratum moves.
+static_import_ident(e, name, ownerQName) :- java_expression("IDENTIFIER_REFERENCE", _, _, _, _, _, _, _, _, _, name, _, _, _, "FIELD", _, _, _, _, _, _, _, _, _, e),
+    name != "",
+    expr_ultimate_type("client", e, encl),
+    java_type(_, _, _, _, _, _, _, file, _, _, _, _, _, encl),
+    static_import_owner(name, ownerQName, file).
+static_import_ident(e, name, ownerQName) :- java_expression("IDENTIFIER_REFERENCE", _, _, _, _, _, _, _, _, _, name, _, _, _, "FIELD", _, _, _, _, _, _, _, _, _, e),
+    name != "",
+    expr_ultimate_type("client", e, encl),
+    java_type(_, _, _, _, _, _, _, file, _, _, _, _, _, encl),
+    static_import_star_owner(ownerQName, file).
+expr_type("client", e, enum) :- static_import_ident(e, name, ownerQName),
+    java_type(_, ownerQName, _, _, _, _, _, _, _, _, _, _, _, enum),
+    java_enum_constant(name, _, _, _, _, _, _, _, _, enum, _, _, _).
+expr_type("lib", e, enum) :- static_import_ident(e, name, ownerQName),
+    lib_type(_, ownerQName, _, _, _, _, _, _, _, _, _, _, _, enum),
+    lib_enum_constant(name, _, _, _, _, _, _, _, _, enum, _, _, _).
+expr_type(prov, e, t) :- static_import_ident(e, name, ownerQName),
+    java_type(_, ownerQName, _, _, _, _, _, _, _, _, _, _, _, owner),
+    java_field(name, _, _, _, _, _, _, _, owner, _, _, _, _, field),
+    field_type_resolves(prov, field, _, t).
+expr_type(prov, e, t) :- static_import_ident(e, name, ownerQName),
+    lib_type(_, ownerQName, _, _, _, _, _, _, _, _, _, _, _, owner),
+    lib_field(name, _, _, _, _, _, _, _, owner, _, _, _, _, field),
+    field_type_resolves(prov, field, _, t).
+
+// ── Static-qualifier receiver (Arrays.asList()) — the receiver is a TYPE
+// reference; its "type" is that type itself. The parser records the resolved
+// qualified name in potentialQualifiedName (col 17); match it to a type's
+// qualifiedName, client or lib.
+expr_type("client", e, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, _, _, _, _, "TYPE", _, _, qname, _, _, _, _, _, _, e),
+    qname != "",
+    java_type(_, qname, _, _, _, _, _, _, _, _, _, _, _, t).
+expr_type("lib", e, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, _, _, _, _, "TYPE", _, _, qname, _, _, _, _, _, _, e),
+    qname != "",
+    lib_type(_, qname, _, _, _, _, _, _, _, _, _, _, _, t).
+// Static-qualifier receiver whose potentialQualifiedName is EMPTY. The parser only fills pqn
+// when an import or an inline FQN makes the mapping unambiguous; for a CLIENT type named by
+// simple name in the same file / same package (Utils.helper(), Probe.s()) it is blank, so the
+// two rules above cannot fire and the whole call site dies as ambiguous_unknown. Resolve the
+// simple name (literalValue, col 11) with the SAME file-scoped machinery type references use
+// (type_resolves_in_file: single-type import > same-file > same-package > wildcard; client-only
+// by construction), anchored on the file of the enclosing type of the expression.
+// java_type (14): 8 filePath 14 hash
+expr_type("client", e, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "TYPE", _, _, "", _, _, _, _, _, _, e),
+    name != "",
+    expr_ultimate_type("client", e, encl),
+    java_type(_, _, _, _, _, _, _, file, _, _, _, _, _, encl),
+    type_resolves_in_file("client", name, file, t).
+
+// ── Nested type reached THROUGH ITS OUTER (Outer.Inner.m(), HttpConnection.KeyVal.create(..)) ──
+// The extractor emits `Outer.Inner` as a TYPE-kinded FIELD_ACCESS whose literalValue is the inner
+// simple name and whose QUALIFIER is the outer; its potentialQualifiedName is a package-level
+// guess (`pkg.Inner`) that names nothing once a nested type is registered by its chain. Type the
+// qualifier first, then take the member type of that name: declared in the outer or inherited
+// from an ancestor (member_type), for a client outer; declared directly in it, for a library
+// outer (lib_member_type). Positive recursion through expr_type; member_type reads containment
+// and the type hierarchy only.
+expr_type("client", e, inner) :- java_expression("FIELD_ACCESS", _, _, _, _, _, _, _, _, _, name, _, _, _, "TYPE", _, _, _, _, _, _, _, _, _, e),
+    name != "",
+    java_expression(_, "QUALIFIER", _, _, _, _, e, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, q),
+    expr_type("client", q, outer),
+    member_type(outer, name, inner).
+expr_type("lib", e, inner) :- java_expression("FIELD_ACCESS", _, _, _, _, _, _, _, _, _, name, _, _, _, "TYPE", _, _, _, _, _, _, _, _, _, e),
+    name != "",
+    java_expression(_, "QUALIFIER", _, _, _, _, e, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, q),
+    expr_type("lib", q, outer),
+    lib_member_type(outer, name, inner).
+
+// ── FIX-18: a potentialQualifiedName that names NO KNOWN TYPE is a GUESS, not a fact ─────
+// For a type reached by WILDCARD import (`import util.*; Strings.trim(x)`) the extractor cannot
+// know the package and stamps the CURRENT one — `app.Strings`, which does not exist. The pqn rules
+// above require an exact qualifiedName match, so they silently produced nothing and the call site
+// died. When the pqn names no type at all, fall back to resolving the SIMPLE name in the file's
+// scope, which is what handles wildcard imports (type_resolves_in_file).
+type_qname_known(q) :- java_type(_, q, _, _, _, _, _, _, _, _, _, _, _, _).
+type_qname_known(q) :- lib_type(_, q, _, _, _, _, _, _, _, _, _, _, _, _).
+expr_type(prov, e, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "TYPE", _, _, pqn, _, _, _, _, _, _, e),
+    name != "", pqn != "",
+    !type_qname_known(pqn),
+    expr_ultimate_type("client", e, encl),
+    java_type(_, _, _, _, _, _, _, file, _, _, _, _, _, encl),
+    type_resolves_in_file(prov, name, file, t).
+
+// ── FIX-18b: INLINE FULLY-QUALIFIED type qualifier (`util.Strings.pad(x)`) ────────────────
+// The extractor emits this as a FIELD_ACCESS whose literalValue is the simple type name and whose
+// QUALIFIER chain spells the package, so neither the pqn rules nor the simple-name rules match.
+// Rebuild the dotted name from the chain and match it against a real type's qualifiedName. Works
+// for any package depth because the reconstruction recurses through the qualifier chain.
+// Only a NAME can spell a segment of an FQN: an IDENTIFIER_REFERENCE at the head, FIELD_ACCESS
+// steps after it. Without the kind guard a STRING LITERAL whose value happens to equal a type's
+// qualifiedName ("com.x.Outer.Inner" handed to Class.forName) was typed as that type, and the
+// parameter it flowed into then contradicted every String-typed overload.
+dotted_qualifier(e, name) :- java_expression("IDENTIFIER_REFERENCE", _, _, _, _, _, _, _, _, _, name, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    name != "",
+    !expr_has_qualifier_child(e).
+expr_has_qualifier_child(e) :- java_expression(_, "QUALIFIER", _, _, _, _, e, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _).
+dotted_qualifier(e, full) :- java_expression("FIELD_ACCESS", _, _, _, _, _, _, _, _, _, name, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    name != "",
+    java_expression(_, "QUALIFIER", _, _, _, _, e, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, q),
+    dotted_qualifier(q, prefix),
+    full = cat(prefix, cat(".", name)).
+expr_type("client", e, t) :- dotted_qualifier(e, full),
+    java_type(_, full, _, _, _, _, _, _, _, _, _, _, _, t).
+expr_type("lib", e, t) :- dotted_qualifier(e, full),
+    lib_type(_, full, _, _, _, _, _, _, _, _, _, _, _, t).
+
+// ── FIX-13: CONSTANT-LOOKING TYPE QUALIFIER stamped as a FIELD by the extractor ──────
+// `URI.create(..)`, `UUID.randomUUID()`, `JSON.parseObject(..)`, `JWT.decode(..)`: the extractor
+// classifies an ALL-CAPS identifier as a constant, so the receiver arrives as
+// referencedEntityKind=FIELD with an EMPTY potentialQualifiedName instead of TYPE. Every
+// static-method call on such a type then has an untypeable receiver and dies as
+// ambiguous_unknown — silently removing whole sink families (fastjson JSON.parseObject / CWE-502,
+// auth0 JWT / CWE-345, java.net.URI|URL / CWE-918, java.util.UUID as a sanitizer).
+// The extractor deliberately leaves IDENTIFIER_REFERENCE ambiguous for the resolution layer to
+// disambiguate; this rule is that disambiguation.
+//
+// SOUND-BY-GUARD: only fires when the name resolves to a type in scope AND no field of that name is
+// visible on the enclosing type or its ancestors AND no local/parameter of that name is in scope —
+// so a real constant is never shadowed by a same-named type. All three negated relations read only
+// containment + base facts (never expr_type), so they sit in a lower stratum.
+ident_field_recv(e, name) :- java_expression("IDENTIFIER_REFERENCE", "RECEIVER", _, _, _, _, _, _, _, _, name, _, _, _, "FIELD", _, _, "", _, _, _, _, _, _, e), name != "".
+ident_field_recv(e, name) :- java_expression("IDENTIFIER_REFERENCE", "QUALIFIER", _, _, _, _, _, _, _, _, name, _, _, _, "FIELD", _, _, "", _, _, _, _, _, _, e), name != "".
+// a real field of that name is visible (own type, client ancestor, or lib ancestor)
+recv_name_is_field(e) :- ident_field_recv(e, name), expr_ultimate_type("client", e, encl),
+    java_field(name, _, _, _, _, _, _, _, encl, _, _, _, _, _).
+recv_name_is_field(e) :- ident_field_recv(e, name), expr_ultimate_type("client", e, encl),
+    type_ancestor(encl, anc), java_field(name, _, _, _, _, _, _, _, anc, _, _, _, _, _).
+recv_name_is_field(e) :- ident_field_recv(e, name), expr_ultimate_type("client", e, encl),
+    type_ancestor(encl, anc), lib_field(name, _, _, _, _, _, _, _, anc, _, _, _, _, _).
+// a local or parameter of that name is in scope
+recv_name_is_local(e) :- ident_field_recv(e, name), expr_ultimate_method("client", e, m),
+    java_local_variable(name, _, _, _, _, _, _, _, _, _, _, _, _, m, _, _, _, _, _).
+recv_name_is_local(e) :- ident_field_recv(e, name), expr_ultimate_method("client", e, m),
+    java_method_parameter(name, _, m, _, _, _, _, _, _, _, _, _, _).
+// then: it is a TYPE qualifier — resolve the simple name file-scoped, else implicit java.lang
+expr_type(prov, e, t) :- ident_field_recv(e, name),
+    !recv_name_is_field(e), !recv_name_is_local(e),
+    expr_ultimate_type("client", e, encl),
+    java_type(_, _, _, _, _, _, _, file, _, _, _, _, _, encl),
+    type_resolves_in_file(prov, name, file, t).
+expr_type("lib", e, t) :- ident_field_recv(e, name),
+    !recv_name_is_field(e), !recv_name_is_local(e),
+    type_resolves_java_lang("lib", name, t).
+
+// ── Array-access receiver (arr[i].m()) — the element type. An array variable
+// resolves to its element type (the array reference's typeName is the element), so
+// the element type of arr[i] is just the type of the indexed array expression (its
+// QUALIFIER child). Recurses into that child's type.
+expr_type(prov, e, t) :- java_expression("ARRAY_ACCESS", _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    java_expression(_, "QUALIFIER", _, _, _, _, e, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, arr),
+    expr_type(prov, arr, t).
+
+// ── Literal receiver ("abc".length()) — a String / text-block literal is a String;
+// other literals are primitives with no instance methods, so only the String case
+// yields a receiver type. literalType (col 9) -> value name (literal_value_type, in
+// overload.dl) -> java.lang.String.
+expr_type("lib", e, t) :- java_expression("LITERAL", _, _, _, _, _, _, _, _, litType, _, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    literal_value_type(litType, "String"),
+    lib_type("String", "java.lang.String", _, _, _, _, _, _, _, _, _, _, _, t).
+
+// ── String CONCATENATION (a + b) — JLS 15.18.1: if either operand is a String, the
+// result is a String. Without this, `"x = " + v` (the most common argument expression in
+// real code) has NO type, so overload pruning has nothing to work with at that position
+// and the DON'T-EMPTY fallback keeps every arity-matched overload: one
+// System.out.println("a" + b) fanned to all NINE println overloads. Typing the concat
+// collapses it to println(String). Left-nested concats resolve by positive recursion (the
+// inner + is typed String first, then the outer sees a String-typed operand).
+// java_expression (25): 10 literalType 14 operatorString
+str_concat_type(t) :- lib_type("String", "java.lang.String", _, _, _, _, _, _, _, _, _, _, _, t).
+// operand is a String / text-block LITERAL
+expr_type("lib", e, t) :- java_expression("BINARY_EXPRESSION", _, _, _, _, _, _, _, _, _, _, _, _, "+", _, _, _, _, _, _, _, _, _, _, e),
+    java_expression("LITERAL", _, _, _, _, _, e, _, _, litType, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _),
+    literal_value_type(litType, "String"),
+    str_concat_type(t).
+// operand is an expression already typed java.lang.String (nested concat, a String local,
+// a String-returning call, …)
+expr_type("lib", e, t) :- java_expression("BINARY_EXPRESSION", _, _, _, _, _, _, _, _, _, _, _, _, "+", _, _, _, _, _, _, _, _, _, _, e),
+    java_expression(_, _, _, _, _, _, e, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, operand),
+    expr_type(_, operand, st),
+    str_concat_type(st),
+    str_concat_type(t).
+
+// ── Class-literal receiver (Foo.class.getName()) — the type is java.lang.Class.
+expr_type("lib", e, t) :- java_expression("CLASS_LITERAL", _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    lib_type("Class", "java.lang.Class", _, _, _, _, _, _, _, _, _, _, _, t).
+
+// ── FIX-19: TERNARY receiver `(f ? a : b).m()` — the value is one branch or the other, so the
+// receiver's type is the UNION of the two branch types. Without this the whole call site is
+// unresolved even when both branches are perfectly well typed.
+expr_type(prov, e, t) :- java_expression("TERNARY_EXPRESSION", _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    java_expression(_, "TERNARY_TRUE", _, _, _, _, e, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, br),
+    expr_type(prov, br, t).
+expr_type(prov, e, t) :- java_expression("TERNARY_EXPRESSION", _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    java_expression(_, "TERNARY_FALSE", _, _, _, _, e, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, br),
+    expr_type(prov, br, t).
+
+// ── Parenthesized receiver ((expr).m()) — the type of the inner expression (the
+// PARENTHESIZED_INNER child). Same recursive shape as ARRAY_ACCESS above.
+expr_type(prov, e, t) :- java_expression("PARENTHESIZED", _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    java_expression(_, "PARENTHESIZED_INNER", _, _, _, _, e, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, inner),
+    expr_type(prov, inner, t).
+
+// ── Instanceof pattern-variable receiver (if (o instanceof Foo f) f.m()). The parser
+// emits the binding as an IDENTIFIER_REFERENCE with edgeRole PATTERN_VARIABLE whose
+// PARENT is the instanceof expression, so the binding's type is that expression's
+// instanceof_type_resolves. But the USE of the binding carries no referencedEntityHash
+// (often mis-tagged FIELD), so — like a local — connect it back by (name, enclosing
+// method). Over-approximate (name-scoped, ignores branch scoping); sound for reachability.
+pattern_var_type(name, method, prov, t) :- java_expression("IDENTIFIER_REFERENCE", "PATTERN_VARIABLE", _, _, _, _, inst, _, _, _, name, _, _, _, _, _, _, _, _, _, _, _, _, _, decl),
+    instanceof_type_resolves(prov, inst, _, t),
+    expr_ultimate_method("client", decl, method).
+// FIX-20: the same binding for a SWITCH type pattern (`case Circle c -> c.area()`). Every arm's
+// type reference is owned by the SWITCH expression, not by the individual pattern, so the pattern
+// and its type are paired by POSITION within that switch (arm 0 -> Circle/c, arm 1 -> Square/q).
+// Without this, a call on any switch-pattern variable is unresolved.
+// java_expression (25): 7 parentExpressionHash 8 position
+// java_type_reference (18): 7 position 16 ownerHash 17 ownerKind 18 hash
+pattern_var_type(name, method, prov, t) :- java_expression("IDENTIFIER_REFERENCE", "SWITCH_TYPE_PATTERN", _, _, _, _, sw, pos, _, _, name, _, _, _, _, _, _, _, _, _, _, _, _, _, decl),
+    java_type_reference(_, "SWITCH_TYPE_PATTERN", _, _, _, _, pos, "0", _, _, _, _, _, _, _, sw, "EXPRESSION", ref),
+    type_ref_resolves(prov, ref, t),
+    expr_ultimate_method("client", decl, method).
+expr_type(prov, e, t) :- java_expression("IDENTIFIER_REFERENCE", _, _, _, _, _, _, _, _, _, name, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    name != "",
+    expr_ultimate_method("client", e, method),
+    pattern_var_type(name, method, prov, t).
+
+// ── applicable_candidate(Call, Callee) — the candidate set a VALUE may be typed from ──
+// The candidates of a call gated by ARITY, and nothing more. This is what every rule that
+// reads a call's return type (a chained receiver), a parameter type at a position (a lambda
+// or method-reference argument) or a flow into a parameter joins on, instead of the raw
+// name-based expr_call_candidate.
+//
+// Why arity and not the resolved overload: overload disambiguation negates a mismatch
+// predicate that reads expr_type, so feeding expr_resolves_to_method back into expr_type
+// would put a negation inside its own fixpoint. arity_match is positive in the same SCC
+// (base counts plus the candidate set), so it can be read here without changing the
+// stratification, and it is the gate expr_arg_ok itself applies: a candidate that fails
+// it never becomes an edge, so typing anything from its return was never justified.
+//
+// Why it matters (#581): `String name()` and `Item name(String)` on one class. With the raw
+// candidate set, `item.name().equals(x)` typed the receiver as String OR Item, and the
+// chained site resolved to `Item.equals` as a known_edge — a client method that never runs,
+// with a blast radius covering every `String.equals` in the codebase. Arity keeps `name()`
+// alone, and the site is correctly a library boundary.
+//
+// A method reference writes no arguments, so it bypasses the plain arity clause exactly as
+// expr_arg_ok does; its own arity is settled against the SAM in overload.dl.
+applicable_candidate(call, callee) :- arity_match(call, callee).
+applicable_candidate(call, callee) :- expr_call_candidate(call, callee),
+    call_is_method_ref(call).
+
+// ── Chained-call receiver (a().b()) — a() is itself a METHOD_INVOCATION; its type
+// is the declared return type of the method(s) it may invoke. Mutually recursive
+// with callee resolution (callee-resolution.dl): resolving a() gives the callee,
+// whose return type types a() so that b() can be resolved on it.
+//
+// Uses applicable_candidate (the arity-gated candidate set, above), NOT the
+// disambiguated expr_resolves_to_method — see its header for why the negation in
+// overload disambiguation forbids the latter. The extra return types the gated set
+// still admits are a sound over-approximation of the chained receiver.
+// RETURN-VALUE FLOW-TYPING — prefer a method's concrete `return new T()` type over its declared
+// (often interface) return, so a chained receiver a() dispatches b() on the concrete T instead of
+// CHA-fanning the interface to every implementer (the factory idiom `Conn connect(){ return new
+// FileConn(); }`). LOW stratum (base facts + object_creation_type_resolves, no expr_call_candidate
+// dep), so the !mono negation on the fallbacks stays stratified — NOT expr_exact_type, which would
+// read expr_call_candidate (post-CHA-fan) and put the negation in the fan cycle. java_expression
+// OBJECT_CREATION return: edgeRole(1)=ROOT rootCtx(2)=RETURN_VALUE ownerKind(3)=RETURN_STATEMENT
+// ownerHash(5)=method uniqueHash(24)=obj.
+method_return_new(prov, m, t) :-
+    java_expression("OBJECT_CREATION", "ROOT", "RETURN_VALUE", "RETURN_STATEMENT", _, m, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, obj),
+    object_creation_type_resolves(prov, obj, _, t).
+method_return_other(m) :-
+    java_expression(k, "ROOT", "RETURN_VALUE", "RETURN_STATEMENT", _, m, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _),
+    k != "OBJECT_CREATION".
+method_return_other(m) :- method_return_new(_, m, t1), method_return_new(_, m, t2), t1 != t2.
+method_return_mono(prov, m, t) :- method_return_new(prov, m, t), !method_return_other(m).
+
+// PREFERRED: chained receiver = the callee's concrete monomorphic return (no CHA fan).
+expr_type(prov, call, t) :- applicable_candidate(call, callee),
+    method_return_mono(prov, callee, t).
+// FALLBACK (declared return) — only when the callee's return isn't a single concrete `new`.
+expr_type(prov, call, retType) :- applicable_candidate(call, callee),
+    method_return_type_resolves(prov, callee, _, retType),
+    !method_return_mono(_, callee, _).
+// Chained off a LIBRARY method (jdkCall().next()): the lib callee's resolved base
+// return type (lib-hierarchy.dl). This is what lets JDK pipelines chain —
+// items.stream().map(..).collect(..) — each hop's Stream/List base types the next.
+expr_type("lib", call, retType) :- applicable_candidate(call, callee),
+    lib_method_return_type(callee, retType),
+    !method_return_mono(_, callee, _).
+
+// ── Type-variable-return substitution (list.get(0).m(), it.next().m()). When a lib
+// callee returns a bare type variable E, the real type is the receiver-site's binding
+// for E: a List<String> receiver makes get()'s E = String. recv_decl_ref carries the
+// receiver's declaration reference (where the type arguments were written);
+// type_arg_binding (type-arg-binding.dl) holds E -> String there. The type variable is
+// substituted on the method's declaring type, so inherited generics (ArrayList<String>
+// receiver, get from List) resolve too — the binding is propagated up the supertype
+// chain in type-arg-binding.dl.
+recv_decl_ref(recv, ref, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "LOCAL_VARIABLE", _, _, _, _, _, _, _, _, _, recv),
+    expr_ultimate_method("client", recv, m),
+    java_local_variable(name, _, _, _, _, _, _, _, _, _, _, _, _, m, _, _, _, _, local),
+    local_var_type_resolves(_, local, ref, t).
+// A PATTERN BINDING used as a receiver — `if (n instanceof Pair(Leaf a, …)) a.render()`, and the
+// switch-arm form. The parser tags these use sites PATTERN_BINDING_VARIABLE rather than
+// LOCAL_VARIABLE (consistently, as of the pattern-binding fix), so the clause above never matched
+// them and the binding's declared type could not reach the call, however well it had been resolved.
+// Same shape as the local clause: match the written name inside the enclosing method.
+recv_decl_ref(recv, ref, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "PATTERN_BINDING_VARIABLE", _, _, _, _, _, _, _, _, _, recv),
+    expr_ultimate_method("client", recv, m),
+    java_local_variable(name, _, _, _, _, _, _, _, _, _, _, _, _, m, _, _, _, _, local),
+    local_var_type_resolves(_, local, ref, t).
+
+// Type arguments written on the INITIALIZER rather than the declaration: `var x = new
+// Holder<String>()`, or a raw/inferred declaration `Holder x = new Holder<String>()`.
+// The declared-type ref above carries no arguments there; the object-creation expression
+// that initializes the local does. This is a one-hop syntactic link (the object creation
+// names the local as its owner) — not dataflow, so no reassignment/target-typing tracking.
+recv_decl_ref(recv, ref, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "LOCAL_VARIABLE", _, _, _, _, _, _, _, _, _, recv),
+    expr_ultimate_method("client", recv, m),
+    java_local_variable(name, _, _, _, _, _, _, _, _, _, _, _, _, m, _, _, _, _, local),
+    java_expression("OBJECT_CREATION", _, "LOCAL_VAR_INITIALIZER", "LOCAL_VARIABLE", _, local, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, objExpr),
+    object_creation_type_resolves(_, objExpr, ref, t).
+recv_decl_ref(recv, ref, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "FIELD", _, _, _, _, _, _, _, _, _, recv),
+    expr_ultimate_type("client", recv, encl),
+    java_field(name, _, _, _, _, _, _, _, encl, _, _, _, _, field),
+    field_type_resolves(_, field, ref, t).
+// Type arguments on a field's object-creation INITIALIZER rather than its declared type
+// (raw field: `Holder f = new Holder<String>()`). The field-initializer object creation
+// names the field as its owner (FIELD_INITIALIZER / FIELD) — the field analogue of the
+// local rule above. Java has no `var` fields, so a raw field still resolves its base type
+// (and callee) via the declared type; this only supplies the missing type arguments.
+recv_decl_ref(recv, ref, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "FIELD", _, _, _, _, _, _, _, _, _, recv),
+    expr_ultimate_type("client", recv, encl),
+    java_field(name, _, _, _, _, _, _, _, encl, _, _, _, _, field),
+    java_expression("OBJECT_CREATION", _, "FIELD_INITIALIZER", "FIELD", _, field, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, objExpr),
+    object_creation_type_resolves(_, objExpr, ref, t).
+recv_decl_ref(recv, ref, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "PARAMETER", _, _, _, _, _, _, _, _, _, recv),
+    expr_ultimate_method("client", recv, m),
+    java_method_parameter(name, _, m, _, _, _, _, _, _, _, _, _, param),
+    method_param_type_resolves(_, param, ref, t).
+
+// ── THE RECEIVER IS ITSELF A CALL ────────────────────────────────────────────────────────
+// Every clause above requires the receiver to be a LOCAL_VARIABLE, FIELD or PARAMETER reference —
+// a place where a type was written down. `make().get(0)` has no such place, and neither does
+// `var xs = make()`, which writes no type at all. The arguments are on the callee's declared
+// RETURN type, which is a reference like any other, and lambda.dl already reads it for exactly
+// this shape when typing a lambda PARAMETER (`recv_tvar_type` (ii-b)). It was never read for
+// typing a call's type-variable RETURN, so `xs.get(0).id()` resolved from a parameter and a field
+// and not from a return — the same information, one hop away, that no clause reached.
+//
+// Measured on a held-out project before writing this: a `var` over `entrySet()`, a call on
+// `getTypeParameters()`, and a lambda over `values().stream()` are the three most common shapes
+// among its remaining unresolved sites.
+recv_decl_ref(recv, retRef, recvType) :- applicable_candidate(recv, innerCallee),
+    method_return_type_resolves(_, innerCallee, retRef, recvType).
+recv_decl_ref(recv, retRef, recvType) :- applicable_candidate(recv, innerCallee),
+    lib_type_reference(_, "METHOD_RETURN", _, _, _, _, _, "0", _, _, _, _, _, _, _, innerCallee, "METHOD", retRef),
+    lib_type_ref_resolves(_, retRef, recvType).
+
+// `var xs = make(); xs.get(0)` — the receiver IS a local, but `var` writes no type, so the
+// declared-type clause above yields a reference carrying no arguments. The initializer's callee
+// return type carries them. The field analogue is unnecessary: Java has no `var` fields, so a
+// field always writes its type.
+recv_decl_ref(recv, retRef, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "LOCAL_VARIABLE", _, _, _, _, _, _, _, _, _, recv),
+    expr_ultimate_method("client", recv, m),
+    java_local_variable(name, _, _, _, _, _, _, _, _, _, _, _, _, m, _, _, _, _, local),
+    java_expression("METHOD_INVOCATION", _, "LOCAL_VAR_INITIALIZER", "LOCAL_VARIABLE", _, local, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, initExpr),
+    applicable_candidate(initExpr, callee),
+    method_return_type_resolves(_, callee, retRef, t).
+recv_decl_ref(recv, retRef, t) :- java_expression(_, _, _, _, _, _, _, _, _, _, name, _, _, _, "LOCAL_VARIABLE", _, _, _, _, _, _, _, _, _, recv),
+    expr_ultimate_method("client", recv, m),
+    java_local_variable(name, _, _, _, _, _, _, _, _, _, _, _, _, m, _, _, _, _, local),
+    java_expression("METHOD_INVOCATION", _, "LOCAL_VAR_INITIALIZER", "LOCAL_VARIABLE", _, local, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, initExpr),
+    applicable_candidate(initExpr, callee),
+    lib_type_reference(_, "METHOD_RETURN", _, _, _, _, _, "0", _, _, _, _, _, _, _, callee, "METHOD", retRef),
+    lib_type_ref_resolves(_, retRef, t).
+
+type_prov(t, "client") :- java_type(_, _, _, _, _, _, _, _, _, _, _, _, _, t).
+type_prov(t, "lib") :- lib_type(_, _, _, _, _, _, _, _, _, _, _, _, _, t).
+
+// The type variable is resolved on the method's DECLARING type (owner), not the
+// receiver's declared type: get() on ArrayList<String> is declared on List and returns
+// List's E. type_arg_binding carries the concrete argument up to that declaring type
+// (directly when owner IS the receiver's type, or via super_tvar_rename when inherited),
+// so the lookup keys on the method owner and the receiver's declared type is left free.
+expr_type(prov, call, argType) :- call_site(call, _, recv),
+    recv_decl_ref(recv, ref, _),
+    applicable_candidate(call, callee),
+    lib_method_ret_tvar(callee, owner, tv),
+    type_arg_binding(ref, owner, tv, argType),
+    type_prov(argType, prov).
+// Same substitution for a CLIENT method returning its class's type variable (Holder<U,…>
+// getU() -> U), keyed on the client class's own type_arg_binding (owner = the class).
+expr_type(prov, call, argType) :- call_site(call, _, recv),
+    recv_decl_ref(recv, ref, _),
+    applicable_candidate(call, callee),
+    java_method_ret_tvar(callee, owner, tv),
+    type_arg_binding(ref, owner, tv, argType),
+    type_prov(argType, prov).
+
+// THE ARGUMENT MAY NOT BE WRITTEN ON ANY REFERENCE. Both clauses above key on recv_decl_ref plus
+// type_arg_binding, which needs the type arguments written on a declaration — fine for
+// `Map<String,Widget> m`, useless when the receiver's arguments were computed per expression: a
+// `var` local taking them from its initializer, a for-each variable taking them from the iterable,
+// or a nested return argument (`Map#entrySet()` : `Set<Map.Entry<K,V>>`) taking them from the
+// receiver. `for (var e : m.entrySet()) e.getValue()` is all three at once, and it is why
+// getValue's V had nothing to resolve against even though the binding had been computed.
+//
+// expr_arg_binding carries exactly those, per EXPRESSION — which is what makes them sound, since a
+// library method has one return reference shared by every call site in the program. Bounded by the
+// method's declaring type (owner) for the same reason the clauses above are: a variable named V is
+// not distinctive on its own.
+expr_type(prov, call, argType) :- call_site(call, _, recv),
+    applicable_candidate(call, callee),
+    lib_method_ret_tvar(callee, owner, tv),
+    expr_arg_binding(recv, owner, tv, argType),
+    type_prov(argType, prov).
+expr_type(prov, call, argType) :- call_site(call, _, recv),
+    applicable_candidate(call, callee),
+    java_method_ret_tvar(callee, owner, tv),
+    expr_arg_binding(recv, owner, tv, argType),
+    type_prov(argType, prov).
+
+// ── this / super by NODE KIND (not referencedEntityKind) — a THIS_REFERENCE /
+// SUPER_REFERENCE node used as a method-reference QUALIFIER carries no
+// referencedEntityKind, so the refKind-based cases above miss it. Type it by kind.
+expr_type("client", e, t) :- java_expression("THIS_REFERENCE", _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    expr_ultimate_type("client", e, t).
+expr_type("client", e, t) :- java_expression("SUPER_REFERENCE", _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    expr_ultimate_type("client", e, encl),
+    type_parent(encl, t),
+    java_type(_, _, _, _, _, _, _, _, _, _, _, _, _, t).
+expr_type("lib", e, t) :- java_expression("SUPER_REFERENCE", _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, e),
+    expr_ultimate_type("client", e, encl),
+    type_parent(encl, t),
+    lib_type(_, _, _, _, _, _, _, _, _, _, _, _, _, t).

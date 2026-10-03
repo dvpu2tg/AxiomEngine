@@ -1,0 +1,4 @@
+nominal	LangFeatures.Op.apply@10 -> LangFeatures.Op.apply@8
+nominal	LangFeatures.Op.apply@10 -> LangFeatures.Op.apply@9
+nominal	LangFeatures.Shape.area -> LangFeatures.Circle.area
+nominal	LangFeatures.Shape.area -> LangFeatures.Square.area

@@ -1,0 +1,268 @@
+// ============================================================================
+// CALL-EDGE-GEN · CALL CHAIN  (confidence-classified, queryable call graph)
+//
+// A classified client call graph for graph queries + change-impact tracing. Every client
+// call site is labeled by HOW WELL it resolved, and every edge is tagged client vs lib —
+// so a chain always terminates at a KNOWN reason: a library boundary, or an unresolved
+// (unknown) target. This is the layer a name-based graph (tree-sitter style, name matching)
+// cannot produce: it distinguishes a CONCRETE edge from a virtual-dispatch FAN-OUT from a
+// DEAD-END, instead of stamping every edge with a flat "extracted".
+//
+// CONSUMES:
+//   call_site                 — every client call site (the universe; incl. unresolved).
+//   expr_resolves_to_method   — the disambiguated callee set per call site (0, 1, or N).
+//   client_calls_client / _lib — provenance-split resolved edges (calls.dl).
+//   expr_ultimate_method      — rolls a call site up to its enclosing caller method
+//                               (containment), giving method→method chains.
+//
+// CONFIDENCE CLASSES (call_class):
+//   known_edge        — exactly ONE resolved target (concrete / monomorphic). Chain continues.
+//   fan_capped        — the CHA fan exceeded --dispatch-cap and was refused; the row names the
+//                       declared base, dispatch_capped_site the count. Not monomorphic (#664).
+//   multi_inferred    — 2+ resolved targets (virtual-dispatch / overload fan-out). Chain branches
+//                       across a SOUND set (the true target is among them).
+//   ambiguous_unknown — a real call site that resolved to NOTHING (unresolved receiver, missing
+//                       type, reflection). Chain DEAD-ENDS here — an analysis blind spot.
+//
+// PROVENANCE (call_edge col 3):
+//   "client" — the traversable graph body (carries the confidence class).
+//   "lib"    — a client→lib BOUNDARY edge: marked, and NOT expanded (client-only build). The
+//              chain ENDS at the library here.
+//
+// STRATIFICATION: the count aggregate reads expr_resolves_to_method (a base fact of the
+// resolution pass) — no negation, no cyclic dependency. call_class/call_edge are positive
+// derivations on top. Exports live in export/ (kept out of this rules file).
+// ============================================================================
+
+// ── invocation-site universe: ALL invocation forms, not just method calls ──────────────
+// Method calls (call_site), object creation (new X → constructor), and method references
+// (X::m). expr_resolves_to_method already resolves all three; the SITE universe must match
+// it, or object-creation / method-ref sites get no class and never appear in call_edge.
+// Reuses existing relations: call_site (call-site.dl), object_creation_site (call-site.dl),
+// call_is_method_ref (overload.dl). The kind is carried so queries can filter by form.
+invocation_site(call, "method") :- call_site(call, _, _).                       // obj.m() / Class.m() / super.m()
+// (B) UNQUALIFIED call — m() written with NO receiver (implicit this, a same-class/inherited
+// static, or a static import). call_site is receiver-SHAPED (its 3rd term is the receiver
+// expression, consumed for dispatch), so it structurally cannot represent a receiverless call;
+// the parser/engine model those as call_unqualified (expression-resolution/call-site.dl).
+// Without this clause such a site never enters the site universe, so call_target_count,
+// call_class and every call_chain_edge rule skip it — the call is dropped SILENTLY, not even
+// flagged ambiguous_unknown, even though callee-resolution.dl already resolved it into
+// expr_call_candidate/expr_resolves_to_method. Measured before this fix: cassandra 6.0-alpha2
+// 27,533 unqualified sites -> 0 rows (qualified: 126,269 -> 126,269).
+invocation_site(call, "method") :- call_unqualified(call, _).                   // m() — implicit this / unqualified static
+// (A) seed "new" from the RAW OBJECT_CREATION node, NOT the resolution-gated object_creation_site —
+// otherwise an unresolvable `new ThirdPartyX()` produces no site and is never flagged. Symmetric
+// with method/ref/ctor_delegate (which all seed from raw nodes), so unresolved ctors → ambiguous_unknown.
+invocation_site(call, "new")    :- java_expression("OBJECT_CREATION", _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, call).
+// (C) exclude ARRAY_CONSTRUCTOR refs (T[]::new): they resolve as array creation, not a call
+// (callee-resolution.dl — no candidate on purpose), so counting them would mislabel a false blind spot.
+array_ctor_ref(call) :- java_expression("METHOD_REFERENCE", _, _, _, _, _, _, _, _, _, _, "ARRAY_CONSTRUCTOR", _, _, _, _, _, _, _, _, _, _, _, _, call).
+invocation_site(call, "ref")    :- call_is_method_ref(call), !array_ctor_ref(call).  // X::m / obj::m / X::new (not T[]::new)
+// this(...) / super(...) explicit constructor delegation — resolves via expr_call_candidate
+// (callee-resolution.dl); it was resolved but never counted. Now it flows into call_edge.
+invocation_site(call, "ctor_delegate") :- java_expression("CONSTRUCTOR_INVOCATION", _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, call).
+// new Runnable(){ ... } anonymous-class instantiation — a DISTINCT kind from OBJECT_CREATION.
+// No candidate rule resolves it yet, so it currently lands as ambiguous_unknown (correctly
+// flagged as an unresolved site, not silently dropped). Resolving it to the anon/super ctor
+// is a callee-resolution follow-up.
+invocation_site(call, "anon_new") :- java_expression("ANONYMOUS_CLASS_CREATION", _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, call).
+
+// ── per-site disambiguated target count (0 when the call resolved to nothing) ───────────
+call_target_count(call, n) :- invocation_site(call, _),
+    n = count : { expr_resolves_to_method(call, _) }.
+
+// ── caller of a call site (never blank) ─────────────────────────────────────────────────
+// Normally the enclosing METHOD. But a call in a FIELD / static / instance INITIALIZER has no
+// enclosing named method — the parser leaves the owning local's methodRegistryLinkHash empty, so
+// expr_ultimate_method yields "". For those, fall back to the enclosing TYPE (always present via
+// expr_ultimate_type), so FromMethod is never blank. A TYPE_REGISTRY_ hash in FromMethod therefore
+// means "runs in this type's static/instance initializer" (the JVM's <clinit>/<init>).
+// (Negation is stratified: named_method_call reads expr_ultimate_method, computed before this.)
+named_method_call(call) :- expr_ultimate_method("client", call, m), m != "".
+call_from(call, m) :- expr_ultimate_method("client", call, m), m != "".
+call_from(call, t) :- invocation_site(call, _), !named_method_call(call),
+    expr_ultimate_type("client", call, t).
+
+// ── confidence class of each client call site ──────────────────────────────────────────
+// A site whose receiver is an EXTERNAL type (resolution/external-types.dl) is never
+// known_edge: the one client override that resolved is a target, and so is the platform
+// method it overrides, which the boundary row beside it names. multi_inferred is the class
+// that says "the true target is among these", and that is the claim being made.
+site_leaves_client(call) :- external_target(call, _).
+// A site whose CHA fan the dispatch cap REFUSED (resolution/dispatch-cap.dl) keeps the declared
+// base as its one candidate. That is not a resolution: the truth is "one of N overrides, not
+// enumerated", and calling it known_edge told a consumer the site was monomorphic while a
+// reverse closure from any override found no caller (#664). Such a site is `fan_capped`, the
+// tier JavaScript and Python already use: the edge row names the declared base so the site's
+// declared target stays in the graph, the tier says the fan was refused, and
+// dispatch_capped_site carries the count. The conditions are exactly the ones under which the
+// fan would have applied: not an exactly typed receiver, not a super call, a wide base.
+call_fan_capped(call) :- invocation_site(call, _), expr_call_candidate(call, base), cha_wide_base(base),
+    !call_exact_receiver(call), !call_super_receiver(call).
+dispatch_capped_site(call, base, n) :- call_fan_capped(call), expr_call_candidate(call, base),
+    cha_wide_base(base), cha_override_count(base, n).
+call_class(call, "fan_capped")        :- call_fan_capped(call).
+call_class(call, "known_edge")        :- call_target_count(call, 1), !site_leaves_client(call), !call_fan_capped(call).
+call_class(call, "multi_inferred")    :- call_target_count(call, 1), site_leaves_client(call), !call_fan_capped(call).
+call_class(call, "multi_inferred")    :- call_target_count(call, n), n >= 2, !call_fan_capped(call).
+// zero targets — split by REASON: a KNOWN structural gap (anonymous-class creation, which has
+// no candidate rule yet) vs a GENUINE mystery (unresolved receiver / missing type / reflection).
+// Each call site has exactly one invocation kind, so these two rules are disjoint (no negation).
+call_class(call, "ambiguous_anon")    :- call_target_count(call, 0), invocation_site(call, "anon_new").
+call_class(call, "ambiguous_unknown") :- call_target_count(call, 0), invocation_site(call, kind), kind != "anon_new",
+    !site_leaves_client(call).
+// zero client targets but a known EXTERNAL one — an inherited unstaged method reached through a
+// client subclass. The boundary row below is its edge; it is not a blind spot.
+call_class(call, "boundary_lib")      :- call_target_count(call, 0), site_leaves_client(call).
+
+// (The method→method call_edge relation was removed — the merged call_chain_edge below is the
+// single source of truth; entry_reachable traverses it directly.)
+
+// ── ambiguous_unknown as a caller-scoped fact too (a call site with no resolvable target),
+// so change-impact/queries can flag the methods that contain analysis blind spots. ─────────
+method_has_unknown_call(caller, call) :- call_class(call, "ambiguous_unknown"),
+    call_from(call, caller).
+method_has_unknown_call(caller, call) :- call_class(call, "fan_capped"),
+    call_from(call, caller).
+
+// ============================================================================
+// MERGED CALL-CHAIN EDGE — one self-describing row per edge (the single export).
+//   call_chain_edge(FromExpr, FromMethod, ToExpr, ToMethod, Prov, EdgeStatus, Kind)
+//     FromExpr   the call-site expression (where the call is written)
+//     FromMethod the method containing the call site (caller)
+//     ToExpr     the callee's anchor — "-" (a method callee has no call-site expression;
+//                reserved for expression-level linkage)
+//     ToMethod   the resolved callee method  ("-" when unresolved)
+//     Prov       "client" | "lib"
+//     EdgeStatus known_edge | multi_inferred | fan_capped | boundary_lib | ambiguous_unknown | ambiguous_anon
+//     Kind       method | new | ref | ctor_delegate | anon_new
+// Every invocation site appears exactly once per (resolved callee); unresolved sites appear once
+// with ToMethod = "-" so the CSV alone shows where each chain ends. Replaces the split
+// call_edge / call_class / invocation_site exports.
+// ============================================================================
+// resolved client→client
+call_chain_edge(call, caller, "-", callee, "client", cls, kind) :-
+    client_calls_client("client", call, "client", callee),
+    call_from(call, caller),
+    call_class(call, cls), invocation_site(call, kind).
+// resolved client→lib (boundary — not expanded)
+call_chain_edge(call, caller, "-", callee, "lib", "boundary_lib", kind) :-
+    client_calls_lib("client", call, "lib", callee),
+    call_from(call, caller), invocation_site(call, kind).
+// client→EXTERNAL (boundary — the target is outside every staged IR, so ToMethod is a LABEL,
+// `external:<type>.<name>`, not a method hash; the bundle routes it to callee_label by the
+// "external" provenance, as it does for Python's unstaged import paths). A call on a receiver
+// declared as an unstaged base type, or an inherited unstaged method called through a client
+// subclass — resolution/external-types.dl.
+call_chain_edge(call, caller, "-", label, "external", "boundary_lib", kind) :-
+    external_target(call, label),
+    call_from(call, caller), invocation_site(call, kind).
+// unresolved sites — no callee, but keep the row so chain-ends are visible in the one CSV
+call_chain_edge(call, caller, "-", "-", "-", "ambiguous_unknown", kind) :-
+    call_class(call, "ambiguous_unknown"), call_from(call, caller),
+    invocation_site(call, kind).
+// ── AND UNCONDITIONALLY, for any site that emitted no edge at all ───────────────────────
+// The clause above keys on call_class, which is derived from the CANDIDATE count — so a site
+// whose candidates all survive resolution but are then removed by a later filter is classified
+// "resolved" while emitting nothing, and disappears from the output entirely. That is how a
+// client->library hand-off was lost: overload resolution selected two targets, a shadowing
+// filter removed both, and the site was neither an edge nor a declared unknown.
+//
+// A resolution gap must degrade to ambiguous_unknown, never to silence. Keying this on whether
+// an edge was actually derived — rather than on how the site was classified — makes that
+// structural: the next filter that removes every target produces a visible declared unknown
+// instead of deleting the site. Duplicate facts are identical rows, so this subsumes the clause
+// above rather than competing with it.
+call_has_edge(call) :- client_calls_client("client", call, _, _).
+call_has_edge(call) :- client_calls_lib("client", call, _, _).
+call_has_edge(call) :- external_target(call, _).
+call_chain_edge(call, caller, "-", "-", "-", "ambiguous_unknown", kind) :-
+    invocation_site(call, kind),
+    call_from(call, caller),
+    !call_has_edge(call),
+    !call_class(call, "ambiguous_anon").
+// ── RECORD DECONSTRUCTION: the component accessors (JEP 440) ─────────────────────────────────
+// `if (n instanceof Pair(Leaf a, Node ignored))` compiles to `invokevirtual Pair.left()` and
+// `Pair.right()` — javac has to call the accessors to obtain the values it binds. Those calls are
+// written nowhere, so there is no invocation site to resolve and they were absent from the graph.
+//
+// They are real edges rather than lowering, which is the reason for emitting them at all: a record
+// may declare an accessor with a body of its own, so the deconstruction can dispatch into user
+// code. That is not true of the lowering both oracles exclude (the enhanced-for iterator triple,
+// string concat, boxing), where the target is always a JDK member the author did not write.
+//
+// EXACT, not an approximation: a record pattern must bind every component of the record — the
+// language requires the arity to match — so deconstructing Pair calls left() AND right(), always.
+// So the accessor set is the record's whole accessor set, and no component-to-accessor mapping is
+// needed. That matters, because the IR gives every component's PATTERN_BINDING_TYPE reference
+// position 0, so a positional mapping is not available anyway.
+//
+// methodKind = RECORD_ACCESSOR is the parser's own tag, so an accessor is identified rather than
+// guessed at from "zero parameters and a matching name".
+//
+// The call site is the RECORD_PATTERN expression, which is where the calls happen; the `kind`
+// column says record_accessor, so a synthesised edge is never mistaken for a written call. Not an
+// invocation_site, deliberately — the conservation guard asks that every invocation-shaped IR
+// expression reaches the CSV, and inventing a site would put a row on the other side of that ledger.
+record_pattern_accessor(patternExpr, accessor, "client") :-
+    record_pattern_type_resolves(_, patternExpr, _, rec),
+    method_owner("client", rec, accessor),
+    method_kind("client", "RECORD_ACCESSOR", _, accessor).
+record_pattern_accessor(patternExpr, accessor, "lib") :-
+    record_pattern_type_resolves(_, patternExpr, _, rec),
+    method_owner("lib", rec, accessor),
+    method_kind("lib", "RECORD_ACCESSOR", _, accessor).
+
+call_chain_edge(patternExpr, caller, "-", accessor, "client", "known_edge", "record_accessor") :-
+    record_pattern_accessor(patternExpr, accessor, "client"),
+    expr_ultimate_method("client", patternExpr, caller).
+call_chain_edge(patternExpr, caller, "-", accessor, "lib", "boundary_lib", "record_accessor") :-
+    record_pattern_accessor(patternExpr, accessor, "lib"),
+    expr_ultimate_method("client", patternExpr, caller).
+
+// ── TRY-WITH-RESOURCES: the implicit close() ─────────────────────────────────────────────────
+// `try (var w = Widget.create()) { … }` closes w when the block exits, and javac writes that call
+// (`invokevirtual Widget.close()`) into the method. No source line spells it, so there was no site
+// and no edge, and a close() that only ever runs this way had no caller at all. A real edge, not
+// lowering: close() is the resource's own method, often client code with a body of its own. The
+// suppressed-exception plumbing beside it (`addSuppressed`) IS lowering, and both oracles drop it.
+//
+// Exactly one close() per resource, declared or `var`: the resource's type is its declared type,
+// or for `var` its initializer's (JLS 14.4.1). The target is the close() with no parameter that
+// lookup finds on that type, plus, as for a written call, the overrides below an abstract or
+// interface declaration unless the dispatch cap refuses that fan.
+//
+// The site is the resource LOCAL: it has no expression row, and the initializer's expression is a
+// written call site of its own. The `kind` column says resource_close, so a synthesised edge is
+// never mistaken for a written call; like record_accessor it is not an invocation_site.
+// Java 9's `try (existing)` names a variable declared elsewhere and has no resource local, so it
+// is not covered here.
+// java_local_variable (19): 8 scopeKind 11 isVarInferred 13 method 18 hash
+twr_resource(local, m) :- java_local_variable(_, _, _, _, _, _, _, _, "TRY_WITH_RESOURCES", _, _, _, _, m, _, _, _, _, local),
+    m != "".
+twr_resource_type(local, t) :- twr_resource(local, _), local_var_type_resolves(_, local, _, t).
+twr_resource_type(local, t) :- twr_resource(local, _),
+    java_local_variable(_, _, _, _, _, _, _, _, _, _, _, "true", _, _, _, _, _, _, local),
+    local_init_expr(local, e),
+    expr_type(p, e, t), p != "external".
+// java_method / lib_method (22): 0 name 17 parameterCount 21 hash
+close_no_arg(m) :- java_method("close", _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, "0", _, _, _, m).
+close_no_arg(m) :- lib_method("close", _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, "0", _, _, _, m).
+twr_close_decl(local, d) :- twr_resource_type(local, t), method_name_in_type("close", t, d), close_no_arg(d).
+twr_close(local, d) :- twr_close_decl(local, d).
+twr_close(local, c) :- twr_close_decl(local, d), method_override(c, d), !cha_wide_base(d).
+twr_close_count(local, n) :- twr_close(local, _), n = count : { twr_close(local, _) }.
+
+call_chain_edge(local, caller, "-", c, "client", "known_edge", "resource_close") :-
+    twr_close(local, c), method_owner("client", _, c),
+    twr_close_count(local, 1), twr_resource(local, caller).
+call_chain_edge(local, caller, "-", c, "client", "multi_inferred", "resource_close") :-
+    twr_close(local, c), method_owner("client", _, c),
+    twr_close_count(local, n), n >= 2, twr_resource(local, caller).
+call_chain_edge(local, caller, "-", c, "lib", "boundary_lib", "resource_close") :-
+    twr_close(local, c), method_owner("lib", _, c), twr_resource(local, caller).
+
+call_chain_edge(call, caller, "-", "-", "-", "ambiguous_anon", kind) :-
+    call_class(call, "ambiguous_anon"), call_from(call, caller),
+    invocation_site(call, kind).

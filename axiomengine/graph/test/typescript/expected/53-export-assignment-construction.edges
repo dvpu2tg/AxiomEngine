@@ -1,0 +1,4 @@
+known_edge	CONSTRUCTOR_CALL	main#use() @L5 -> LegacyImpl#<new>()
+known_edge	CONSTRUCTOR_CALL	main#use() @L6 -> NamedImpl#<new>()
+known_edge	METHOD_CALL	main#use() @L5 -> LegacyImpl#go()
+known_edge	METHOD_CALL	main#use() @L6 -> NamedImpl#go()

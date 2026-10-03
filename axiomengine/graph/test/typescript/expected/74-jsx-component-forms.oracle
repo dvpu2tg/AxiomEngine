@@ -1,0 +1,7 @@
+oracle=12 engine=16 agree=11 missing=1 (known 1, NEW 0) extra=5
+  known    app#useFactory() -> parts#<arrow@22>()
+  extra    app#App() -> parts#Badge(?)
+  extra    app#App() -> parts#FieldImpl({ label: string },unknown)
+  extra    app#App() -> parts#UserCard({ id: string })
+  extra    app#App() -> settings#Settings()
+  extra    app#useFactory() -> parts#<arrow@22>()@L22

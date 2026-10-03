@@ -1,0 +1,11 @@
+{
+  "name": "@@SCOPE@@/engine-@@PLATFORM@@",
+  "version": "@@VERSION@@",
+  "description": "The @@LABEL@@ engine for AxiomEngine Graph (@axiomengine/code-graph), a resolved call graph of your codebase grounded in formal methods.",
+  "license": "FSL-1.1-Apache-2.0",
+  "os": ["@@OS@@"],
+  "cpu": ["@@CPU@@"],
+  "files": ["*/axiomengine-engine-*", "*/ENGINE_ID", "queries/axiomengine-query-*", "queries/*.id", "README.md", "LICENSE.md"],
+  "repository": { "type": "git", "url": "git+ANONYMIZED-URL" },
+  "publishConfig": { "access": "public" }
+}

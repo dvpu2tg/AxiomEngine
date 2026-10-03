@@ -1,0 +1,247 @@
+// ============================================================================
+// Resolution · NAME RESOLUTION  (a name, in a module, denotes a declaration)
+//
+// The TypeScript answer to Java's `type_resolves_in_file`, and it is a shorter file
+// for one reason: Java resolves a simple name against six competing scopes with a
+// JLS precedence order (single-type import > same-file > same-package > on-demand >
+// java.lang), so most of that file is the ORDERING. Here there are three scopes and
+// they do not compete — an imported name shadows nothing, because importing a name
+// that is already declared in the file is an error the compiler rejects.
+//
+//   1. an IMPORT binding in the same module   (the name is not declared here)
+//   2. a MODULE-LOCAL declaration              (the name is declared here)
+//   3. the GLOBAL scope                        (no import needed: `console`, `Array`)
+//
+// Precedence is only needed for (3) against (1)/(2): a module that declares its own
+// `Promise` shadows the global one. That single negation is the whole ordering.
+//
+// ── STRATIFICATION ──────────────────────────────────────────────────────────
+// Reads module-graph.dl and projections only. Nothing here reads expr_type or
+// expr_call_candidate, so `!name_bound_locally` sits well below the resolution
+// fixpoint and every downstream negation over these relations is legal.
+// ============================================================================
+
+// ── name_binds_any(ModuleHash, Name, Prov, Kind, EntityHash) ────────────────
+// THE TYPE SURFACE: includes type-only imports and exports, because a type-only
+// binding is the correct and often the ONLY answer for a name written in a type
+// position. 45.6% of ecosystem imports are type-only, so a resolver that skipped
+// them would fail on nearly half of all receiver annotations.
+//
+// (1) an import binding, keyed on the LOCAL name — the name as written in THIS file.
+// `import { readFile as read }` binds `read` here and `readFile` there, and mixing
+// the two resolves to nothing without any error to show for it.
+name_binds_any(mod, local, prov, k, ent) :- import_binding("client", _, local, _, mod, ih),
+    local != "",
+    import_binds_any(ih, prov, k, ent).
+
+// (2) a declaration in this module.
+name_binds_any(mod, name, prov, k, ent) :- module_local_decl(prov, mod, name, k, ent),
+    prov = "client".
+name_binds_any(mod, name, prov, k, ent) :- module_local_decl(prov, mod, name, k, ent),
+    prov = "lib".
+
+// (2b) declared inside a NAMESPACE of the same module — the client twin of the rule
+// in lib-scope.dl, and load-bearing for the same reason: a namespace is a lexical
+// scope, and its members must be visible to their siblings without being visible to
+// the world.
+name_binds_any(mod, name, prov, k, ent) :- type_module("client", mod, ns),
+    type_decl("client", _, _, _, "NAMESPACE_TYPE", _, ns),
+    namespace_member("client", ns, name, k, ent),
+    prov = "client".
+
+// (2c) inside an AUGMENTATION block — `declare module "./text" { … }` or `declare
+// global { … }` — the names of the FILE around it. The block is its own module row, so
+// a reference written in it is keyed to that row, while the file's imports and
+// top-level declarations belong to the file's row. The compiler nests the block's scope
+// inside the file's: `import type { Matcher } from "./text"` above the block is what
+// `find(m: Matcher)` inside it means. Without this every such annotation resolved to
+// nothing, and the augmented member lost its parameter types (#422).
+augmentation_host(aug, host) :- module_decl("client", _, _, fp, k, aug),
+    module_kind_is_augmentation(k),
+    module_decl("client", _, _, fp, hk, host),
+    host != aug,
+    module_kind_is_file(hk).
+module_kind_is_file("SOURCE_MODULE").
+module_kind_is_file("DECLARATION_FILE").
+module_kind_is_file("SCRIPT_GLOBAL").
+name_binds_any(aug, name, prov, k, ent) :- augmentation_host(aug, host),
+    import_binding("client", _, name, _, host, ih),
+    name != "",
+    !module_local_decl(_, aug, name, _, _),
+    import_binds_any(ih, prov, k, ent).
+name_binds_any(aug, name, prov, k, ent) :- augmentation_host(aug, host),
+    module_local_decl(prov, host, name, k, ent),
+    !module_local_decl(_, aug, name, _, _).
+
+// (3) the global scope, ONLY when the name is not bound in the module itself. This
+// is the one precedence rule the language needs: a module that declares its own
+// `Buffer` means its own, and admitting the global as a second answer would leave
+// every call on it multi_inferred across two unrelated declarations.
+name_bound_locally(mod, name) :- import_binding("client", _, name, _, mod, _), name != "".
+name_bound_locally(mod, name) :- module_local_decl(_, mod, name, _, _).
+name_bound_locally(aug, name) :- augmentation_host(aug, host),
+    import_binding("client", _, name, _, host, _), name != "".
+name_bound_locally(aug, name) :- augmentation_host(aug, host),
+    module_local_decl(_, host, name, _, _).
+// DEMAND-GATED. Ungated, this rule is |client modules| x |global declarations| —
+// measured on this corpus, 418 modules against 5,268 globals produced 2.1 MILLION
+// name_binds_any rows, almost none of which any rule reads. Gating on the names the
+// source actually writes leaves the answer identical and the table small. The demand
+// set is built from BASE facts only, so it introduces no cycle with the resolution it
+// feeds.
+global_name_demanded(n) :- type_ref("client", _, _, n, _, _, _, _), n != "".
+global_name_demanded(n) :- type_ref("client", _, _, _, n, _, _, _), n != "".
+global_name_demanded(n) :- expr_name("client", n, _), n != "".
+global_name_demanded(n) :- call_site("client", _, n, _, _, _, _), n != "".
+global_name_demanded(g) :- primitive_global_type(_, g).
+global_name_demanded(g) :- literal_kind_global(_, g).
+global_name_demanded("Array").
+global_name_demanded("String").
+// `ReadonlyArray` FOR THE SAME REASON, and leaving it out cost 22 wrong answers on one
+// project — the largest single class of committed-wrong target in the corpus.
+// type-resolution.dl already maps `readonly T[]` to ReadonlyArray<T> rather than
+// descending to the array child, and falls back to the child only when ReadonlyArray is
+// absent from the staged library. But the demand set is built from names WRITTEN in
+// source, and `readonly T[]` never writes the name: the annotation is a TYPE_OPERATOR
+// over an array child. So the global binding was never built, the absent-from-library
+// fallback fired on a library that declares it, and every member call on a readonly
+// array receiver committed to Array's declaration where the compiler names
+// ReadonlyArray's — `slice`, `every`, `map`, `filter`, `join`, `reduce`, `forEach`.
+global_name_demanded("ReadonlyArray").
+
+name_binds_any(mod, name, prov, k, ent) :- module_decl("client", _, _, _, _, mod),
+    global_name_demanded(name),
+    global_decl_visible(mod, name, k, prov, ent),
+    !name_bound_locally(mod, name).
+
+// ── name_binds(ModuleHash, Name, Prov, Kind, EntityHash) ────────────────────
+// THE VALUE SURFACE: the same table with type-only bindings removed, for anything
+// that can become a call edge. §3.3 — a type-only construct must never reach the
+// call graph, and the enforcement point is here rather than at emit time, because a
+// phantom that gets into receiver typing has already produced wrong answers by the
+// time an emit-time filter sees it.
+name_binds(mod, local, prov, k, ent) :- import_binding("client", _, local, _, mod, ih),
+    local != "",
+    import_binds(ih, prov, k, ent).
+name_binds(mod, name, prov, k, ent) :- module_local_decl(prov, mod, name, k, ent),
+    !decl_is_type_only(prov, k, ent).
+name_binds(mod, name, prov, k, ent) :- module_decl("client", _, _, _, _, mod),
+    global_name_demanded(name),
+    global_decl_visible(mod, name, k, prov, ent),
+    !decl_is_type_only(prov, k, ent),
+    !name_bound_locally(mod, name).
+
+// An interface or a type alias has no runtime existence, so its NAME is not a value.
+// Its method signatures are still call targets — that is a member lookup on a type,
+// not a value reference — which is why this predicate is on the declaration and not
+// on its members.
+decl_is_type_only(prov, "TYPE", t) :- type_is_type_only(prov, t).
+
+// ── namespace_member(Prov, NamespaceTypeHash, Name, Kind, EntityHash) ───────
+// `namespace N { export class C {} }` — a namespace is a TYPE row whose members are
+// declarations placed inside it. Java has nothing like this: a nested type there is
+// reached through its outer type's members, whereas a namespace is a VALUE holding
+// declarations, and `N.C` is a qualified name lookup rather than a member access on
+// an instance.
+namespace_member(prov, ns, name, "TYPE", t) :- type_enclosing(prov, ns, t),
+    type_decl(prov, name, _, _, _, _, t).
+namespace_member(prov, ns, name, "METHOD", m) :- method_owner(prov, ns, m),
+    type_decl(prov, _, _, _, "NAMESPACE_TYPE", _, ns),
+    method_decl(prov, _, name, _, m),
+    name != "".
+namespace_member(prov, ns, name, "FIELD", f) :- field_decl(prov, _, _, ns, f),
+    type_decl(prov, _, _, _, "NAMESPACE_TYPE", _, ns),
+    field_decl(prov, name, _, ns, f).
+
+// ── qualified_name_binds(ModuleHash, CompleteName, Prov, Kind, EntityHash) ──
+// A dotted name written in a type position — `ts.SourceFile`, `N.M.C`. The leftmost
+// segment resolves as a name in the module (usually a namespace import), and each
+// further segment is a namespace member.
+//
+// Souffle has no index-of, so rather than split the dotted string the walk is driven
+// by DEMAND: only names actually written as references are built, and each step
+// checks that `prefix + "." + segment` is a prefix of one of them, slicing the
+// result out of the demanded string rather than concatenating a new one. This is the
+// same demand-gating the Java engine needed for `member_chain`, and for the same
+// reason — an ungated walk mints a string per nested path and blows up the symbol
+// table.
+// The BASE name, not the complete one: `Map<string, Handler>` is not a qualified
+// reference and must not seed a namespace walk, while `Parser.SyntaxNode<T>` must
+// seed one keyed on `Parser.SyntaxNode`. ref_base_name (type-resolution.dl) does the
+// truncation once.
+demanded_qualified_name(base) :- ref_base_name(ref, base),
+    type_ref("client", _, _, tn, _, _, _, ref),
+    base != tn,
+    base != "".
+
+// SEEDING THE WALK — INVERTED. The obvious way to write this rule is to take every
+// binding in scope and ask whether its name is a dot-prefix of a demanded dotted
+// name. That reads naturally and is quadratic: the only shared variable between
+// `module_decl` and `name_binds_any` is `mod`, so the body is
+// |demanded names| x |bindings in that module| candidate pairs, each paying two
+// substr calls to be rejected. Measured on the largest corpus member that is 84s —
+// 61% of the entire solve — to produce 1,451 rows, and 11s on a member where the
+// answer is EMPTY, because the work is done before the test that discards it.
+//
+// The set being searched for is tiny and known up front: a dotted name has one
+// prefix per dot it contains. So enumerate THOSE and use them as lookup keys, which
+// turns the scan into an indexed probe on name_binds_any's (mod, name) index. Same
+// answer, same rows, no cross product. This is the `lib_shadow_cand` lesson from the
+// Java engine restated: when a filter is selective, make it the index key rather
+// than the last conjunct.
+qname_scan(ctn, 0) :- demanded_qualified_name(ctn).
+qname_scan(ctn, i + 1) :- qname_scan(ctn, i), i + 1 < strlen(ctn).
+qname_dot_prefix(ctn, substr(ctn, 0, i)) :- qname_scan(ctn, i), substr(ctn, i, 1) = ".".
+
+qname_walk(mod, ctn, prefix, prov, k, ent) :- qname_dot_prefix(ctn, prefix),
+    name_binds_any(mod, prefix, prov, k, ent),
+    module_decl("client", _, _, _, _, mod).
+qname_walk(mod, ctn, dotted, prov, k, ent) :- qname_walk(mod, ctn, prefix, prov, _, ns),
+    namespace_member(prov, ns, seg, k, ent),
+    pl = strlen(prefix),
+    sl = strlen(seg),
+    pl + 1 + sl <= strlen(ctn),
+    substr(ctn, 0, pl) = prefix,
+    substr(ctn, pl, 1) = ".",
+    substr(ctn, pl + 1, sl) = seg,
+    dotted = substr(ctn, 0, pl + 1 + sl).
+qualified_name_binds(mod, ctn, prov, k, ent) :- qname_walk(mod, ctn, ctn, prov, k, ent).
+
+// A namespace IMPORT qualifier — `import * as ts from "typescript"; ts.SourceFile`.
+// The leftmost segment is a module rather than a namespace declaration, so the
+// member comes from that module's export table instead of from namespace_member.
+qualified_name_binds(mod, ctn, prov, k, ent) :- demanded_qualified_name(ctn),
+    import_binding("client", _, local, _, mod, ih),
+    import_binds_namespace_any(ih, prov, target),
+    l = strlen(local),
+    l < strlen(ctn),
+    substr(ctn, 0, l) = local,
+    substr(ctn, l, 1) = ".",
+    seg = substr(ctn, l + 1, strlen(ctn) - l - 1),
+    module_export_any(prov, target, seg, k, ent).
+
+// …AND AT DEPTH, WHICH THE RULE ABOVE CANNOT REACH. It takes the WHOLE tail after the
+// qualifier as one export name, so `shapes.geo.Point` asks the target module for an
+// export literally called "geo.Point" and finds nothing: one segment resolves and two
+// do not. The namespace-DECLARATION path has no such limit, because qname_walk's
+// recursive step consumes one segment at a time — so the fix is to seed that walk
+// rather than to try to finish it in one step (#283).
+//
+// Seeded at the TWO-segment prefix: the qualifier plus one export, which is a real
+// entity in the target module's table. From there the existing recursive step walks
+// `.Point` and every further segment through namespace_member, exactly as it does for a
+// namespace declared in the module.
+//
+// The single segment is taken as the dot-prefix MINUS the qualifier, so no scan is
+// needed: qname_dot_prefix already enumerates the prefixes, and a prefix that is the
+// qualifier plus one segment has no interior dot by construction — the next prefix out
+// would be the one that contains it.
+qname_walk(mod, ctn, dotted, prov, k, ent) :- qname_dot_prefix(ctn, dotted),
+    import_binding("client", _, local, _, mod, ih),
+    import_binds_namespace_any(ih, prov, target),
+    l = strlen(local),
+    l < strlen(dotted),
+    substr(dotted, 0, l) = local,
+    substr(dotted, l, 1) = ".",
+    seg = substr(dotted, l + 1, strlen(dotted) - l - 1),
+    module_export_any(prov, target, seg, k, ent).

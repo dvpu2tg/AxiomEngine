@@ -1,0 +1,19 @@
+{
+  "name": "axiomengine",
+  "version": "0.1.8",
+  "description": "Ask your repository how its code connects: who calls this, what breaks if I change it, which tests an edit reaches, how A reaches B. Answers come from a resolved call graph and are verified against it; nothing is guessed.",
+  "author": { "name": "AxiomEngine", "url": "ANONYMIZED-URL" },
+  "homepage": "ANONYMIZED-URL",
+  "repository": "ANONYMIZED-URL",
+  "skills": "./skills/",
+  "mcpServers": "./.codex-plugin/mcp.json",
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "AxiomEngine",
+    "shortDescription": "Ask your repository how its code connects",
+    "developerName": "AxiomEngine",
+    "category": "Developer Tools",
+    "capabilities": ["Skills", "MCP tools", "Lifecycle hooks"],
+    "websiteURL": "ANONYMIZED-URL"
+  }
+}

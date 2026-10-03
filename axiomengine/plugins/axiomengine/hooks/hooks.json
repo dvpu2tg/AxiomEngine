@@ -1,0 +1,109 @@
+{
+ "hooks": {
+  "PostToolUse": [
+   {
+    "matcher": "Read|Grep|Glob|Bash|Edit|Write|MultiEdit|mcp__plugin_axiomengine_axiomengine__.*",
+    "hooks": [
+     {
+      "type": "command",
+      "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run.js\" enrich.py",
+      "timeout": 20
+     }
+    ]
+   },
+   {
+    "matcher": "Bash",
+    "hooks": [
+     {
+      "type": "command",
+      "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run.js\" changes.py",
+      "timeout": 25
+     }
+    ]
+   },
+   {
+    "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+    "hooks": [
+     {
+      "type": "command",
+      "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run.js\" refresh.py",
+      "timeout": 5
+     }
+    ]
+   }
+  ],
+  "PreToolUse": [
+   {
+    "matcher": "Read|Grep|Glob|Bash|mcp__plugin_axiomengine_axiomengine__.*",
+    "hooks": [
+     {
+      "type": "command",
+      "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run.js\" direct.py",
+      "timeout": 10
+     }
+    ]
+   },
+   {
+    "matcher": "Edit|Write|MultiEdit",
+    "hooks": [
+     {
+      "type": "command",
+      "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run.js\" changes.py",
+      "timeout": 20
+     }
+    ]
+   }
+  ],
+  "UserPromptSubmit": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run.js\" changes.py",
+      "timeout": 25
+     }
+    ]
+   },
+   {
+    "matcher": "*",
+    "hooks": [
+     {
+      "type": "command",
+      "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run.js\" orient.py"
+     }
+    ]
+   },
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run.js\" refresh.py",
+      "timeout": 5
+     }
+    ]
+   }
+  ],
+  "Stop": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run.js\" refresh.py",
+      "timeout": 5
+     }
+    ]
+   }
+  ],
+  "SessionStart": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run.js\" refresh.py",
+      "timeout": 5
+     }
+    ]
+   }
+  ]
+ }
+}

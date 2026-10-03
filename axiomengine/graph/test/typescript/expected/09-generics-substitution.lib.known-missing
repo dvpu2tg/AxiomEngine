@@ -1,0 +1,7 @@
+# Accepted gaps for 09-generics-substitution — each line is an edge the TypeScript compiler
+# resolves and this engine does not. A NEW missing edge fails the suite;
+# a line here that STARTS working also fails, so the debt cannot rot.
+generic#inferredFromArgument() -> Item#ping()
+# generic#fromReceiver and generic#useLibrary both RESOLVE since #587: the type argument
+# is written on the `new` (`new Box<Item>(...)`, `new Cell<Item>(...)`) and now binds T,
+# across the library boundary as well as inside the client.

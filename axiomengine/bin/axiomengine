@@ -1,0 +1,323 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# axiomengine — build a call graph from a source tree.
+#
+# Usage:
+#   bin/axiomengine <src-dir> <out-dir> [--library <path>[,…]] [--exclude-tests] [--version V]
+#                                     [--language L] [--debug] [engine options]
+#
+# Parses the source tree, solves each language it contains and writes the graph for
+# each to <out-dir>/<lang>/.
+#
+# Options:
+#   --library <path>[,…]   Dependency and platform roots, as source trees or as IR. A source
+#                          tree is parsed once into <out-dir>/.intermediate/lib/. Calls into
+#                          dependencies are resolved against these roots.
+#   --version <V>          Version stamped on the IR and recorded in the graph
+#                          (run.source_version). Defaults to the source's git commit, or
+#                          v1.0.0 outside a checkout.
+#   --exclude-tests        Exclude test code. Included by default.
+#   --language <L>[,…]     Restrict the run to these languages: java, typescript, python,
+#                          javascript or csharp.
+#   --debug                Also write csv/*.csv and keep raw/ beside each graph.
+#   --progress <file>      Append "<lang> ok <graph>" or "<lang> failed" to <file> as each language
+#                          finishes, so a caller can use one graph while the next is solved.
+#
+# Engine options:
+#   --dispatch-cap <N|off>   --lib-depth <N>   --jdk-depth <N>   --taint <on|off>
+#
+# Commands:
+#   parser <src-dir> <ir-dir> [--version V] [--exclude-tests]
+#                          Parse only; writes <ir-dir>/<lang>/.
+#   engine --language L --client-ir <ir-dir>/<lang> --out <dir> [options]
+#                          Solve previously parsed IR.
+#   test [java|typescript|python|javascript|csharp|parser|all] [suite options]
+#                          Run the test suites.
+#   mcp                    Serve the graph to an agent as MCP tools over stdio. Any MCP client
+#                          can start it as: npx -y @axiomengine/code-graph mcp
+#   --version              Print the installed version. (After <src-dir>, --version V is the
+#                          build option above.)
+# ─────────────────────────────────────────────────────────────────────────────
+set -eu
+# RESOLVE $0 THROUGH SYMLINKS BEFORE THE WALK. npm installs a `bin` entry as a link in
+# node_modules/.bin, so under `npx axiomengine` or a global install $0 is that link and
+# dirname "$0" is .bin/, a directory this package does not live under. The walk below then
+# climbs the USER'S project, finds a package.json with no graph/ beside it, runs out of
+# parents and returns "/" -- and the run fails with `parser not built at
+# //parser/dist/index.js`, a path with a doubled slash that names nothing, plus advice to run
+# `npm install && npm run build`, which on an installed copy is neither possible nor correct.
+# readlink -f where it exists (GNU, macOS 12.3+), else walk the links by hand: the same
+# fallback souffle-include.sh uses, and for the same reason, no interpreter and no coreutils.
+self="$0"
+if [ -L "$self" ]; then
+  r="$(readlink -f "$self" 2>/dev/null)" || r=""
+  if [ -z "$r" ]; then
+    r="$self"; while [ -L "$r" ]; do
+      t="$(readlink "$r")"
+      case "$t" in /*) r="$t";; *) r="$(dirname "$r")/$t";; esac
+    done
+  fi
+  self="$r"
+fi
+# NO PROGRAM IS STARTED TO FIND IT: the parent of a path is taken by parameter expansion, not `dirname`. Every query goes
+# through here, and under Git Bash on Windows each program started is a fork emulation that costs tens of milliseconds
+# idle and far more on a busy machine; the walk used to start one per level, the verb check below four more.
+# ON WINDOWS $0 HAS BACKSLASHES: bin/axiomengine.js starts bash with path.join(__dirname, 'axiomengine'), which is
+# D:\...\bin\axiomengine. `dirname` split on either separator; the expansion below splits on '/' only, so without this
+# it finds no directory in $0, starts the walk at the CURRENT directory, and a run from inside a checkout takes the
+# checkout for the package (`parser not built at <checkout>/parser/dist/index.js`).
+self="${self//\\//}"
+case "$self" in */*) d="${self%/*}";; *) d=.;; esac
+d="$(cd "${d:-/}" && pwd)"
+while [ "$d" != / ] && { [ ! -f "$d/package.json" ] || [ ! -d "$d/graph" ]; }; do d="${d%/*}"; d="${d:-/}"; done
+ROOT="$d"
+# No marker found means every path built from ROOT is nonsense; say so here rather than fail
+# later on a path the user cannot interpret.
+[ -d "$ROOT/graph" ] || { echo "axiomengine: cannot locate the package root from $0 (resolved to $self)" >&2; exit 2; }
+PARSER="${AXIOM_PARSER:-$ROOT/parser/dist/index.js}"
+# ─────────────────────────────────────────────────────────────────────────────
+# THE QUERY VERBS. Building a graph is the means; asking it something is the point, and until now
+# only the means was on $PATH. `path`, `impact`, `test-impact`, `context`, `changed`, `graph` and
+# `index` are implemented, tested and shipped in this package under plugins/axiomengine/skills/, and
+# were reachable only from the agent plugin. Worse, this dispatcher's last case is `*) cmd=all`, so
+# `axiomengine path A B` was silently taken for a BUILD of a directory called `path`.
+#
+# They are DELEGATED, never reimplemented. The verb list is asked of the frontend itself
+# (`--verbs`, derived from its own dispatch table) so the two entry points cannot drift: a new
+# capability is a new row in one case statement, not a new copy here.
+QUERY="$ROOT/plugins/axiomengine/skills/axiomengine/scripts/axiomengine"
+# `tests` is the frontend's alias for test-impact; `test` is THIS command's engine suite. One letter
+# apart, entirely different jobs, and putting both on one command is a trap — so the alias is not
+# routed here, and the name is refused below with both readings spelled out.
+# The list is read from the frontend's own dispatch table, the lines `  <verb>[|<alias>]) exec …` that its `--verbs`
+# prints, so the two entry points still cannot drift -- but read here, in this shell, instead of by a second bash, a
+# sed, a tr and two greps on every query.
+QVERBS=()
+load_verbs(){
+  [ ${#QVERBS[@]} -gt 0 ] && return 0; [ -f "$QUERY" ] || return 0
+  local l v x re='^  ([a-z|-]*)\) *exec '
+  while IFS= read -r l || [ -n "$l" ]; do
+    [[ $l =~ $re ]] || continue; v="${BASH_REMATCH[1]}"
+    for x in ${v//|/ }; do [ "$x" = tests ] || QVERBS+=("$x"); done
+  done < "$QUERY"
+}
+query_verbs(){ load_verbs; [ ${#QVERBS[@]} -gt 0 ] && printf '%s\n' "${QVERBS[@]}"; return 0; }
+is_query_verb(){ load_verbs; local x; for x in ${QVERBS[@]+"${QVERBS[@]}"}; do [ "$x" = "$1" ] && return 0; done; return 1; }
+usage(){
+  awk 'NR > 2 && /^# ─/ {exit} NR > 2' "$0" | sed 's/^# \{0,1\}//'
+  if [ -f "$QUERY" ]; then
+    echo
+    echo 'ASKING THE GRAPH — `axiomengine help <verb>` for any one of them:'
+    bash "$QUERY" --help | sed -n 's/^  \(axiomengine [a-z].*\)$/  \1/p'
+  fi
+}
+die(){ echo "axiomengine: $*" >&2; exit 2; }
+need_parser(){ [ -f "$PARSER" ] || { echo "axiomengine: parser not built at $PARSER — run: npm install && npm run build" >&2; exit 1; }; }
+
+cmd="${1:-}"
+# Alone, --version asks which release this is. With other arguments it stays the build option that stamps the
+# source version, which a build takes after <src-dir>, so the two never meet.
+if [ "$cmd" = --version ] && [ $# -eq 1 ]; then
+  sed -n 's/^  "version": "\(.*\)",$/\1/p' "$ROOT/package.json"; exit 0
+fi
+# A query verb goes to the frontend before anything else. `help <verb>` too, so one `help` covers
+# both halves of the command.
+case "$cmd" in
+  -h|--help|help)
+    if [ $# -gt 1 ] && is_query_verb "$2"; then exec bash "$QUERY" help "$2"; fi ;;
+  "") ;;
+  # THE MCP SERVER IS THE PLUGIN'S, NOT A SECOND ONE. The package already ships plugins/axiomengine/,
+  # so an agent that is not Claude Code gets the same seven tools from one line of MCP config and
+  # no plugin install. launch.js picks the interpreter and falls back to a built-in protocol
+  # implementation, so nothing beyond the python3 the query verbs already need has to be installed.
+  mcp) shift
+       export AXIOMENGINE_PLUGIN_ROOT="$ROOT/plugins/axiomengine"
+       exec node "$ROOT/plugins/axiomengine/mcp/launch.js" "$@" ;;
+  tests) echo "axiomengine: 'tests' is ambiguous here — 'axiomengine test-impact' for the tests an edit needs," >&2
+         echo "           'axiomengine test' for this package's own engine suite." >&2; exit 2 ;;
+  *) if is_query_verb "$cmd"; then shift; exec bash "$QUERY" "$cmd" "$@"; fi ;;
+esac
+# A NAME THAT IS NOT A VERB AND NOT A DIRECTORY IS A TYPO, NOT A BUILD. `*) cmd=all` is convenient
+# for `axiomengine ./src out/` and wrong for everything else: a misspelled verb used to be parsed as a
+# source tree and fail with advice about building the parser.
+case "$cmd" in
+  parser|engine|all|test|-h|--help|help|"") [ $# -gt 0 ] && shift;;
+  *) [ -d "$cmd" ] || { echo "axiomengine: '$cmd' is neither a verb nor a directory." >&2
+       echo "  build:  parser  engine  all  test   (or: axiomengine <src-dir> <out-dir>)" >&2
+       echo "  serve:  mcp" >&2
+       echo "  ask:    $(query_verbs | tr '\n' ' ')" >&2
+       echo "  \`axiomengine help\` for what each one does." >&2; exit 2; }
+     cmd=all;;
+esac
+case "$cmd" in
+  parser)
+    need_parser
+    src="${1:-}"; ir="${2:-}"; [ -n "$src" ] && [ -n "$ir" ] || die "usage: axiomengine parser <src-dir> <ir-dir> [--version V] [--exclude-tests]"
+    shift 2; version=""; exclude=false; libmode=()
+    while [ $# -gt 0 ]; do case "$1" in
+      --version) version="$2"; shift 2;; --exclude-tests) exclude=true; shift;;
+      --slug) version="$2"; shift 2;;   # the old name for the same thing
+      # This tree is a DEPENDENCY, not the project: a build output directory its
+      # package.json ships from is its source (#620) rather than a copy of the source
+      # beside it, which is what a project's committed dist/ is (#796).
+      --library) libmode=(--library); shift;;
+      *) die "parser: unknown option $1";; esac; done
+    [ -d "$src" ] || die "not a directory: $src"
+    # The version stamps every IR row (serviceVersionLink): the commit of the source when it is a
+    # git checkout, so a graph can always be traced to what it was built from; v1.0.0 otherwise.
+    [ -n "$version" ] || version="$(git -C "$src" rev-parse HEAD 2>/dev/null || echo v1.0.0)"
+    mkdir -p "$ir"
+    echo "▶ parser: version=$version exclude-tests=$exclude"
+    # --per-language: the parser writes <ir>/<lang>/ itself, one folder per language that had
+    # a project (the config tables go with java/, whose rules are their only reader).
+    node "$PARSER" "$src" "$version" "$exclude" "$ir" --per-language ${libmode[@]+"${libmode[@]}"}
+    found=(); for d in "$ir"/*/; do [ -d "$d" ] && found+=("$(basename "$d")"); done
+    # exit 3 is "the parser ran and found nothing", apart from 1 for a parser that failed:
+    # `all` reads it for a library entry, whose absence is a warning rather than a reason to
+    # abort every other library and language in the run (#709).
+    [ ${#found[@]} -gt 0 ] || { echo "❌ the parser found no Java, TypeScript, Python or JavaScript source under $src" >&2; exit 3; }
+    echo "▶ IR: ${found[*]} → $ir/<lang>/"
+    ;;
+  engine)
+    # every option is the engine's own; only --out is spelled for symmetry with `all`
+    args=()
+    while [ $# -gt 0 ]; do case "$1" in --out) args+=(--output "$2"); shift 2;; *) args+=("$1"); shift;; esac; done
+    has(){ for a in ${args[@]+"${args[@]}"}; do [ "$a" = "$1" ] && return 0; done; return 1; }
+    has --language && has --client-ir && has --output || die "usage: axiomengine engine --language L --client-ir <ir-dir> --out <dir> [options]"
+    has --intermediate || { out=""; for i in "${!args[@]}"; do [ "${args[$i]}" = --output ] && out="${args[$((i+1))]}"; done; args+=(--intermediate "$out/.intermediate"); }
+    has --library || args+=(--library "")
+    bash "$ROOT/graph/pipeline/run-souffle.sh" "${args[@]}"
+    ;;
+  all)
+    need_parser
+    lang=""; src=""; out=""; version=""; libs=""; progress=""; popts=(); rest=(); pos=()
+    while [ $# -gt 0 ]; do case "$1" in
+      --language) lang="$2"; shift 2;; --src) src="$2"; shift 2;; --out) out="$2"; shift 2;;
+      --library) libs="$2"; shift 2;; --progress) progress="$2"; shift 2;;
+      --version|--slug) version="$2"; shift 2;; --exclude-tests) popts+=(--exclude-tests); shift;;
+      --intermediate|--dispatch-cap|--lib-depth|--jdk-depth|--taint) rest+=("$1" "$2"); shift 2;;
+      --debug) rest+=(--debug); shift;;
+      --*) die "unknown option $1 (try --help)";;
+      *) pos+=("$1"); shift;; esac; done
+    [ -n "$src" ] || src="${pos[0]:-}"; [ -n "$out" ] || out="${pos[1]:-}"
+    [ -n "$src" ] && [ -n "$out" ] || die "usage: axiomengine <src-dir> <out-dir> [--library <path>[,…]] [options]  (try --help)"
+    [ -d "$src" ] || die "not a directory: $src"
+    # --language takes one language or a comma list of them (a repository written in several)
+    IFS=',' read -ra want <<< "$lang"
+    for l in ${want[@]+"${want[@]}"}; do
+      [ -d "$ROOT/graph/$l" ] || die "no engine for --language=$l (have: $(ls -d "$ROOT"/graph/*/engine 2>/dev/null | sed 's#.*/graph/##; s#/engine##' | tr '\n' ' '))"
+    done
+    [ -n "$version" ] || version="$(git -C "$src" rev-parse HEAD 2>/dev/null || echo v1.0.0)"
+    popts+=(--version "$version")
+    mkdir -p "$out"; out="$(cd "$out" && pwd)"; int="$out/.intermediate"; ir="$int/ir"
+    rm -rf "$ir"; mkdir -p "$ir"
+    # Libraries: each --library entry is either an IR root already (it holds a language folder
+    # or the flat tables themselves, or module sub-folders that do) or a source tree, which is
+    # parsed into <out>/.intermediate/lib/<name>/ so it can be passed as an IR root.
+    # An IR root holds a marker table directly (flat IR), or one level down (per-language IR
+    # from `parser`, or a JDK-style root of module folders). Folder NAMES prove nothing — a
+    # source tree may well have a java/ directory.
+    is_ir(){ local d="$1" m sub
+      for m in all-types.csv all-typescript-modules.csv all-python-modules.csv all-javascript-modules.csv all-csharp-modules.csv; do
+        [ -f "$d/$m" ] && return 0
+        for sub in "$d"/*/; do [ -f "$sub$m" ] && return 0; done
+      done; return 1; }
+    # Every entry is staged under its OWN intermediate directory. Two libraries with one
+    # directory name are routine (a nested second version of a package, `@scope/x` beside
+    # `x`, two monorepo packages both called `core`); named by basename alone the second
+    # parse overwrote the first with nothing printed, and the client's calls then landed on
+    # the surviving copy. A name that is already taken gets a short hash of the absolute
+    # path appended; an entry that names a path already staged is skipped, not staged twice.
+    libroots=""; seen_paths=","; seen_names=","
+    IFS=',' read -ra libentries <<< "$libs"
+    for L in ${libentries[@]+"${libentries[@]}"}; do
+      [ -n "$L" ] || continue; [ -d "$L" ] || die "--library: not a directory: $L"
+      abs="$(cd "$L" && pwd)"
+      case "$seen_paths" in *",$abs,"*) echo "▶ library $L is already staged; skipping the duplicate entry"; continue;; esac
+      seen_paths="$seen_paths$abs,"
+      if is_ir "$L"; then libroots="$libroots,$L"
+      else
+        n="$(basename "$abs")"
+        case "$seen_names" in *",$n,"*)
+          n="$n-$(printf '%s' "$abs" | shasum | cut -c1-8)"
+          echo "▶ a library named $(basename "$abs") is already staged; $L is staged as $n";; esac
+        seen_names="$seen_names$n,"
+        lir="$int/lib/$n"
+        echo "▶ parsing library $L → $lir"
+        # A library with no source the parser can stage (an assets-only package, a
+        # native addon) is named and skipped; only a parser FAILURE aborts the run.
+        rc=0; "$0" parser "$L" "$lir" --library --version "$(git -C "$L" rev-parse HEAD 2>/dev/null || echo v1.0.0)" > "$int/parse-lib-$n.log" 2>&1 || rc=$?
+        case "$rc" in
+          0) libroots="$libroots,$lir";;
+          3) echo "⚠️  library $L holds no Java, TypeScript, Python, JavaScript or C# source; not staged (see $int/parse-lib-$n.log)" >&2;;
+          *) echo "❌ parsing library $L failed — see $int/parse-lib-$n.log" >&2; exit 1;;
+        esac
+      fi
+    done
+    libroots="${libroots#,}"
+    echo "▶ parsing $src → IR"
+    "$0" parser "$src" "$ir" ${popts[@]+"${popts[@]}"} > "$int/parse.log" 2>&1 || { echo "❌ parser failed — see $int/parse.log" >&2; tail -5 "$int/parse.log" >&2; exit 1; }
+    head -1 "$int/parse.log"
+    # which languages the IR holds — one folder each — and which of them have an engine
+    found=(); for d in "$ir"/*/; do l="$(basename "$d")"; [ -d "$ROOT/graph/$l/engine" ] && found+=("$l"); done
+    [ ${#found[@]} -gt 0 ] || { echo "❌ no language with an engine in the IR (folders: $(ls "$ir" | tr '\n' ' '))" >&2; exit 1; }
+    # THE LARGEST LANGUAGE FIRST (#1555): a caller that publishes each graph as it is solved (--progress) gets the one
+    # most of the repository is written in first, not whichever sorts first. The IR's size stands in for its share; a
+    # caller that names --language chooses the order itself.
+    langs=($(for l in "${found[@]}"; do echo "$(du -sk "$ir/$l" 2>/dev/null | cut -f1) $l"; done | sort -s -k1,1nr | cut -d' ' -f2))
+    if [ ${#want[@]} -eq 1 ]; then
+      case " ${found[*]} " in *" $lang "*) langs=("$lang");; *) echo "❌ --language=$lang, but the IR holds only: ${found[*]}" >&2; exit 1;; esac
+    elif [ ${#want[@]} -gt 1 ]; then
+      # A LANGUAGE ASKED FOR AND NOT FOUND IS NAMED, NEVER DROPPED IN SILENCE. The caller counted files by
+      # extension; the parser finds PROJECTS, and a file no project claims is not in the IR. The others are
+      # still solved, and the caller is told which one is missing.
+      langs=(); missing=()
+      for l in "${want[@]}"; do case " ${found[*]} " in *" $l "*) langs+=("$l");; *) missing+=("$l");; esac; done
+      [ ${#missing[@]} -gt 0 ] && echo "⚠️  asked for ${missing[*]}, but the IR holds no such language (it holds: ${found[*]})" >&2
+      [ ${#langs[@]} -gt 0 ] || { echo "❌ --language=$lang, but the IR holds only: ${found[*]}" >&2; exit 1; }
+    fi
+    echo "▶ languages: ${langs[*]}"
+    # ONE LANGUAGE'S FAILURE MUST NOT COST THE OTHERS THEIR GRAPHS. Under `set -e` this loop
+    # used to end the whole run at the first non-zero exit, and the languages come from
+    # `ls "$ir"`, so they are alphabetical: csharp, java, javascript, python, typescript. A
+    # broken Java front end therefore took javascript, python and typescript down with it,
+    # none of which it has anything to do with. That contradicts what this command promises at
+    # the head of this file -- every language it finds, a graph per language -- and the graphs
+    # it silently skipped were each seconds of work.
+    # Failures are collected and reported together, and the exit status is still non-zero, so
+    # a caller that checks it is no worse off. Only the languages that produced a graph are
+    # listed at the end, so the output stays a list of files that exist.
+    solved=(); failed=()
+    for l in "${langs[@]}"; do
+      echo "▶ solving $l → $out/$l/graph.sqlite"
+      if "$0" engine --language "$l" --client-ir "$ir/$l" --out "$out/$l" --intermediate "$int" --library "$libroots" \
+           --meta "source_version=$version" --meta "source_dir=$(cd "$src" && pwd)" ${rest[@]+"${rest[@]}"}; then
+        solved+=("$l"); [ -z "$progress" ] || echo "$l ok $out/$l/graph.sqlite" >> "$progress"
+      else
+        failed+=("$l"); echo "❌ $l failed; continuing with the remaining languages" >&2
+        [ -z "$progress" ] || echo "$l failed" >> "$progress"
+      fi
+    done
+    for l in ${solved[@]+"${solved[@]}"}; do echo "$out/$l/graph.sqlite"; done
+    if [ ${#failed[@]} -gt 0 ]; then
+      echo "❌ ${#failed[@]} of ${#langs[@]} languages failed: ${failed[*]}" >&2
+      [ ${#solved[@]} -gt 0 ] && echo "   ${#solved[@]} produced a graph: ${solved[*]}" >&2
+      exit 1
+    fi
+    ;;
+  test)
+    which="${1:-all}"; [ $# -gt 0 ] && shift
+    rc=0
+    run_suite(){ local s="$1"; shift; echo "══ $s"; bash "$ROOT/graph/test/$s/run-tests.sh" "$@" || rc=1; }
+    case "$which" in
+      java|typescript|python|javascript|csharp) run_suite "$which" "$@";;
+      parser) for t in java-extractor-tests typescript-tests python-tests javascript-tests csharp-tests gradle-tests services-tests discovery-tests; do
+                [ -f "$ROOT/parser/src/test/$t.ts" ] || continue; echo "══ parser: $t"; (cd "$ROOT/parser" && npx tsx "src/test/$t.ts") || rc=1; done;;
+      all) for l in java typescript python javascript csharp; do run_suite "$l" "$@"; done; "$0" test parser || rc=1;;
+      *) die "test: unknown suite $which (java | typescript | python | javascript | csharp | parser | all)";;
+    esac
+    exit $rc
+    ;;
+  -h|--help|help|"") usage; [ -n "$cmd" ] || exit 2;;
+  *) die "unknown command '$cmd' (parser | engine | all | test; --help)";;
+esac

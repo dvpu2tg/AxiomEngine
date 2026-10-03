@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""UserPromptSubmit: answer "where is this" before the agent thinks to ask.
+
+The active verbs only help an agent that calls them, and the one measurement of this skill in an agent's
+hands recorded no graph queries at all in six of six runs — the gap was never the answer, it was that
+nobody asked the question. The passive half already enriches a Read or a grep AFTER the agent has chosen
+where to look; this fires BEFORE, on the task itself, which is the only moment where orientation changes
+which file gets opened first.
+
+Rules it holds itself to:
+  · ONCE per session. Orientation is a first-turn need; repeating it on every prompt is noise that costs
+    context on every turn and changes nothing after the first.
+  · SILENT unless it has something. No graph, no index, nothing matching — say nothing at all rather than
+    announce that it has no answer.
+  · BOUNDED. A handful of lines. This is a nudge toward the right package, not a second answer competing
+    with what the agent asked for.
+  · It never says it is certain. When several roots match it offers them instead of choosing, because
+    picking the wrong package confidently is the failure this skill has already been bitten by.
+"""
+import json, os, re, subprocess, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _host, _where
+
+MARK = '.axiomengine/.oriented-{}'       # once per session: keyed by session id (one stamp per repo never fired again)
+MAX_LINES = 14
+
+try:
+    ev = _host.read()
+except Exception:
+    sys.exit(0)
+_host.capture('UserPromptSubmit')
+
+def repo_root(start):
+    """The repository the prompt is about, which is not always where the shell happens to be.
+
+    A graph lives at the root; an agent working in a subdirectory would otherwise be told the
+    repository has none and sent into a multi-minute rebuild for a graph it already has. Nearest
+    ancestor holding one wins; failing that the git root, so a repo that has never been indexed
+    still reports against its root rather than against a subdirectory.
+    """
+    cur = os.path.realpath(start)
+    while True:
+        if os.path.exists(os.path.join(cur, '.axiomengine', 'out', 'graph.sqlite')):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    try:
+        r = subprocess.run(['git', '-C', start, 'rev-parse', '--show-toplevel'],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except Exception:
+        pass
+    return os.path.realpath(start)
+
+
+prompt = (ev.get('prompt') or '').strip()
+
+def prompt_root(prompt):
+    """the graph above a path the prompt names. A task given from a directory with no graph ("fix X in
+    /work/app/src/Y.java", "the repo is /work/app") is about that tree, and the working directory says nothing about it."""
+    for m in re.finditer(r'(?:^|[\s\'"`(=])((?:/|~/)[^\s\'"`),;]+)', prompt):
+        p = os.path.expanduser(m.group(1).rstrip('.:'))
+        p = re.sub(r':\d+(?::\d+)?$', '', p)                  # file:line
+        if os.path.exists(p):
+            r = _where.root_of(p)
+            if r:
+                return r
+    return None
+
+_where.session(ev.get('session_id'))
+cwd = prompt_root(prompt) or repo_root(ev.get('cwd') or os.getcwd())
+if len(prompt) < 25:                                   # too short to carry a task
+    sys.exit(0)
+# a harness event delivered as a prompt (a background task finishing, a monitor line) is not the task, and
+# orienting on it spends the session's one orientation on words like "task summary monitor event"
+if prompt.startswith(('<task-notification>', '<system-reminder>', '[SYSTEM NOTIFICATION')):
+    sys.exit(0)
+stamp = os.path.join(cwd, MARK.format(ev.get('session_id') or 'x'))
+if os.path.exists(stamp):
+    sys.exit(0)
+
+if not os.path.exists(os.path.join(cwd, '.axiomengine', 'out', 'graph.sqlite')):
+    # The SILENT rule below is about having no ANSWER -- no index entry matches, nothing ranked. This is the
+    # other case: there is no graph at all, so the caller cannot discover from any surface that one is available.
+    # It is the only moment where saying nothing guarantees the skill is never used, so it says one thing and
+    # takes the same once-per-repo stamp. Still bounded, still never repeated, and still silent where it would
+    # be noise: a tree with no source in a supported language has nothing to offer and says nothing.
+    EXT = _where.SOURCE_EXT
+    SKIP = {'node_modules', '.git', 'dist', 'build', 'target', 'venv', '.venv', '__pycache__', 'obj'}
+    found = 0
+    for root, dirs, files in os.walk(cwd):
+        dirs[:] = [d for d in dirs if d not in SKIP and not d.startswith('.')]
+        found += sum(1 for f in files if f.endswith(EXT))
+        if found >= 25:                                    # enough to be a codebase rather than a script
+            break
+    if found < 25:
+        sys.exit(0)
+    # a directory ABOVE an indexed tree (a workspace holding the project, its worktrees, its copies) is not a repository
+    # without a graph: saying so would send the agent to rebuild what it already has. Two levels down is where they sit.
+    def _below(d, depth):
+        try: subs = [e.path for e in os.scandir(d) if e.is_dir() and e.name not in SKIP and not e.name.startswith('.')]
+        except OSError: return False
+        return any(_where.has_graph(x) or (depth > 1 and _below(x, depth - 1)) for x in subs)
+    if _below(cwd, 2):
+        sys.exit(0)
+    try:
+        os.makedirs(os.path.dirname(stamp), exist_ok=True)
+        open(stamp, 'w').write('1')
+    except Exception:
+        pass
+    entry = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                          '..', 'skills', 'axiomengine', 'scripts', 'axiomengine'))
+    # A build that ran and failed leaves the output directory and its log behind. Telling that caller to
+    # "build one" invites them to repeat the failure; the log already says why it stopped.
+    log = os.path.join(cwd, '.axiomengine', 'build.log')
+    if os.path.isdir(os.path.join(cwd, '.axiomengine', 'out')) and os.path.exists(log):
+        print("graph: a build ran here and produced no graph, so callers, change impact and test selection "
+              "are unavailable.")
+        print(f"  {log} says why it stopped; `{entry} index` re-runs it once that is addressed.")
+    else:
+        print("graph: this repository has no call graph yet, so callers, change impact and test selection are "
+              "unavailable until one is built.")
+        print(f"  `{entry} index` builds it (minutes on a large tree, once per commit); every other verb needs it.")
+    sys.exit(0)
+
+# SPEAK ONLY WHEN SURE. Every prompt of 25 characters in a repository with a graph used to get the ranked answer for its
+# words, and a prompt that is not about the code still has words: asked whether hooks pollute the context, the words
+# `plugin` and `info` were matched to a CLI's plugin loader and a script-info class, about 20 lines that every later turn
+# re-reads. The prompt must name the code before this says anything about it:
+#   an identifier-shaped word (camelCase, snake_case, dotted, called `f()`, in backticks, or a Capitalised word inside a
+#   sentence) or a file path, that the graph declares exactly.
+# Plain English words are not enough however rare: a large codebase declares functions named `when`, `used`, `safe`,
+# `main`, `loop` and `parser`, so any sentence about anything matched two of them.
+IDENT = re.compile(r'`([^`]+)`|\b([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+)\b|\b([a-z]+[A-Z]\w*|[A-Za-z]+_\w+)\b|\b(\w+)\(\)|(?<![.!?]\s)(?<!^)\b([A-Z][a-z]\w+)\b')
+PATHISH = re.compile(r'\b[\w./-]+\.(?:' + _where.SOURCE_ALT + r')(?::\d+)?\b')
+
+def names_code(prompt, db):
+    import sqlite3
+    try:
+        con = sqlite3.connect(db)
+        count = lambda n: con.execute("SELECT count(*) FROM symbols WHERE name = ? OR display = ?", (n, n)).fetchone()[0]
+        if PATHISH.search(prompt):
+            f = PATHISH.search(prompt).group(0).split(':')[0]
+            if con.execute("SELECT 1 FROM symbols WHERE file = ? OR file LIKE ? LIMIT 1", (f, '%/' + f.lstrip('/'))).fetchone():
+                return True
+        for m in IDENT.finditer(prompt):
+            tok = next(g for g in m.groups() if g)
+            # the whole token as written (`B.b`, `QuerySet.filter`) at any length; its parts only when long enough to mean something
+            for part in dict.fromkeys([tok] + [x for x in re.split(r'[.\s(),]+', tok) if len(x) >= 3]):
+                if part and count(part):
+                    return True
+        return False
+    except Exception:
+        return False
+
+if not names_code(prompt, os.path.join(cwd, '.axiomengine', 'out', 'graph.sqlite')):
+    sys.exit(0)
+
+here = os.path.dirname(os.path.abspath(__file__))
+ctx = os.path.join(here, '..', 'skills', 'axiomengine', 'scripts', 'axiomengine-context')
+try:
+    r = subprocess.run([sys.executable, ctx, prompt, cwd, '--budget', '6'],
+                       capture_output=True, text=True, timeout=25)
+except Exception:
+    sys.exit(0)
+
+out = (r.stdout or '').strip()
+if not out:
+    sys.exit(0)
+try:
+    os.makedirs(os.path.dirname(stamp), exist_ok=True)
+    open(stamp, 'w').write('1')
+    # Keep the task itself. Orientation is the only moment anything in this plugin is told what the work is
+    # about, and the passive half -- which annotates each file the agent opens -- has never known. Without it
+    # that half can only rank what it finds by degree, which is a property of the code and not of the job.
+    open(os.path.join(cwd, '.axiomengine', 'task.txt'), 'w').write(prompt[:20000])
+except Exception:
+    pass
+
+# The verb REFUSES without a scope, which is right when someone asked it a question and wrong here: nothing
+# was asked, so a demand for an argument is noise. The refusal still carries the useful part — which roots
+# the task's own words land in — so it is reworded as the observation it actually is.
+lines = [l for l in out.splitlines() if l.strip()]
+refused = any('--in <path> is required' in l for l in lines)
+if refused:
+    roots = [l.strip() for l in lines if l.strip().startswith('--in ')][:5]
+    if not roots:
+        sys.exit(0)
+    print("graph: the words in this task land mostly here, before you search —")
+    for r in roots:
+        path, _, rest = r[len('--in '):].partition(' ')
+        # the verb marks each row with the task's own words that were found under it; carry those through
+        # rather than restating that there was a match, which told the reader nothing about WHICH match
+        _, _, hits = rest.partition('<- ')
+        print(f"  {path}" + (f"   <- {hits.strip()}" if hits.strip() else ''))
+    print('  the axiomengine_context tool with in_path=<one of these> ranks the files and declarations inside it; call it '
+          'directly, no skill needs loading first (without that tool: `axiomengine context "<the task>" --in <one of these>`).')
+else:
+    print("graph: where this task's own words land in the index —")
+    for l in lines[:MAX_LINES]:
+        print("  " + l[:150])
+    # the first call, named: an agent that only has the plugin otherwise spends two turns loading the skill and then
+    # the tool schemas before it asks anything (#1202). The MCP tool comes first and the shell form second (#1425):
+    # `axiomengine install` pre-approves only the tools, so a first call spelled as a shell command is the one call the
+    # install left behind a permission prompt, and headless it is simply denied.
+    if 'how it runs —' in out:
+        # a how-question: the flow is the answer's spine, and the call that returns it with each step's code is the
+        # one to make — named here so no turn goes to loading the skill or the tool schemas first
+        print("  next: the axiomengine_context tool with source=True, from_=<where it starts> returns the call flow with each "
+              "step's code; call it directly, no skill needs loading first (without that tool: "
+              '`axiomengine context "<the question>" --source --from <where it starts>`).')
+    else:
+        print('  a starting point, not a conclusion: next, the axiomengine_impact tool with targets=[<name>], in_path=<path> '
+              'for what a change reaches; call it directly, no skill needs loading first (without that tool: '
+              '`axiomengine impact <name> --in <path>`).')

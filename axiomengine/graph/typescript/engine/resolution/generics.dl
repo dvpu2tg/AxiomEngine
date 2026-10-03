@@ -1,0 +1,294 @@
+// ============================================================================
+// Resolution · GENERIC SUBSTITUTION  (T, bound at the receiver's declaration)
+//
+// `items.find(p)` where `items: GradleDeclaration[]` returns `T | undefined`, and T
+// is Array's type parameter. Without substitution the result has no named type, so
+// the NEXT hop dies: `items.find(p).getHash()` was 298 unresolved sites on this
+// corpus, and `filter`, `slice`, `pop`, `at` and `map` add several hundred more. The
+// Java engine records the same gap in its README — "generic substitution through
+// library-written type arguments is incomplete" — and it is the single largest
+// remaining structural hole here too.
+//
+// ── THE MECHANISM ───────────────────────────────────────────────────────────
+// The type ARGUMENTS live on the reference, not on the type: `Map<string, Handler>`
+// is one TYPE_REFERENCE row for Map with two children at positions 0 and 1. The type
+// PARAMETERS live on the declaration, each with a position. So binding is a
+// positional join between the two, keyed on the reference the RECEIVER was declared
+// with — which is why expr_decl_ref exists: the receiver's TYPE is not enough, the
+// reference that produced it is needed.
+//
+// ── WHAT IS AND IS NOT COVERED ──────────────────────────────────────────────
+// Covered: a return type that IS a type variable (`get(): T`), a UNION containing one
+// (`find(): T | undefined`), and an ARRAY of one (`filter(): T[]`) — which is the
+// shape of essentially every collection accessor.
+//
+// NOT covered, deliberately: a return type expressed through the method's OWN type
+// parameter inferred from a callback (`map<U>(f: (t: T) => U): U[]`). U is bound by
+// the argument's return type, which is inference rather than substitution, and
+// guessing it would fabricate. Those sites stay unresolved and countable.
+//
+// ── STRATIFICATION ──────────────────────────────────────────────────────────
+// Inside the expr_type fixpoint (expr_decl_ref reads expr_type for the chained case)
+// and entirely positive — no negation anywhere in this file.
+// ============================================================================
+
+// ── type_arg_binding(RefHash, ParamName, ArgRefHash) ────────────────────────
+// The reference `X<A0, A1>` binds X's parameter at position i to its child at
+// position i. Bounded by references that actually resolve to a generic declaration.
+type_arg_binding(ref, pname, argRef) :- type_ref_resolves(_, ref, t),
+    type_param(_, pname, pos, _, t, _),
+    pname != "",
+    type_ref_parent(_, ref, pos, argRef).
+
+// ── expr_decl_ref(ExprHash, RefHash) ────────────────────────────────────────
+// The type REFERENCE a receiver expression was declared with — where its type
+// arguments are written. Distinct from expr_type, which has already thrown the
+// arguments away by resolving to a declaration.
+expr_decl_ref(e, r) :- expr_referenced("client", "VARIABLE", v, e),
+    var_type_ref(_, r, v).
+expr_decl_ref(e, r) :- expr_referenced("client", "PARAMETER", p, e),
+    param_type_ref(_, r, p).
+expr_decl_ref(e, r) :- expr_kind("client", "PROPERTY_ACCESS", _, e),
+    property_access_name(e, n),
+    expr_child("client", e, "RECEIVER", _, q),
+    expr_type(q, _, qt),
+    field_in_scope(qt, n, "false", f),
+    field_type_ref(_, r, f).
+// A chained receiver: `getItems().find(p)` — the reference is the callee's declared
+// RETURN type, which carries its own arguments.
+expr_decl_ref(e, r) :- expr_call_candidate(e, callee),
+    method_return_ref(_, r, callee).
+// An un-annotated variable takes its initializer's reference, so
+// `const xs = getItems(); xs.find(p)` substitutes exactly as the direct form does.
+expr_decl_ref(e, r) :- expr_referenced("client", "VARIABLE", v, e),
+    !var_has_declared_type(v),
+    var_initializer("client", _, init, v),
+    init != "",
+    expr_decl_ref(init, r).
+
+// ── return_type_variable(MethodHash, ParamName) — the three covered shapes ──
+// (1) the return type IS the variable.
+return_type_variable(m, pname) :- method_return_ref(_, r, m),
+    type_ref(_, "TYPE_VARIABLE", _, pname, _, _, _, r),
+    pname != "".
+// (2) a UNION or PARENTHESIZED wrapper around it — `T | undefined`, the shape of
+// every partial accessor in the standard library.
+return_type_variable(m, pname) :- method_return_ref(_, r, m),
+    type_ref(rp, k, _, _, _, _, _, r),
+    return_wrapper_kind(k),
+    type_ref_parent(rp, r, _, child),
+    type_ref(_, "TYPE_VARIABLE", _, pname, _, _, _, child),
+    pname != "".
+return_wrapper_kind("UNION").
+return_wrapper_kind("PARENTHESIZED").
+return_wrapper_kind("OPTIONAL").
+
+// (3) `T[]` — the return is an ARRAY of the variable. The call's own type is Array
+// (already resolved by the ordinary rules); what this adds is the ELEMENT, so a
+// further `[0]` or `for…of` reaches the substituted type.
+return_element_type_variable(m, pname) :- method_return_ref(_, r, m),
+    type_ref(rp, k, _, _, _, _, _, r),
+    ref_kind_is_array(k),
+    type_ref_parent(rp, r, _, child),
+    type_ref(_, "TYPE_VARIABLE", _, pname, _, _, _, child),
+    pname != "".
+
+// (4) `IterableIterator<T>` — the return is a named ITERATION CONTAINER over the
+// variable. `map.values()` is declared `values(): IterableIterator<V>` and
+// `map.keys()` / `set.values()` / a generator method are all the same shape, so
+// without this a `for…of` over any of them bound nothing and every call on the loop
+// variable was unresolved — while the same loop over a `T[]`-returning method
+// resolved, because (3) covers an array and nothing covered a container.
+//
+// Same contract as (3): the call's own type is already the container, and what this
+// adds is its ELEMENT, so `for_binding_iterable` reaches the substituted type.
+//
+// The container names come from `ref_name_is_container`, the list
+// `ref_element_target` reads, so a container is admitted in ONE place and the
+// iteration protocol cannot drift between the two. Argument 0 for every name on it —
+// which is exactly why Map is NOT on it (its argument 0 is the key); iterating a Map
+// DIRECTLY is the tuple rule in reference-types.dl.
+return_element_type_variable(m, pname) :- method_return_ref(_, r, m),
+    type_ref(rp, "TYPE_REFERENCE", _, tn, _, _, _, r),
+    ref_name_is_container(tn),
+    type_ref_parent(rp, r, "0", child),
+    type_ref(_, "TYPE_VARIABLE", _, pname, _, _, _, child),
+    pname != "".
+
+// ── the substituted type of a call ──────────────────────────────────────────
+// The type variable is resolved on the method's DECLARING type, and the binding is
+// taken from the receiver's own reference. `owner_declares_param` requires the
+// parameter to belong to the callee's owner (or a declaration merged with it), which
+// is what keeps an unrelated `T` on some other type from being substituted here.
+owner_declares_param(m, pname) :- method_owner(_, ot, m),
+    scope_sibling(ot, sib),
+    type_param(_, pname, _, _, sib, _).
+
+expr_type(ce, prov, t) :- ts_call_site(_, _, _, recv, _, ce, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _),
+    recv != "",
+    expr_decl_ref(recv, rref),
+    expr_call_candidate(ce, callee),
+    return_type_variable(callee, pname),
+    owner_declares_param(callee, pname),
+    type_arg_binding(rref, pname, argRef),
+    ref_type_target(argRef, prov, t).
+
+expr_element_type(ce, prov, t) :- ts_call_site(_, _, _, recv, _, ce, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _),
+    recv != "",
+    expr_decl_ref(recv, rref),
+    expr_call_candidate(ce, callee),
+    return_element_type_variable(callee, pname),
+    owner_declares_param(callee, pname),
+    type_arg_binding(rref, pname, argRef),
+    ref_type_target(argRef, prov, t).
+
+// ── `Zoo[K]` — AN INDEXED ACCESS WHOSE INDEX IS BOUND AT THE CALL ──────────
+// `get<K extends keyof Zoo>(k: K): Zoo[K]` then `get("dog").fetch()`. The literal form
+// `Zoo["dog"]` is read straight off the declaration (type-resolution.dl); this is the
+// generic one, and it is a different mechanism rather than a harder version of the same
+// one: `Zoo[K]` denotes a union over EVERY member of Zoo, and what picks one is the
+// compiler narrowing K to the ARGUMENT's literal type at the call. So it cannot live in
+// `ref_type_target`, which has no call to look at — it belongs here, beside the other
+// substitution that reads an argument.
+//
+// Sound because it does not GUESS a member: the index type variable and the value
+// parameter must be THE SAME type-parameter declaration (matched on the parser's
+// typeParameterLinkHash, not on the name `K`), that declaration must belong to the
+// callee, and the argument at that parameter's position must be a string literal. Where
+// the argument is a variable, a union or a computed key, nothing binds and the site
+// stays unresolved — which is the honest answer, not a narrowed one.
+//
+// Reaches the member the same way the literal rule does — `declared_field` plus the
+// field's own type REFERENCE — because `field_in_scope`/`field_type` sit inside the
+// member-lookup fixpoint behind a negation and drag the whole component into one
+// Souffle refuses to stratify.
+expr_type(ce, prov, t) :- expr_call_candidate(ce, m),
+    method_return_ref(_, r, m),
+    type_ref(rp, "INDEXED_ACCESS", _, _, _, _, _, r),
+    type_ref_parent(rp, r, "0", oref),
+    ref_type_target(oref, _, obj),
+    type_ref_parent(rp, r, "1", iref),
+    type_ref_type_param(_, tp, iref),
+    type_param(_, _, _, _, m, tp),
+    param_decl(_, _, k, _, m, p),
+    param_type_ref(_, pr, p),
+    type_ref_type_param(_, tp, pr),
+    expr_child("client", ce, "ARGUMENT", k, arg),
+    expr_literal_type("client", "STRING", arg),
+    expr_literal_value("client", n, arg),
+    declared_field(obj, n, _, f),
+    field_type_ref(_, fr, f),
+    ref_type_target(fr, prov, t).
+
+// ── an ELEMENT ACCESS on a generic container — `map.get(k)!`, `xs[0]` ───────
+// The element of `X<A>` where X's element parameter is bound: this is what makes
+// `items[0].getHash()` resolve when `items: Item[]` is written as `Array<Item>`.
+expr_element_type(e, prov, t) :- expr_decl_ref(e, r),
+    ref_element_target(r, prov, t).
+
+// ── T INFERRED FROM THE ARGUMENT, not from the receiver ─────────────────────
+// `identity(x)`, `first(items)`, `wrap(v)` — a free function whose type variable is
+// bound by what is PASSED, with no receiver to take arguments from. The substitution
+// above covers `items.find(p)`, where T comes from the receiver's own type arguments;
+// this covers the other half, and it is the half that leaves a chained call with no
+// receiver at all: the call resolves, its return is `T`, and `.run()` on the result
+// dies because nothing bound T.
+//
+// Keyed on the EXACT type-parameter link, not on the name. A method's `T` and its
+// class's `T` are different declarations, and binding by name would let an argument
+// passed to one substitute into the other. `type_param(..., m, tp)` additionally
+// requires the variable to be declared BY THE CALLEE, so a class-level `T` is never
+// bound from a call argument.
+return_is_type_param(m, tp) :- method_return_ref(_, r, m),
+    type_ref_type_param(_, tp, r).
+
+// (a) the parameter's type IS the variable — `identity<T>(v: T)`.
+call_tvar_arg_binding(ce, tp, prov, t) :- expr_call_candidate(ce, m),
+    param_decl(_, _, k, _, m, p),
+    param_type_ref(_, pr, p),
+    type_ref_type_param(_, tp, pr),
+    type_param(_, _, _, _, m, tp),
+    expr_child("client", ce, "ARGUMENT", k, arg),
+    expr_type(arg, prov, t).
+
+// (b) the parameter is an ARRAY of the variable — `first<T>(xs: readonly T[])`. The
+// binding is the argument's ELEMENT type, which the engine already computes.
+//
+// The array is reached THROUGH wrappers: `readonly T[]` is a TYPE_OPERATOR over an
+// ARRAY, and the standard library writes it that way everywhere. Matching only a bare
+// ARRAY misses the readonly form, which is most of the surface worth binding.
+array_of_type_param(pr, tp) :- type_ref(rp, ak, _, _, _, _, _, pr),
+    ref_kind_is_array(ak),
+    type_ref_parent(rp, pr, _, elemRef),
+    type_ref_type_param(_, tp, elemRef).
+array_of_type_param(pr, tp) :- type_ref(rp, wk, _, _, _, _, _, pr),
+    param_array_wrapper_kind(wk),
+    type_ref_parent(rp, pr, _, inner),
+    array_of_type_param(inner, tp).
+param_array_wrapper_kind("TYPE_OPERATOR").
+param_array_wrapper_kind("PARENTHESIZED").
+
+call_tvar_arg_binding(ce, tp, prov, t) :- expr_call_candidate(ce, m),
+    param_decl(_, _, k, _, m, p),
+    param_type_ref(_, pr, p),
+    array_of_type_param(pr, tp),
+    type_param(_, _, _, _, m, tp),
+    expr_child("client", ce, "ARGUMENT", k, arg),
+    expr_element_type(arg, prov, t).
+
+// (c) THE TYPE ARGUMENT IS WRITTEN DOWN — `make<AlphaOp>()`. Clauses (a) and (b) both
+// INFER the binding from an argument, so an explicit type argument typed the result only
+// where the type ALSO appeared in a parameter or in an annotation on the receiving
+// variable. Where it is the sole source of the return type there was nothing to infer
+// from, the result was untyped, and every call on it resolved to nothing (#353).
+//
+// This is the one binding that needs no inference at all: the caller wrote the type.
+// Matched by POSITION — type parameter k of the callee against the call's k-th type
+// argument — because binding by name would let an argument to one generic substitute
+// into a same-named variable declared by another, which is the hazard the
+// `type_param(..., m, tp)` guard on (a) and (b) exists for.
+//
+// Depth 0 only: a nested reference inside the argument (`make<Box<AlphaOp>>()`) is a
+// child of the argument, not another argument.
+call_type_argument(ce, pos, ref) :- ts_type_reference(_, "METHOD_TYPE_ARGUMENT", _, _, _, _, pos, "0", _, _, _, _, _, _, _, _, ce, "EXPRESSION", _, _, _, _, _, _, _, _, _, _, _, _, ref).
+
+call_tvar_arg_binding(ce, tp, prov, t) :- expr_call_candidate(ce, m),
+    type_param(_, _, pos, _, m, tp),
+    call_type_argument(ce, pos, ref),
+    ref_type_target(ref, prov, t).
+
+// the call's own type, once the variable is bound
+expr_type(ce, prov, t) :- expr_call_candidate(ce, m),
+    return_is_type_param(m, tp),
+    call_tvar_arg_binding(ce, tp, prov, t).
+
+// ── A TYPE ARGUMENT WRITTEN ON A `new` EXPRESSION (#587) ────────────────────
+// `new Box<AlphaOp>()` binds T exactly as `const b: Box<AlphaOp> = ...` does, and only
+// the annotation bound it: the call on what `get()` returned was ambiguous_unknown in
+// the first spelling and AlphaOp#run in the second, with the constructor and `get`
+// itself resolving identically in both.
+//
+// Nothing was missing from the IR. What differs is WHERE the parser hangs the argument.
+// In a TYPE position the arguments are CHILDREN of the reference (`Box` with one
+// TYPE_ARGUMENT child at depth 1), which is what type_arg_binding above joins on. On an
+// EXPRESSION they are SIBLINGS of the OBJECT_CREATION_TYPE reference, anchored on the
+// expression as METHOD_TYPE_ARGUMENT rows at depth 0 — the same shape an explicit type
+// argument on a CALL takes, which call_type_argument already reads for `make<AlphaOp>()`.
+//
+// So this is the existing positional join fed from the other of the two spellings, keyed
+// on the OBJECT_CREATION_TYPE reference so that every consumer of type_arg_binding
+// (substitution here, contextual parameters, overload selection) reaches it unchanged.
+new_expression_ref(e, ref) :- ts_type_reference(_, "OBJECT_CREATION_TYPE", _, _, _, _, _, "0", _, _, _, _, _, _, _, _, e, "EXPRESSION", _, _, _, _, _, _, _, _, _, _, _, _, ref).
+
+type_arg_binding(ref, pname, argRef) :- new_expression_ref(e, ref),
+    type_ref_resolves(_, ref, t),
+    type_param(_, pname, pos, _, t, _),
+    pname != "",
+    call_type_argument(e, pos, argRef).
+
+// The `new` expression IS the declaration reference for what it constructs, so
+// `new Box<AlphaOp>().get()` substitutes directly and `const b = new Box<AlphaOp>()`
+// reaches the same binding through the un-annotated-variable clause above. Only a `new`
+// that WRITES a type argument gets one: with no argument there is nothing to bind, and
+// admitting the reference anyway would widen every other consumer for nothing.
+expr_decl_ref(e, ref) :- new_expression_ref(e, ref), call_type_argument(e, _, _).

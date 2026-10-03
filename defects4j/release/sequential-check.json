@@ -1,0 +1,16 @@
+{
+ "identical": 215,
+ "labels_only": [
+  "Time-14 gitnexus"
+ ],
+ "different": [],
+ "missing": [],
+ "summary": {
+  "bugs": 27,
+  "tool_files_identical": 215,
+  "labels_only": 1,
+  "different": 0,
+  "missing": 0,
+  "note": "stopped after these bugs to publish sooner; the other sample bugs keep their parallel-run rows"
+ }
+}

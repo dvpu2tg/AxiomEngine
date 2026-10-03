@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# axiom-code-graph — JavaScript engine regression suite
+#
+# For every case in test/javascript/cases/<name>:
+#   1. parse cases/<name>/src to IR                 (external parser, $AXIOM_PARSER)
+#   2. parse cases/<name>/lib to IR, if present     (the case's own "library", staged
+#                                                    with --library exactly as a real
+#                                                    dependency parsed from source is)
+#   3. solve CLIENT-ONLY (empty --library)          -> expected/<name>.edges
+#   4. solve WITH LIBRARY, if present               -> expected/<name>.lib.edges
+#   5. COVERAGE GUARD on both: no call site may vanish silently
+#   5b. DIAGNOSTICS GOLDEN on both: expected/<name>.diag (and .lib.diag) — the declared
+#       blind spots (parse gaps, partial modules, import causes, unresolved reasons)
+#       and the package entries, so a refusal cannot turn into a silent nothing
+#   6. with --oracle, score against the TypeScript compiler (allowJs/checkJs):
+#        expected/<name>.oracle — one line per compiler-decided site with its bucket.
+#      A MISSED or WRONG line fails the run whether or not the golden was rewritten:
+#      --bless cannot bless away a regression against the compiler. A known gap is
+#      listed in expected/<name>.known-missing (one site per line, `#` comments).
+#
+#   ./run-tests.sh                 run every case
+#   ./run-tests.sh 04 06           run cases matching those substrings
+#   ./run-tests.sh --bless         regenerate goldens from the current engine (review!)
+#   ./run-tests.sh --oracle        ALSO validate against the compiler
+#   ./run-tests.sh --keep          keep the per-case work dirs
+#
+# Environment:
+#   AXIOM_PARSER   path to the parser entrypoint  (default parser/dist/index.js in this repository)
+#   AXIOM_SUITE_JOBS  cases run at once (default: the CPU count; 1 = one at a time, output uncaptured)
+# ─────────────────────────────────────────────────────────────────────────────
+set -uo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$HERE/../../.." && pwd)"
+PARSER="${AXIOM_PARSER:-$ROOT/parser/dist/index.js}"
+WORK="$HERE/.work"
+# shellcheck source=../tools/case-pool.sh
+. "$ROOT/graph/test/tools/case-pool.sh"
+BLESS=0; KEEP=0; ORACLE=0; FILTERS=()
+for a in "$@"; do case "$a" in
+  --bless) BLESS=1;; --keep) KEEP=1;; --oracle) ORACLE=1;;
+  -h|--help) sed -n '2,26p' "$0"; exit 0;; *) FILTERS+=("$a");; esac; done
+[ -f "$PARSER" ] || { echo "SKIP: parser not found at $PARSER (set AXIOM_PARSER)"; exit 77; }
+if [ "$BLESS" = "1" ] && [ "$ORACLE" != "1" ]; then
+  n_oracle=$(find "$HERE/expected" -name '*.oracle' 2>/dev/null | wc -l | tr -d ' ')
+  if [ "${n_oracle:-0}" -gt 0 ]; then
+    echo "REFUSING: --bless without --oracle would leave $n_oracle .oracle golden(s) describing the previous engine."
+    echo "  Run:  ./run-tests.sh ${FILTERS[*]:-} --bless --oracle"; exit 2
+  fi
+fi
+mkdir -p "$WORK"
+EMPTY_LIB="$WORK/.empty-library"; mkdir -p "$EMPTY_LIB"
+pass=0; fail=0; failed=()
+
+solve() {
+  bash "$ROOT/graph/pipeline/run-souffle.sh" --debug --language javascript \
+    --client-ir "$1" --library "$2" --intermediate "$3/int" --output "$3/out" >"$3/solve.log" 2>&1
+}
+check_golden() {
+  local actual="$1" exp="$2" label="$3"
+  if [ "$BLESS" = "1" ]; then
+    if [ -f "$exp" ] && ! diff -q "$exp" "$actual" >/dev/null; then
+      echo "BLESSED $label (changed)"; diff -u "$exp" "$actual" | sed 's/^/    /' | head -30; fi
+    cp "$actual" "$exp"; return 0
+  fi
+  [ -f "$exp" ] || { echo "FAIL ($label: no golden — run with --bless --oracle)"; return 1; }
+  diff -q "$exp" "$actual" >/dev/null && return 0
+  echo "FAIL ($label changed)"; diff -u "$exp" "$actual" | sed 's/^/    /' | head -40; return 1
+}
+# oracle_check <ir> <out> <src> <work> <golden> <known-missing>
+oracle_check() {
+  local ir="$1" out="$2" src="$3" w="$4" golden="$5" known="$6"
+  node "$HERE/ground-truth/tsc-oracle.mjs" "$src" "$w/oracle.tsv" >"$w/oracle.log" 2>&1 || { echo "FAIL (oracle — see $w/oracle.log)"; return 1; }
+  python3 "$HERE/ground-truth/score.py" "$ir" "$out" "$w/oracle.tsv" --dump="$w/score-rows.tsv" >"$w/score.txt" 2>&1 || { echo "FAIL (score — see $w/score.txt)"; return 1; }
+  python3 "$HERE/tools/oracle_diff.py" "$ir" "$out" "$w/oracle.tsv" "$w/score-rows.tsv" >"$w/actual.oracle"
+  # a defect is a MISSED/WRONG line not listed as known; a known one that stopped being a
+  # defect fails too (tools/oracle_gate.py, shared with torture/run.sh and realapp/run.sh)
+  python3 "$HERE/tools/oracle_gate.py" "$w/actual.oracle" "$known" || return 1
+  check_golden "$w/actual.oracle" "$golden" "oracle golden"
+}
+
+# One case: the body of what was the case loop, unchanged, inside a one-case `for` so its
+# `continue`s still mean "next case". pool_run (graph/test/tools/case-pool.sh) runs several
+# at once and prints them in case order.
+case_body() {
+for dir in "$@"; do
+  name="$(basename "$dir")"
+  if [ ${#FILTERS[@]} -gt 0 ]; then
+    match=0; for f in "${FILTERS[@]}"; do [[ "$name" == *"$f"* ]] && match=1; done
+    [ $match -eq 1 ] || continue
+  fi
+  w="$WORK/$name"; rm -rf "$w"; mkdir -p "$w/ir" "$w/libir" "$w/plain" "$w/withlib"
+  printf '%-40s ' "$name"
+  if ! node "$PARSER" "$dir/src" "$name" false "$w/ir" >"$w/parse.log" 2>&1; then
+    echo "FAIL (parse client — see $w/parse.log)"; fail=$((fail+1)); failed+=("$name"); continue; fi
+  HAS_LIB=0
+  if [ -d "$dir/lib" ] && [ -n "$(ls -A "$dir/lib" 2>/dev/null)" ]; then
+    # --library: the case's lib/ is a DEPENDENCY, so a build directory it ships from is
+    # its source (#620); the case's src/ is the project, where dist/ stays skipped (#796).
+    if ! node "$PARSER" "$dir/lib" "$name-lib" false "$w/libir" --library >"$w/parse-lib.log" 2>&1; then
+      echo "FAIL (parse library — see $w/parse-lib.log)"; fail=$((fail+1)); failed+=("$name"); continue; fi
+    [ -s "$w/libir/all-javascript-modules.csv" ] && HAS_LIB=1
+  fi
+  ok=1
+  if ! solve "$w/ir" "$EMPTY_LIB" "$w/plain"; then echo "FAIL (solve — see $w/plain/solve.log)"; ok=0; fi
+  if [ $ok = 1 ] && ! python3 "$HERE/tools/coverage_guard.py" "$w/ir" "$w/plain/out/raw" >"$w/coverage.txt" 2>&1; then
+    echo "FAIL (silent drop)"; sed 's/^/    /' "$w/coverage.txt" | head -12; ok=0; fi
+  if [ $ok = 1 ]; then
+    python3 "$HERE/tools/normalize_edges.py" "$w/ir" "$w/plain/out/raw" > "$w/actual.edges" 2>"$w/norm.log" || { echo "FAIL (normalize)"; ok=0; }
+  fi
+  if [ $ok = 1 ]; then check_golden "$w/actual.edges" "$HERE/expected/$name.edges" "edges" || ok=0; fi
+  if [ $ok = 1 ]; then
+    python3 "$HERE/tools/normalize_diagnostics.py" "$w/ir" "$w/plain/out/raw" > "$w/actual.diag" 2>>"$w/norm.log" || { echo "FAIL (normalize diagnostics)"; ok=0; }
+  fi
+  if [ $ok = 1 ]; then check_golden "$w/actual.diag" "$HERE/expected/$name.diag" "diagnostics" || ok=0; fi
+  if [ $ok = 1 ] && [ "$ORACLE" = "1" ]; then
+    oracle_check "$w/ir" "$w/plain/out/raw" "$dir/src" "$w" "$HERE/expected/$name.oracle" "$HERE/expected/$name.known-missing" || ok=0
+  fi
+  if [ $ok = 1 ] && [ "$HAS_LIB" = "1" ]; then
+    if ! solve "$w/ir" "$w/libir" "$w/withlib"; then echo "FAIL (solve with library)"; ok=0; fi
+    if [ $ok = 1 ] && ! python3 "$HERE/tools/coverage_guard.py" "$w/ir" "$w/withlib/out/raw" >"$w/coverage-lib.txt" 2>&1; then echo "FAIL (silent drop, with library)"; ok=0; fi
+    if [ $ok = 1 ]; then
+      python3 "$HERE/tools/normalize_edges.py" "$w/ir" "$w/withlib/out/raw" "$w/libir" > "$w/actual.lib.edges" 2>>"$w/norm.log"
+      check_golden "$w/actual.lib.edges" "$HERE/expected/$name.lib.edges" "lib edges" || ok=0
+    fi
+    if [ $ok = 1 ]; then
+      python3 "$HERE/tools/normalize_diagnostics.py" "$w/ir" "$w/withlib/out/raw" "$w/libir" > "$w/actual.lib.diag" 2>>"$w/norm.log"
+      check_golden "$w/actual.lib.diag" "$HERE/expected/$name.lib.diag" "lib diagnostics" || ok=0
+    fi
+  fi
+  if [ $ok = 1 ]; then echo "ok"; pass=$((pass+1)); else fail=$((fail+1)); failed+=("$name"); fi
+  [ "$KEEP" = "1" ] || rm -rf "$w"
+done
+}
+echo "running with up to $(pool_jobs) job(s) at once (AXIOM_SUITE_JOBS; 1 = one at a time)"
+POOL_INTS="pass fail" POOL_ARRAYS="failed"
+pool_run case_body "$HERE"/cases/*/
+echo; echo "passed: $pass  failed: $fail"
+[ $fail -eq 0 ] || { printf '  %s\n' "${failed[@]}"; exit 1; }
+# bin/axiomengine --library staging: every source-tree entry gets its own intermediate
+# directory whatever its basename, and a library row in graph.sqlite carries its package
+# (#600, #603). Skipped when a filter selects cases, as the other tool checks are.
+if [ ${#FILTERS[@]} -eq 0 ]; then
+  bash "$ROOT/graph/test/tools/library-staging-test.sh" || exit 1
+  # The ground-truth harness checks its own two path defects. Synthesised inputs (and one
+  # symlinked fixture) only, so they cost a second and cannot skip on a missing corpus:
+  #   oracle-symlink  one call site is one oracle row whatever the root is spelled like,
+  #                   and the scorer reports a repeated site key (#794)
+  #   library-path    the scorer tells an in-project .d.ts from the standard library on
+  #                   every platform (#614) — written then, never wired in
+  python3 "$HERE/tools/oracle-symlink-test.py" || exit 1
+  python3 "$HERE/tools/library-path-test.py" || exit 1
+fi

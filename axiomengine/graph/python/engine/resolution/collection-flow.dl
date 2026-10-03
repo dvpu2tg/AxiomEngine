@@ -1,0 +1,447 @@
+// ============================================================================
+// RESOLUTION · COLLECTION FLOW  (dict-literal and subscript dispatch)
+//
+// THE IDIOM THIS EXISTS FOR is the decorator registry — click, Flask, pytest's
+// hookimpl, every plugin system:
+//
+//     REGISTRY = {}
+//     def route(name):
+//         def register(fn):
+//             REGISTRY[name] = fn      <- populated at IMPORT time
+//             return fn
+//         return register
+//     @route("go")
+//     def handler(): ...
+//     ...
+//     REGISTRY["go"]()                 <- no name at the call site denotes `handler`
+//
+// and the table-of-lambdas, which is the same shape written inline:
+//
+//     TABLE = {"double": lambda n: n * 2}
+//     TABLE["double"](21)
+//
+// Both are call sites whose callee is a VALUE reached by a literal key. Nothing about
+// them is dynamic in the sense the escape hatches are: the key is a constant, the dict
+// is written once, and the value is a function this engine can name. Reporting them as
+// blind spots would be conceding a resolvable edge.
+//
+// A NOTE ON HOW THE PARSER CLASSIFIES THEM. `TABLE["double"](21)` USED TO arrive as
+// callKind=DYNAMIC_CALL with calleeName="" — conflated with the getattr/eval/exec marker
+// that §4.5 documents as "unresolvable by construction", so a consumer trusting the kind
+// would refuse to try a fully resolvable site. Filed as PD-9 and FIXED in Parser@7ed5111:
+// re-measured on 08-callables, the site is now SUBSCRIPT_CALL with receiverText=TABLE.
+// This file still keys on the callee's expression SHAPE rather than on callKind, and that
+// is deliberate rather than left over: the shape is what makes the three guards below
+// checkable, and it kept working across the kind change without an edit.
+//
+// ── WHAT MAKES THIS SOUND RATHER THAN CLEVER ─────────────────────────────────
+// Three guards, all of them structural:
+//   * the container name is bound EXACTLY ONCE (symtable's own bindingCount), so it
+//     cannot be a different dict by the time the subscript runs;
+//   * the key is a LITERAL, or a parameter that only ever received literals — never an
+//     expression;
+//   * a container that is subscript-STORED with a key the engine cannot pin gets NO
+//     entry rows at all, so an unknown write cannot be silently ignored: it lands in
+//     dict_key_unknown and the site stays a declared unknown.
+// Multiple entries under one key produce multiple targets, i.e. multi_inferred, which is
+// the correct answer for a registry populated from two places.
+// ============================================================================
+
+// ── expr_literal_text(Prov, ExprHash, Text) ──────────────────────────────────
+// A literal's value as written. literalValue (c10) is the name slot, and for a LITERAL
+// node it holds the literal text.
+expr_literal_text(p, e, v) :- expr_node(p, "LITERAL", _, v, e), v != "".
+
+// ── expr_lambda_method(Prov, ExprHash, MethodHash) ───────────────────────────
+// A LAMBDA node is a callable with a real py_method row; lambdaScopeHash bridges the
+// expression to the scope, and the scope's owner is the method. Lambdas are first-class
+// call targets in Python — 369 rows in the measured corpus — which is why this is a
+// dispatch edge rather than decoration.
+expr_lambda_method(p, e, m) :- expr_lambda_scope(p, s, e), method_scope(p, s, m).
+
+// ── expr_key_text(Prov, ExprHash, Text) — what a key expression evaluates to ──
+// (a) a literal, written in place.
+expr_key_text(p, e, v) :- expr_literal_text(p, e, v).
+// (b) a parameter that only ever received literals. This is what carries `name` from
+//     `@route("go")` into `REGISTRY[name] = fn`, across two nested function scopes.
+expr_key_text(p, e, v) :- expr_names_param(p, e, ph), param_arg_literal(ph, v), p = "client".
+
+// ── param_arg_literal(ParamHash, Text) — a literal reaching a parameter ──────
+// expr_key_text, NOT expr_literal_text: a route string can be handed from one parameter
+// to the next before it is used as a key. `recording.send("get_item", ...)` puts the
+// literal on RecordingTransport.send's `route`, which forwards it to
+// InProcessTransport.send's `route`, which is where the subscript happens. Reading only
+// direct literal arguments stopped at the first hop and the registry resolved to one of
+// its three entries instead of all three. Mutually recursive with expr_key_text, and
+// positive, so it is the transitive closure of literal flow.
+param_arg_literal(ph, v) :-
+    call_arg_offset(site, m, off),
+    !call_flow_imprecise(site),
+    call_arg(site, posStr, a),
+    param_decl("client", _, ppos, _, m, ph),
+    to_number(ppos) = to_number(posStr) + off,
+    expr_key_text("client", a, v).
+param_arg_literal(ph, v) :-
+    expr_call_candidate(site, m),
+    !call_flow_imprecise(site),
+    call_kwarg(site, kw, a), kw != "",
+    param_decl("client", kw, _, _, m, ph),
+    expr_key_text("client", a, v).
+
+// ============================================================================
+// DICT ENTRIES — from a literal, and from a subscript store
+// ============================================================================
+
+// ── dict_literal_entry(Prov, DictExprHash, KeyText, ValueExprHash) ───────────
+// KEY and VALUE are the two halves of one dict entry and share a position. They exist as
+// distinct edgeRoles precisely so a display's children do not have to wear ARGUMENT —
+// the schema records that a rule joining edgeRole=ARGUMENT without checking the parent
+// kind picked up 17% non-arguments.
+dict_literal_entry(p, d, k, v) :-
+    expr_node(p, "DICT", _, _, d),
+    expr_parent(p, d, "KEY", pos, ke),
+    expr_literal_text(p, ke, k),
+    expr_parent(p, d, "VALUE", pos, v).
+
+// ── dict_store_entry(Prov, ContainerBindingHash, KeyText, ValueExprHash) ─────
+// `REGISTRY[name] = fn`. The container is resolved through the LEGB walk, so a
+// module-level registry written from inside two nested functions still lands on the same
+// binding.
+dict_store_entry(p, b, k, val) :-
+    expr_node(p, "SUBSCRIPT", _, _, tgt),
+    expr_name_context(p, "STORE", tgt),
+    expr_parent(p, tgt, "SUBSCRIPT_OBJECT", _, obj),
+    expr_parent(p, tgt, "SUBSCRIPT_INDEX", _, idx),
+    expr_key_text(p, idx, k),
+    expr_binding(p, ob, _, obj),
+    binding_lookup(p, ob, b),
+    assign_pair(p, tgt, val).
+
+// ── dict_key_unknown(Prov, ContainerBindingHash, ExprHash) ───────────────────
+// A subscript store whose KEY the engine cannot pin. The container's contents are then
+// only partially known, so a lookup on it must not report a miss as a negative. Emitted
+// as a positive fact, and consumed below.
+dict_key_unknown(p, b, tgt) :-
+    expr_node(p, "SUBSCRIPT", _, _, tgt),
+    expr_name_context(p, "STORE", tgt),
+    expr_parent(p, tgt, "SUBSCRIPT_OBJECT", _, obj),
+    expr_parent(p, tgt, "SUBSCRIPT_INDEX", _, idx),
+    !expr_key_text(p, idx, _),
+    expr_binding(p, ob, _, obj),
+    binding_lookup(p, ob, b).
+
+// ── binding_dict_entry_method(Prov, BindingHash, KeyText, MethodHash) ────────
+// The container name, a key, and the CALLABLE stored under it.
+// (a) from a dict literal assigned to the name.
+binding_dict_entry_method(p, b, k, m) :-
+    binding_rebinding(p, "1", _, _, b),
+    expr_binding(p, b, "STORE", tgt),
+    assign_pair(p, tgt, val),
+    dict_literal_entry(p, val, k, ve),
+    expr_denotes_method(p, ve, m).
+binding_dict_entry_method(p, b, k, m) :-
+    binding_rebinding(p, "1", _, _, b),
+    expr_binding(p, b, "STORE", tgt),
+    assign_pair(p, tgt, val),
+    dict_literal_entry(p, val, k, ve),
+    expr_lambda_method(p, ve, m).
+// (b) from a subscript store into the name.
+binding_dict_entry_method(p, b, k, m) :-
+    binding_rebinding(p, "1", _, _, b),
+    dict_store_entry(p, b, k, ve),
+    expr_denotes_method(p, ve, m).
+binding_dict_entry_method(p, b, k, m) :-
+    binding_rebinding(p, "1", _, _, b),
+    dict_store_entry(p, b, k, ve),
+    expr_lambda_method(p, ve, m).
+
+// ============================================================================
+// THE CALLEE — a subscript with a pinned key
+// ============================================================================
+
+// ── expr_denotes_method through a subscript ──────────────────────────────────
+expr_denotes_method(p, e, m) :-
+    expr_node(p, "SUBSCRIPT", _, _, e),
+    expr_parent(p, e, "SUBSCRIPT_OBJECT", _, obj),
+    expr_parent(p, e, "SUBSCRIPT_INDEX", _, idx),
+    expr_key_text(p, idx, k),
+    expr_binding(p, ob, ctx, obj), ctx != "STORE",
+    binding_lookup(p, ob, b),
+    binding_dict_entry_method(p, b, k, m).
+
+// ── a bare LAMBDA used directly as a callee: `(lambda n: n)(3)` ───────────────
+expr_denotes_method(p, e, m) :- expr_lambda_method(p, e, m).
+
+// ============================================================================
+// A DISPATCH TABLE OF LAMBDAS, KEYED BY DATA (issue #71)
+//
+//     class Generator:
+//         TRANSFORMS = { NodeA: lambda self, e: self.render(e, "a"), ... }
+//         def generate(self, node):
+//             return self.TRANSFORMS[type(node)](self, node)
+//
+// Two things stopped this resolving, and both have precedent above.
+//
+// (1) The registry is a CLASS-LEVEL attribute, and dict entries were only ever keyed on a
+//     BINDING — which is where a registry shared by every instance does not live.
+// (2) The key is DATA, so the pinned-key clause cannot fire.
+//
+// The consequence compounds: the lambda is never reached as a callee, so its parameters
+// are never bound by param_arg_type, so `self` inside the body has no type and every call
+// on it is unresolved. On one measured codebase this single shape is about a third of all
+// unresolved call sites.
+//
+// Note what this does NOT do: it never treats a lambda parameter named `self` as `self`.
+// The name carries no privilege inside a lambda. The type arrives from the ARGUMENT at
+// the call site, through the same param_arg_type the engine already uses for ordinary
+// functions -- so a lambda whose first argument is something else gets that something else.
+// ============================================================================
+
+// ── field_dict_entry_method(Prov, FieldHash, Key, MethodHash) ────────────────
+// A dict of callables written in a class body, read through `self.NAME`.
+field_dict_entry_method(p, f, k, m) :-
+    field_write_value(p, f, val),
+    dict_literal_entry(p, val, k, ve),
+    expr_denotes_method(p, ve, m).
+field_dict_entry_method(p, f, k, m) :-
+    field_write_value(p, f, val),
+    dict_literal_entry(p, val, k, ve),
+    expr_lambda_method(p, ve, m).
+
+// ── a pinned key into a class-level table ───────────────────────────────────
+expr_denotes_method(p, e, m) :-
+    expr_node(p, "SUBSCRIPT", _, _, e),
+    expr_parent(p, e, "SUBSCRIPT_OBJECT", _, obj),
+    expr_parent(p, e, "SUBSCRIPT_INDEX", _, idx),
+    expr_key_text(p, idx, k),
+    expr_attr_of_self(p, obj, n, owner),
+    type_attr_field(p, owner, n, f),
+    field_dict_entry_method(p, f, k, m).
+
+// ── an UNPINNED key yields the UNION of the table's entries ─────────────────
+// The key is data; the entries are not. Same trade as everywhere else -- a sound set the
+// true target is inside beats a blank -- and keyed on the index NOT being a literal so it
+// stays a comparison rather than a negation, leaving the pinned clauses their exact answer.
+expr_denotes_method(p, e, m) :-
+    expr_node(p, "SUBSCRIPT", _, _, e),
+    expr_parent(p, e, "SUBSCRIPT_OBJECT", _, obj),
+    expr_parent(p, e, "SUBSCRIPT_INDEX", _, idx),
+    expr_node(p, ik, _, _, idx), ik != "LITERAL",
+    expr_attr_of_self(p, obj, n, owner),
+    type_attr_field(p, owner, n, f),
+    field_dict_entry_method(p, f, _, m).
+expr_denotes_method(p, e, m) :-
+    expr_node(p, "SUBSCRIPT", _, _, e),
+    expr_parent(p, e, "SUBSCRIPT_OBJECT", _, obj),
+    expr_parent(p, e, "SUBSCRIPT_INDEX", _, idx),
+    expr_node(p, ik, _, _, idx), ik != "LITERAL",
+    expr_binding(p, ob, ctx, obj), ctx != "STORE",
+    binding_lookup(p, ob, b),
+    binding_dict_entry_method(p, b, _, m).
+
+// ── subscript_dispatch_incomplete(SiteKey) ───────────────────────────────────
+// The site subscripts a container that is also written with a key the engine could not
+// pin, so the resolved set may be short. A declared limitation attached to the site
+// rather than a footnote in a document.
+subscript_dispatch_incomplete(site) :-
+    call_callee_expr(site, e),
+    expr_node("client", "SUBSCRIPT", _, _, e),
+    expr_parent("client", e, "SUBSCRIPT_OBJECT", _, obj),
+    expr_binding("client", ob, _, obj),
+    binding_lookup("client", ob, b),
+    dict_key_unknown("client", b, _).
+
+// ============================================================================
+// A REGISTRY OF CLASSES — the serializer/plugin table
+//
+// `SERIALIZERS[name] = cls` inside a decorator, then `SERIALIZERS[name]()` at the call
+// site. Same machinery as the callable registry above, but the stored value is a CLASS, so
+// reading it out yields a class object and calling it CONSTRUCTS.
+// ============================================================================
+
+// ── binding_dict_entry_type(Prov, BindingHash, KeyText, TypeHash) ────────────
+binding_dict_entry_type(p, b, k, t) :-
+    binding_rebinding(p, "1", _, _, b),
+    expr_binding(p, b, "STORE", tgt),
+    assign_pair(p, tgt, val),
+    dict_literal_entry(p, val, k, ve),
+    expr_type_class_object(p, ve, t).
+binding_dict_entry_type(p, b, k, t) :-
+    binding_rebinding(p, "1", _, _, b),
+    dict_store_entry(p, b, k, ve),
+    expr_type_class_object(p, ve, t).
+
+// ── a subscript with a pinned key into a class registry denotes that class ────
+expr_type_class_object(p, e, t) :-
+    expr_node(p, "SUBSCRIPT", _, _, e),
+    expr_parent(p, e, "SUBSCRIPT_OBJECT", _, obj),
+    expr_parent(p, e, "SUBSCRIPT_INDEX", _, idx),
+    expr_key_text(p, idx, k),
+    expr_binding(p, ob, ctx, obj), ctx != "STORE",
+    binding_lookup(p, ob, b),
+    binding_dict_entry_type(p, b, k, t).
+
+// ── `REGISTRY.get(key)` is the same lookup as `REGISTRY[key]` ────────────────
+// The dict method spelling of the clause above. `.get` is the form a registry lookup
+// actually takes, because the caller wants a default rather than a KeyError — and the
+// `or <default>` that usually follows is carried by the boolean-operation rules in
+// resolution/value-flow.dl.
+expr_type_class_object(p, e, t) :-
+    call_of_expr(e, site),
+    call_name(site, cn), dict_lookup_method(cn),
+    call_receiver_object(site, obj),
+    call_arg(site, "0", idx),
+    expr_key_text(p, idx, k),
+    expr_binding(p, ob, ctx, obj), ctx != "STORE",
+    binding_lookup(p, ob, b),
+    binding_dict_entry_type(p, b, k, t).
+
+// ── A CLASS REGISTRY HELD ON A CLASS-LEVEL ATTRIBUTE ────────────────────────
+// The canonical registry declaration:
+//
+//     class Markdown:
+//         elements: ClassVar[dict[str, type[Element]]] = {"h": Heading, "p": Para}
+//         ...
+//         cls = self.elements.get(token.type) or Unknown
+//
+// dict entries were only ever keyed on a BINDING, so a registry declared in a class body
+// and read through `self.` had none — which is where registries actually live, since the
+// table is shared by every instance.
+field_dict_entry_class(p, f, t) :-
+    field_write_value(p, f, val),
+    dict_literal_entry(p, val, _, ve),
+    expr_type_class_object(p, ve, t).
+
+expr_type_class_object(p, e, t) :-
+    call_of_expr(e, site),
+    call_name(site, cn), dict_lookup_method(cn),
+    call_receiver_object(site, obj),
+    expr_attr_of_self(p, obj, n, owner),
+    type_attr_field(p, owner, n, f),
+    field_dict_entry_class(p, f, t).
+expr_type_class_object(p, e, t) :-
+    expr_node(p, "SUBSCRIPT", _, _, e),
+    expr_parent(p, e, "SUBSCRIPT_OBJECT", _, obj),
+    expr_attr_of_self(p, obj, n, owner),
+    type_attr_field(p, owner, n, f),
+    field_dict_entry_class(p, f, t).
+
+// ── an UNPINNED key into a registry yields the UNION of what it holds ────────
+// `REGISTRY.get(token.type)` — the key is computed, so no single entry is implied, but
+// the set of classes the registry was BUILT from is known exactly and the answer is
+// inside it. That is the same sound-set trade made everywhere else, and it is the shape
+// a real dispatch table takes: the key is data, the values are not.
+//
+// Keyed on the index NOT being a literal rather than on the absence of a pinned key, so
+// this stays a comparison rather than a negation and the pinned clause above keeps its
+// exact single answer.
+expr_type_class_object(p, e, t) :-
+    call_of_expr(e, site),
+    call_name(site, cn), dict_lookup_method(cn),
+    call_receiver_object(site, obj),
+    call_arg(site, "0", idx),
+    expr_node(p, ik, _, _, idx), ik != "LITERAL",
+    expr_binding(p, ob, ctx, obj), ctx != "STORE",
+    binding_lookup(p, ob, b),
+    binding_dict_entry_type(p, b, _, t).
+
+// ============================================================================
+// A REGISTRY HELD ON AN ATTRIBUTE — the last hop of the cross-service chain
+//
+//     def routes(self):                       # inventory_service/handlers.py
+//         return {"price_quote": self.price_quote, ...}
+//     InProcessTransport(inv_handlers.routes())
+//     def send(self, route, payload):         # shared/transport.py
+//         handler = self._registry[route]
+//         return handler(payload)
+//
+// Four hops: a dict literal of BOUND METHODS, returned from a method, passed as a
+// constructor argument, stored on an attribute, and indexed by a parameter whose literal
+// value flows in from the caller. Every hop is already a mechanism this engine has; what
+// was missing is that dict entries were only ever keyed on a BINDING, so a container held
+// on `self` had none.
+//
+// MEASURED: this was the single remaining missing edge on the two-service project —
+// `InProcessTransport.send -> InventoryHandlers.price_quote`, the far end of the
+// orders -> transport -> inventory chain, and the one the project exists to test.
+// ============================================================================
+
+// ── expr_denotes_bound_method(Prov, ExprHash, MethodHash) ────────────────────
+// `self.price_quote` used as a VALUE rather than called. An attribute access whose name
+// resolves through the receiver's MRO to a method, with NO call wrapping it — which is
+// exactly what distinguishes storing a method from invoking one.
+expr_denotes_bound_method(p, e, m) :-
+    expr_node(p, "ATTRIBUTE_ACCESS", _, n, e),
+    !call_callee_expr(_, e),
+    expr_parent(p, e, "ATTRIBUTE_OBJECT", _, obj),
+    expr_type(p, obj, t),
+    mro_lookup(p, t, n, m).
+// A DECORATED method stored as a value: `{"get_item": self.get_item}` where get_item is
+// @retry-decorated. The registry holds the DECORATOR'S OUTPUT, so routing to that key
+// reaches the wrapper — which is what actually runs. mro_lookup excludes replaced
+// definitions by design; mro_lookup_decorated is where their real target lives.
+expr_denotes_bound_method(p, e, m) :-
+    expr_node(p, "ATTRIBUTE_ACCESS", _, n, e),
+    !call_callee_expr(_, e),
+    expr_parent(p, e, "ATTRIBUTE_OBJECT", _, obj),
+    expr_type(p, obj, t),
+    mro_lookup_decorated(p, t, n, m).
+expr_denotes_method(p, e, m) :- expr_denotes_bound_method(p, e, m).
+
+// ── method_returns_dict_entry(Prov, MethodHash, KeyText, TargetMethodHash) ───
+// A method whose return value is a dict LITERAL mapping literal keys to callables.
+method_returns_dict_entry(p, m, k, target) :-
+    method_return_value_expr(p, m, e),
+    dict_literal_entry(p, e, k, ve),
+    expr_denotes_method(p, ve, target).
+method_returns_dict_entry(p, m, k, target) :-
+    method_return_value_expr(p, m, e),
+    dict_literal_entry(p, e, k, ve),
+    expr_lambda_method(p, ve, target).
+
+// ── field_dict_entry(Prov, FieldHash, KeyText, TargetMethodHash) ─────────────
+// The attribute was written from a parameter, and some call site passed that parameter a
+// registry dict. Sound over the union of call sites, which is the same closed-world
+// argument every other flow rule here makes.
+field_dict_entry(p, f, k, target) :-
+    field_write_value(p, f, val),
+    expr_names_param(p, val, ph),
+    param_arg_dict_entry(ph, k, target),
+    p = "client".
+
+// ── param_arg_dict_entry(ParamHash, KeyText, TargetMethodHash) ───────────────
+// A registry dict reaching a parameter — either written inline at the call site, or
+// returned by the call that produced the argument.
+param_arg_dict_entry(ph, k, target) :-
+    call_arg_offset(site, m, off),
+    !call_flow_imprecise(site),
+    call_arg(site, posStr, a),
+    param_decl("client", _, ppos, _, m, ph),
+    to_number(ppos) = to_number(posStr) + off,
+    dict_literal_entry("client", a, k, ve),
+    expr_denotes_method("client", ve, target).
+param_arg_dict_entry(ph, k, target) :-
+    call_arg_offset(site, m, off),
+    !call_flow_imprecise(site),
+    call_arg(site, posStr, a),
+    param_decl("client", _, ppos, _, m, ph),
+    to_number(ppos) = to_number(posStr) + off,
+    call_of_expr(a, inner), expr_call_candidate(inner, producer),
+    method_returns_dict_entry("client", producer, k, target).
+
+// ── indexing a registry held on an attribute ─────────────────────────────────
+expr_denotes_method(p, e, target) :-
+    expr_node(p, "SUBSCRIPT", _, _, e),
+    expr_parent(p, e, "SUBSCRIPT_OBJECT", _, obj),
+    expr_parent(p, e, "SUBSCRIPT_INDEX", _, idx),
+    expr_key_text(p, idx, k),
+    expr_attr_of_self(p, obj, n, owner),
+    type_attr_field(p, owner, n, f),
+    field_dict_entry(p, f, k, target).
+
+// ── and the local that receives it: `handler = self._registry[route]` ────────
+binding_value_method(p, b, target) :-
+    binding_rebinding(p, "1", _, _, b),
+    expr_binding(p, b, "STORE", tgt),
+    assign_pair(p, tgt, val),
+    expr_denotes_method(p, val, target).

@@ -1,0 +1,280 @@
+// ============================================================================
+// RESOLUTION · DECORATORS
+//
+// py_decorator / py_decorator_argument were STAGED AND READ BY NOTHING before this
+// file. 22% of functions are decorated, so that was not a small omission: a decorator
+// is a call that REPLACES the decorated object, and an engine that ignores it emits
+// edges to bodies the decorated name can no longer reach.
+//
+// THE RULE: an UNMODELLED decorator that replaces its target makes every call through
+// that name ambiguous_unknown. NEVER a direct edge. That is a deliberate loss of
+// recall in exchange for not fabricating, and it is countable — method_target_replaced
+// is exported, so the cost is visible rather than assumed.
+//
+// applicationOrder IS BOTTOM-UP. For a stacked pair, applicationOrder 0 is the
+// decorator nearest the `def`, and its return value is what the next one receives. So
+// the object the NAME finally refers to is produced by the decorator with the HIGHEST
+// applicationOrder. Reading `position` (top-down source order) instead inverts the
+// stack and attributes the replacement to the wrong call — which is why both columns
+// exist and why this file uses only applicationOrder.
+//
+// NOTE ON linkage-sample: the IR at
+// Parser/analysis-results/python/linkage-sample contains NO all-python-decorators.csv
+// at all, although the source has 6 decorators (@overload x2, @staticmethod,
+// @classmethod, @property, @audit("child")). So py_decorator is empty there and none of
+// these rules can fire on it. Filed as PD-3. The rules are exercised against the 3.10.4
+// library IR, which does ship the relation (598 decorator rows in _stdlib_base alone).
+// ============================================================================
+
+// ── decorator_transparent(BuiltinKind) — the modelled set ────────────────────
+// A decorator is TRANSPARENT when calling the decorated NAME still reaches the
+// decorated `def`, so resolving the name to the def is correct:
+//   STATICMETHOD / CLASSMETHOD  descriptors — they change which object arg 0 is, which
+//                               argument flow must account for, but the callee body is
+//                               the same function.
+//   PROPERTY / SETTER / DELETER descriptors — they turn an attribute ACCESS into a call
+//                               on this exact function.
+//   ABSTRACTMETHOD / FINAL / NO_TYPE_CHECK
+//                               metadata only. `@no_type_check` on a metaclass __new__
+//                               was read as an unknown replacing decorator, which made
+//                               the class statement's creation edge disappear (#704).
+//   OVERLOAD                    the stub is excluded from lookup by bodyIsStub already.
+//   WRAPS                       applied to the WRAPPER, and only copies metadata.
+//   LRU_CACHE / CACHED_PROPERTY / CONTEXTMANAGER / DATACLASS / DEPRECATED
+//                               a library wrapper that CALLS THROUGH. The direct edge
+//                               skips one library hop; it does not point at the wrong
+//                               body. Recorded as decorator_hop_elided so the elision is
+//                               a fact rather than an omission. DEPRECATED is
+//                               warnings.deprecated / typing_extensions.deprecated: it
+//                               warns and calls the function; stacked under @property it
+//                               left the getter opaque, so the property had no callers
+//                               and a read of it resolved to nothing (#704).
+decorator_transparent("STATICMETHOD").
+decorator_transparent("CLASSMETHOD").
+decorator_transparent("PROPERTY").
+decorator_transparent("SETTER").
+decorator_transparent("DELETER").
+decorator_transparent("ABSTRACTMETHOD").
+decorator_transparent("FINAL").
+decorator_transparent("NO_TYPE_CHECK").
+decorator_transparent("OVERLOAD").
+decorator_transparent("WRAPS").
+decorator_transparent("LRU_CACHE").
+decorator_transparent("CACHED_PROPERTY").
+decorator_transparent("CONTEXTMANAGER").
+decorator_transparent("DATACLASS").
+decorator_transparent("DEPRECATED").
+
+// ── decorator_elides_hop(BuiltinKind) — transparent, but through a wrapper ───
+decorator_elides_hop("LRU_CACHE").
+decorator_elides_hop("CACHED_PROPERTY").
+decorator_elides_hop("CONTEXTMANAGER").
+decorator_elides_hop("DEPRECATED").
+
+// ── decorator_opaque(Prov, DecoratorHash) ────────────────────────────────────
+// replacesTarget=true AND the builtinKind is not in the modelled set. `@audit("child")`
+// is exactly this: `audit` returns `middle`, `middle(tagged)` returns `wrapper`, and the
+// name `tagged` now refers to `wrapper`.
+decorator_opaque(p, d) :-
+    decorator_replaces_target(p, d),
+    decorator_builtin(p, bk, d),
+    !decorator_transparent(bk).
+
+// ── method_target_replaced(Prov, MethodHash) ─────────────────────────────────
+// This `def` is no longer what its own name means. Subtracted from type_defines_method
+// in resolution/attribute-lookup.dl, which is what turns a call through the name into
+// ambiguous_unknown rather than a fabricated edge.
+method_target_replaced(p, m) :- decorator_target(p, _, m, d), m != "", decorator_opaque(p, d).
+
+// ── type_target_replaced(Prov, TypeHash) ─────────────────────────────────────
+// A decorated CLASS whose decorator replaces it (`@register class C` returning a
+// proxy). 214 decorated classes in the measured corpus.
+type_target_replaced(p, t) :- decorator_target(p, t, "", d), t != "", decorator_opaque(p, d).
+
+// ── decorator_hop_elided(Prov, MethodHash, BuiltinKind) ──────────────────────
+// A direct edge to this method skips one library wrapper frame. Exported so the graph's
+// depth can be read honestly.
+decorator_hop_elided(p, m, bk) :-
+    decorator_target(p, _, m, d), m != "",
+    decorator_builtin(p, bk, d), decorator_elides_hop(bk).
+
+// ── decorator_outermost(Prov, OwnerHash, DecoratorHash) ──────────────────────
+// The decorator that produces the object the name finally refers to: the one with the
+// HIGHEST applicationOrder. Max aggregate over a projection, outside any recursion.
+// decorator_order_num exists only so the aggregate has a number-typed column to
+// maximise over: souffle cannot deduce the type of a variable bound by
+// `o = to_number(...)` INSIDE a max body, and the error it gives names the aggregate,
+// not the conversion.
+decorator_order_num(p, owner, d, n) :-
+    annotation_on(p, _, _, _, owner, d),
+    decorator_order(p, _, ostr, d), ostr != "",
+    n = to_number(ostr).
+decorator_max_order(p, owner, omax) :-
+    decorator_order_num(p, owner, _, _),
+    omax = max n : { decorator_order_num(p, owner, _, n) }.
+decorator_outermost(p, owner, d) :-
+    decorator_max_order(p, owner, omax),
+    decorator_order_num(p, owner, d, omax).
+
+// ── decorator_call_site(Prov, SiteHash, DecoratorHash) ───────────────────────
+// A CALL-kind decorator (`@audit("child")`) has its OWN py_call_site with
+// callKind=DECORATOR_CALL. That call is part of the conserved site universe and gets a
+// real edge like any other — the decorator being unmodelled affects what the DECORATED
+// NAME resolves to, not whether the decorator's own invocation resolves.
+decorator_call_site(p, site, d) :-
+    decorator_expr(p, e, d),
+    call_decl(p, "DECORATOR_CALL", _, _, e, site).
+
+// ============================================================================
+// WHAT A DECORATED NAME ACTUALLY DENOTES — the application chain
+//
+// `@outer_deco @inner_deco def stacked` means outer_deco(inner_deco(stacked)), so the
+// name `stacked` denotes outer_deco's return value. Reading `position` (top-down source
+// order) instead of `applicationOrder` (bottom-up) inverts that and attributes the
+// replacement to the wrong decorator — which is why the schema carries both columns and
+// why this chain uses only applicationOrder.
+//
+// MEASURED ON 07-decorators. Without this chain the engine resolved `never_runs()`,
+// `wrapped_target()` and `stacked()` to the `def`s written under the decorators — three
+// FABRICATED edges, because none of those three functions is what its own name means.
+// CPython's answer is `substitute`, `wrapper` and `outer_w`. With the chain, all three
+// agree and the fabrications go to zero.
+//
+// FOUR STEP SHAPES, and each one is a different real idiom:
+//   returns a def          @replacing -> substitute            the def never runs
+//   returns its param 0    @passthrough -> the input unchanged  the def DOES run
+//   transparent builtin    @staticmethod, @functools.wraps      identity
+//   anything else          NO ROW — the chain breaks and the name becomes a declared
+//                          unknown. That is the honest outcome for a library factory
+//                          whose return value is library-internal.
+// ============================================================================
+
+// ── deco_at(OwnerHash, ApplicationOrder, DecoratorHash) ──────────────────────
+deco_at(owner, k, d) :-
+    annotation_on("client", _, _, _, owner, d),
+    decorator_order("client", _, ostr, d), ostr != "",
+    k = to_number(ostr).
+
+// ── deco_factory(DecoratorHash, MethodHash) — the callable the `@` names ──────
+// For a PARENTHESISED decorator the named callable is the FACTORY (`route` in
+// `@route("go")`), which is called first and whose RESULT is then applied. For a bare
+// decorator the named callable is applied directly.
+deco_factory(d, f) :-
+    decorator_expr("client", e, d), call_of_expr(e, s), expr_call_candidate(s, f).
+deco_factory(d, f) :-
+    decorator_expr("client", e, d), !call_of_expr(e, _), expr_names_method("client", e, f).
+deco_factory(d, f) :-
+    decorator_expr("client", e, d), !call_of_expr(e, _), expr_attr_names_method("client", e, f).
+// A DECORATOR SUPPLIED BY A STAGED LIBRARY (#375). The three clauses above all reach the
+// callable through the CLIENT's own binding graph, and a library method is never in it:
+// it is reached by NAME through resolution/lib-linking.dl, which is a different route on
+// purpose. So `@lib_deco` had no factory at all, the chain could not leave stage 0, and
+// every call through the decorated name was a declared unknown however completely the
+// library was staged. The boundary itself always resolved — `decorator_hits_lib` emits it
+// — which is why this looked like a blind spot rather than a missing link.
+deco_factory(d, f) :-
+    decorator_expr("client", e, d), !call_of_expr(e, _), expr_names_lib_function(e, f).
+// And the parenthesised form, whose factory is reached as an ordinary call on the
+// decorator's own py_call_site.
+deco_factory(d, f) :-
+    decorator_expr("client", e, d), call_of_expr(e, s), call_hits_lib_method(s, f).
+
+// ── deco_applied(DecoratorHash, MethodHash) — the callable APPLIED to the target ──
+// The distinction that `@route("go")` exists to test: route is not applied to `handler`,
+// route("go") is. So for a parenthesised decorator the applied callable is the factory's
+// RETURN, and for a bare one it is the factory itself.
+//
+// THE CALLABLE'S OWN FACTS ARE READ WITH ITS OWN PROVENANCE (#375). The `@` and the
+// decorated `def` are always client — those pins are right and stay — but the callable
+// the `@` names can be declared in a STAGED LIBRARY, and pinning ITS return flow to
+// "client" meant `@lib_deco` could never advance a stage. Every call through a
+// library-supplied decorator was therefore a declared unknown: framework routing, task
+// registration, retry and caching wrappers are all this shape. The lookup is by method
+// HASH, which is unique, so dropping the pin admits the library's answer and nothing else.
+deco_returns_method(f, out) :- method_returns_method(_, f, out).
+deco_returns_param(f, pos)  :- method_returns_param(_, f, pos).
+
+deco_applied(d, f) :- deco_factory(d, f), decorator_expr("client", e, d), !call_of_expr(e, _).
+deco_applied(d, r) :-
+    deco_factory(d, f), decorator_expr("client", e, d), call_of_expr(e, _),
+    deco_returns_method(f, r).
+
+// ── deco_stage(MethodHash, Order, InputMethodHash) ───────────────────────────
+// The object entering application stage `Order`. Stage 0's input is the `def` itself.
+deco_stage(m, 0, m) :- method_decorated("client", _, m).
+// (a) the applied callable returns a def: that def is the next stage's input.
+deco_stage(m, k1, out) :-
+    deco_stage(m, k, _), deco_at(m, k, d), deco_applied(d, f),
+    deco_returns_method(f, out), k1 = k + 1.
+// (b) the applied callable returns its own first parameter: identity.
+deco_stage(m, k1, in) :-
+    deco_stage(m, k, in), deco_at(m, k, d), deco_applied(d, f),
+    deco_returns_param(f, "0"), k1 = k + 1.
+// (c) a transparent builtin (@staticmethod, @classmethod, @property, @functools.wraps):
+//     identity, and no client factory is needed.
+deco_stage(m, k1, in) :-
+    deco_stage(m, k, in), deco_at(m, k, d),
+    decorator_builtin("client", bk, d), decorator_transparent(bk), k1 = k + 1.
+
+// ── decorated_name_target(MethodHash, MethodHash) ────────────────────────────
+// The output of the LAST stage: what the decorated name finally denotes. If any stage
+// broke, no row exists for the final index and the name stays a declared unknown.
+decorated_name_target(m, out) :-
+    decorator_max_order("client", m, kmax),
+    deco_stage(m, kfinal, out), kfinal = kmax + 1.
+
+// ── DECORATOR ARGUMENT FLOW ──────────────────────────────────────────────────
+// The decorated object is passed as argument 0 of the applied callable. That is how
+// `fn` inside `wrapping`'s `wrapper` comes to mean `wrapped_target` — and it is the ONLY
+// thing that resolves the three closure_local sites in 07-decorators and the `fn(...)`
+// site in linkage-sample's models.audit.
+param_arg_method(ph, in) :-
+    deco_stage(m, k, in), deco_at(m, k, d), deco_applied(d, f),
+    param_decl(_, _, "0", _, f, ph).
+
+// ── decorator_chain_broken(MethodHash, DecoratorHash) ────────────────────────
+// The decorator this engine could not follow, named. The cost of not fabricating,
+// as a countable row.
+decorator_chain_broken(m, d) :-
+    deco_stage(m, k, _), deco_at(m, k, d), !deco_stage_advanced(m, k).
+deco_stage_advanced(m, k) :- deco_stage(m, k1, _), k = k1 - 1.
+
+// ============================================================================
+// DECORATED CLASSES — `@serializer("item") class ItemSerializer(...)`
+//
+// 214 decorated classes in the measured corpus, and the shape is the backbone of every
+// plugin/serializer/model registry: the decorator records the CLASS in a table and returns
+// it unchanged, and dispatch later happens by looking the table up and CONSTRUCTING.
+//
+// MEASURED on the two-service project: without this, `cls = SERIALIZERS[name]; cls()` in
+// shared/serialization.py had no target, and with it the chain
+//     serialize -> SERIALIZERS["item"] -> ItemSerializer() -> ItemSerializer.to_dict
+// resolves end to end. deco_stage is keyed on method_decorated and so cannot see a class
+// at all; this is the type-shaped twin of it.
+// ============================================================================
+
+// ── deco_stage_type(TypeHash, Order, InputTypeHash) ──────────────────────────
+deco_stage_type(t, 0, t) :- annotation_on("client", _, _, "TYPE_DECLARATION", t, _).
+// The applied callable returns its own first parameter: the class passes through
+// unchanged, which is what a registering decorator does.
+deco_stage_type(t, k1, in) :-
+    deco_stage_type(t, k, in), deco_at(t, k, d), deco_applied(d, f),
+    method_returns_param("client", f, "0"), k1 = k + 1.
+deco_stage_type(t, k1, in) :-
+    deco_stage_type(t, k, in), deco_at(t, k, d),
+    decorator_builtin("client", bk, d), decorator_transparent(bk), k1 = k + 1.
+
+// ── decorated_class_target(TypeHash, TypeHash) ───────────────────────────────
+// What the decorated CLASS NAME finally denotes. A decorator that returns something other
+// than the class (a proxy, a namedtuple replacement) breaks the chain and the name becomes
+// a declared unknown — the same discipline as for functions.
+decorated_class_target(t, out) :-
+    decorator_max_order("client", t, kmax),
+    deco_stage_type(t, kfinal, out), kfinal = kmax + 1.
+
+// ── the decorated CLASS flows into the applied callable's parameter 0 ────────
+// `register(cls)` receives ItemSerializer. This is what lets `SERIALIZERS[name] = cls`
+// know which class it stored.
+param_arg_class(ph, in) :-
+    deco_stage_type(t, k, in), deco_at(t, k, d), deco_applied(d, f),
+    param_decl("client", _, "0", _, f, ph).

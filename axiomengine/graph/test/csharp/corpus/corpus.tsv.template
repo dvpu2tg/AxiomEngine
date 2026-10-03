@@ -1,0 +1,73 @@
+# TEMPLATE for the C# evaluation corpus. THIS FILE CARRIES NO ENTRIES, and the
+# filled-in copy does not live in this repository.
+#
+# The manifest names the projects the engine is scored against and which set each
+# is in. Publishing that invites the thing the held-out half exists to prevent: a
+# rule tuned, however unconsciously, to the projects it will be measured on. The
+# split still has to be pinned to be reproducible, so it is pinned in a file the
+# operator holds. See manifest.sh, and CS_CORPUS_MANIFEST.
+#
+# Ten real projects, five designed against and five design-blind. The split is
+# recorded HERE, in the tree, at pinned commits, because a split that lives in an
+# agent's head is not a split and a rate measured against an unpinned corpus is not
+# reproducible: upstream moves and a regression becomes indistinguishable from a
+# dependency bump.
+#
+# ── FIELDS ───────────────────────────────────────────────────────────────────
+#   name  set  path  repo  commit  note
+# `note` is the last field and may contain spaces. `path` is relative to the clone;
+# `.` means the repository root IS the subject.
+#
+# ── SET ──────────────────────────────────────────────────────────────────────
+# dev      designed against. A rule may be derived from what these projects show.
+# holdout  DESIGN-BLIND. Measured, never used to derive a rule. When it surfaces a
+#          defect class, the shape is reproduced SYNTHETICALLY under cases/ and the
+#          rule is designed from that -- never from the held-out site itself.
+#          A change that closes the dev/holdout gap is suspicious rather than good:
+#          that gap IS the generalisation cost, and a fix that erases it usually
+#          means the dev set leaked.
+#
+# ── CHOOSING THEM ────────────────────────────────────────────────────────────
+# Choose them so that between them they exercise every construct the engine claims
+# to handle, and so that the two sets are not the same program twice. A corpus of five
+# ASP.NET web applications reports excellent coverage of a subset; the parser's own
+# stratified audit is the precedent for caring about this -- its `modern-app` stratum
+# had 547 files and 67 kind disagreements while `framework-bcl` had 2,217 and 1,620.
+#
+# The DEV set is weighted towards what a client-only engine can actually resolve:
+# library code whose calls are mostly into its own source. The HOLDOUT set
+# should deliberately include projects whose dominant idiom the dev set does NOT
+# have -- operator-and-conversion-heavy code, expression trees, `dynamic` -- because
+# a held-out set that only repeats the dev set's shapes measures nothing.
+#
+# ── PATH: why the project subdirectory, not the repository root ──────────────
+# The IR carries `filePath` relative to the parsed root. Pointing at a repository
+# root that holds src/, test/, benchmarks/ and samples/ measures the engine against
+# test doubles and benchmark harnesses as much as against the library, and the
+# oracle would compile all of them as one assembly -- merging several `Program`
+# classes and every `internal`. Each entry therefore names the LIBRARY subtree.
+#
+# ── TARGET FRAMEWORKS, CHECKED RATHER THAN ASSUMED ───────────────────────────
+# Every LIBRARY subtree below lists net8.0 among its TargetFrameworks at its pinned
+# commit. Verified, not assumed: an earlier version of this comment claimed the
+# whole repository did, and tracing one member disproved it in one run.
+#
+# THE TEST PROJECTS ARE A DIFFERENT MATTER. Several target net10.0 only. That
+# does not affect the STATIC
+# oracle, which parses source and compiles against reference assemblies and never
+# builds a project. It does affect the RUNTIME oracle, which has to build and run
+# the suite, so runtime-oracle/trace-subject.sh needs an SDK new enough for the
+# subject's own tests and reports the ones it cannot build rather than silently
+# producing no trace.
+#
+# The static oracle stays pinned to Microsoft.CodeAnalysis.CSharp 4.12.0 and
+# LanguageVersion 13, matching the parser's own corpus audit so a parser figure and
+# an engine figure from this repository are comparable. A subject using a C# 14
+# construct parses as an error there, and a file the oracle could not read is not
+# evidence about the engine in either direction -- so run-corpus.sh prints the
+# oracle's own compile-error count per project next to the score, and a pin that
+# drifts into that problem is visible instead of quietly lowering recall.
+#
+# name	set	path	repo	commit	note
+
+# name	set	path	repo	commit	note

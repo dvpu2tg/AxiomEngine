@@ -1,0 +1,3 @@
+oracle=12 engine=10 agree=10 missing=2 (known 2, NEW 0) extra=0
+  known    generic#inferredFromArgument() -> Item#ping()
+  known    generic#useLibrary() -> Item#ping()

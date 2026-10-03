@@ -1,0 +1,15 @@
+{"lang": "typescript", "src": "src",
+ "checks": [
+  {"why": "a handler handed to a route registration has no call site anywhere, so every call-based rule missed it and the answer was 'used only where it is declared' — for a live HTTP endpoint",
+   "run": ["impact", "listOrders"],
+   "want": ["registered as a GET route \"/orders\"", "src/server.ts:6"],
+   "avoid": ["nothing the graph can see"]},
+  {"why": "and deleting it is not safe, which is the answer that was wrong in the dangerous direction",
+   "run": ["impact", "listOrders", "--delete"],
+   "want": ["NOT SAFE"],
+   "avoid": ["no dependent at any certainty"]},
+  {"why": "a declaration passed to anything else is reported as handed over as a value, never as a route: the receiving call is not named as one that calls it later, since that was wrong for every synchronous collection operation (#1166)",
+   "run": ["impact", "auditLog"],
+   "want": ["handed over as a value", "src/server.ts:7"],
+   "avoid": ["registered as a", "the graph can see: nothing"]}
+ ]}

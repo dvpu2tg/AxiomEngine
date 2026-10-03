@@ -1,0 +1,367 @@
+{
+  "_comment": [
+    "The TypeScript subjects — the TEAM's agreed split, not this harness's invention.",
+    "",
+    "`prior_internal_use: true` means the project already appears in the axiom engine's OWN",
+    "TypeScript evaluation corpus (test/typescript/corpus/corpus.tsv in that repo). Those are kept",
+    "in the registry because the team's split names them, and they are flagged because a project a",
+    "tool was developed against cannot also be neutral ground for measuring it. A number from one is",
+    "reported with the flag beside it, exactly as the Java `torture` subject is.",
+    "",
+    "Four of the team's dev projects (immer, remeda, zustand, zod) and five of its held-out projects",
+    "(typeorm, axios, nest, trpc, rxjs) carry that flag. The eight dev and five held-out projects",
+    "that do not are the ones this benchmark can speak about without qualification, and they are the",
+    "ones run first.",
+    "",
+    "A GitHub subject is fetched as a source tarball pinned by COMMIT and SHA-256. There is no",
+    "published-artefact equivalent of the Java jar here: TypeScript ships .js and .d.ts, and the",
+    "tools under test read .ts, so the repository at a fixed commit is the only reproducible form."
+  ],
+  "subjects": [
+    {
+      "name": "torture",
+      "split": "dev",
+      "kind": "local",
+      "owner": "benchmark",
+      "description": "Five families: declared heritage, structural typing, function values, overloads/generics, cross-module name collision.",
+      "source_roots": [
+        "subjects/torture"
+      ],
+      "project": "subjects/torture/tsconfig.json",
+      "families": true,
+      "prior_internal_use": false
+    },
+    {
+      "name": "typedoc",
+      "split": "dev",
+      "kind": "github",
+      "owner": "anonymous",
+      "repo": "https://github.com/TypeStrong/typedoc.git",
+      "commit": "c4b6545cec2b5a0e5f9d9d347bc1dd05f39d6150",
+      "path": "src/lib",
+      "project": "tsconfig.json",
+      "prior_internal_use": false,
+      "description": "Documentation generator. Large, pure TypeScript, heavy class hierarchies and visitor dispatch. Entered at src/lib: its root tsconfig also governs src/test, and gate 4 refuses a run where the tools would index files the checker's program does not contain.",
+      "sha256": "b3009027b5869ecb79e65d3d6e47a6df48a74bdcde73d901cb3e236ba4e4e933"
+    },
+    {
+      "name": "ts-morph",
+      "split": "dev",
+      "kind": "github",
+      "owner": "anonymous",
+      "repo": "https://github.com/dsherret/ts-morph.git",
+      "commit": "f288183ddb496adc6f4c5b6929830b5b73437185",
+      "path": "packages/ts-morph/src",
+      "project": "packages/ts-morph/tsconfig.json",
+      "prior_internal_use": false,
+      "description": "WAS BLOCKED at gate 0 (48.2%, 17,597/36,501) under its own tsconfig, which includes src/tests (17,086 of its 36,501 call expressions) and reaches @ts-morph/common only through a workspace symlink. With the registry overrides — exclude src/tests, and a `paths` mapping to the declaration file the repository commits at packages/common/lib/ts-morph-common.d.ts — the checker resolves 95.1% (8,364/8,799; issue #28). A wrapper over the TypeScript compiler API; very large generated+handwritten class surface. Sixth TypeScript subject, reported in docs/RESULTS.md, outside the five-subject comparison.",
+      "sha256": "8716d158cde533cbd23f8a4e765b20adf483594071133595fb3a5544609741f9",
+      "project_overrides": {
+        "exclude": [
+          "src/tests"
+        ],
+        "compilerOptions": {
+          "paths": {
+            "@ts-morph/common": [
+              "../common/lib/ts-morph-common.d.ts"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "kysely",
+      "split": "dev",
+      "kind": "github",
+      "owner": "anonymous",
+      "repo": "https://github.com/kysely-org/kysely.git",
+      "commit": "aa4549815b11625d1a1691d1450081d49a0d64a8",
+      "path": "src",
+      "project": "tsconfig.json",
+      "prior_internal_use": false,
+      "description": "SQL query builder. Generics-dense, fluent interfaces, many small classes. Entered at src/: its root tsconfig governs that subtree, and the repo also carries an example app and tests the config excludes (gate 4 caught the mismatch).",
+      "sha256": "37a1b4f70f63cb6bf9318b159dad1f0824d44754a713f67901223c08d681ecd0"
+    },
+    {
+      "name": "cheerio",
+      "split": "dev",
+      "kind": "github",
+      "owner": "team",
+      "repo": "https://github.com/cheeriojs/cheerio.git",
+      "commit": "50b5d5ce49f7863ed70c82dad2652bc8cb147859",
+      "path": "src",
+      "project": "tsconfig.json",
+      "prior_internal_use": false,
+      "description": "WAS BLOCKED at gate 0 (41.2%; 54.7% with the specs excluded) with a wrong diagnosis: its tsconfig sets `lib: [\"ES2015.Core\"]`, which REPLACES the default library with one augmentation file, so under the benchmark's staging (no node_modules, hence no @types/node pulling a full lib in) the checker had no declaration for Array, Object, String, Map or Promise at all — 168 of the 251 residual calls were unbound standard-library globals, not the domhandler/domutils/parse5 types the earlier note blamed (issue #55). With the registry overrides — exclude the colocated vitest specs and fixtures, `lib: [\"ES2022\",\"DOM\"]` — the checker resolves 81.6% (452/554), install-free, the same mechanism ts-morph uses. jQuery-like DOM traversal; medium, idiomatic TS. Reported in docs/RESULTS.md, outside the five-subject comparison.",
+      "sha256": "da9b6f0ccd02a6c5b54f4ab009310eea30b835e813b2072456e5cbf7f1176e2f",
+      "project_overrides": {
+        "exclude": [
+          "website/",
+          "src/**/*.spec.ts",
+          "src/__tests__",
+          "src/__fixtures__",
+          "src/**/__fixtures__"
+        ],
+        "compilerOptions": {
+          "lib": [
+            "ES2022",
+            "DOM"
+          ]
+        }
+      }
+    },
+    {
+      "name": "got",
+      "split": "blocked",
+      "kind": "github",
+      "owner": "team",
+      "repo": "https://github.com/sindresorhus/got.git",
+      "commit": "a7b5aec57a0245cafbd21696d52cd6bd6c95628a",
+      "path": "source",
+      "project": "tsconfig.json",
+      "prior_internal_use": false,
+      "description": "BLOCKED at gate 0. 53.8% over source/ (393/731) under its own tsconfig with the missing `@sindresorhus/tsconfig` base inlined; 162 of the 338 unresolved calls are `is.<x>(...)` into `@sindresorhus/is`, a package that is not on disk and that no tsconfig key can recover. Adding `lib: [\"es2022\",\"dom\"]` moves the raw figure to 57.9% — above the floor — but adds 0 calls that resolve INTO the subject: the floor would be cleared by resolving library calls that are never scored (#67, comment), so the block stands on the in-subject share, which the report now prints beside the floor for every subject. HTTP client; medium.",
+      "sha256": "b796299cdd3656b014708162c3d8b41e22ad6611e253e4d82e7ee6e9bca7ed5b"
+    },
+    {
+      "name": "type-graphql",
+      "split": "dev",
+      "kind": "github",
+      "owner": "team",
+      "repo": "https://github.com/MichalLytek/type-graphql.git",
+      "commit": "c4913f6d0460d0f89d6db197f2b56f14737b5f65",
+      "path": "src",
+      "project": "tsconfig.json",
+      "prior_internal_use": false,
+      "description": "Kept, but out of the five-subject comparison at the user's request — replaced by excalidraw. Decorator-driven; 227 uniquely-linked groups. Results remain under typescript/results/.",
+      "sha256": "55718639ceca94d5edd8ee9568ce2387a2df3d391138081e058e9b7839315aca"
+    },
+    {
+      "name": "fp-ts",
+      "split": "dev",
+      "kind": "github",
+      "owner": "team",
+      "repo": "https://github.com/gcanti/fp-ts.git",
+      "commit": "669cd3ed7cb5726024331a7a1cf35125669feb30",
+      "path": "src",
+      "project": "tsconfig.json",
+      "prior_internal_use": false,
+      "description": "",
+      "sha256": "8f81c194e3afb6cea2040428e35ba1f84b7470b30736e4a50ee5b60253a41d77"
+    },
+    {
+      "name": "ioredis",
+      "split": "dev",
+      "kind": "github",
+      "owner": "team",
+      "repo": "https://github.com/redis/ioredis.git",
+      "commit": "af832752040e616daf51621681bcb40cab965a9b",
+      "path": "lib",
+      "project": "tsconfig.json",
+      "prior_internal_use": false,
+      "description": "",
+      "sha256": "3c0f61a379112fb6a5570f4c75fa6613d89ec48aee5e1883c92b16d2d1c74493"
+    },
+    {
+      "name": "immer",
+      "split": "dev",
+      "kind": "github",
+      "owner": "anonymous",
+      "repo": "https://github.com/immerjs/immer.git",
+      "commit": "061c2425e1c9dff89e4e4189d42af1b7839dfe0a",
+      "path": "src",
+      "project": "tsconfig.json",
+      "prior_internal_use": true,
+      "description": "IN THE ENGINE'S OWN TS CORPUS — a number from this project measures agreement with a project the tool was developed against.",
+      "sha256": "e98bd1f74dde9f372fbcaa8f862451788e9c53188556bd631b693a5d961047a4"
+    },
+    {
+      "name": "remeda",
+      "split": "blocked",
+      "kind": "github",
+      "owner": "anonymous",
+      "repo": "https://github.com/remeda/remeda.git",
+      "commit": "845c7b17dc280ed4bbd47d40ab969f95be135a4a",
+      "path": "packages/remeda/src",
+      "project": "packages/remeda/tsconfig.json",
+      "prior_internal_use": true,
+      "description": "BLOCKED: checker coverage 35.1% (floor 55%) — the package tsconfig sweeps in `.test-d.ts` type-test files whose call expressions the checker cannot resolve without the vitest types. Also in the engine's own corpus.",
+      "sha256": "2f08bcdd610856f12227973c14d633ef0a4cc448f967d31df7717288d7e95115"
+    },
+    {
+      "name": "zustand",
+      "split": "dev",
+      "kind": "github",
+      "owner": "anonymous",
+      "repo": "https://github.com/pmndrs/zustand.git",
+      "commit": "b57db4f86ef179285da216eeb291266da82c361c",
+      "path": "src",
+      "project": "tsconfig.json",
+      "prior_internal_use": true,
+      "description": "IN THE ENGINE'S OWN TS CORPUS — a number from this project measures agreement with a project the tool was developed against.",
+      "sha256": "2d479114667d898dfc0180577c25026586f81c383c4bfef694eb8d58b936ad32"
+    },
+    {
+      "name": "zod",
+      "split": "dev",
+      "kind": "github",
+      "owner": "team",
+      "repo": "https://github.com/colinhacks/zod.git",
+      "commit": "2bb087170f22114b060f1e283bab09fd07963076",
+      "path": "packages/zod",
+      "project": "tsconfig.json",
+      "prior_internal_use": true,
+      "description": "IN THE ENGINE'S OWN TS CORPUS — a number from this project measures agreement with a project the tool was developed against.",
+      "tag": "v4.6.4",
+      "pinned": "2026-09-13, before any run of this subject: the latest release tag on that date (issue #38)",
+      "sha256": "a428cbc8bd71982c6a15c7667dbb27fed77ccf47eb020101e5418ac076d7ad7f"
+    },
+    {
+      "name": "mobx",
+      "split": "heldout",
+      "kind": "github",
+      "owner": "team",
+      "repo": "https://github.com/mobxjs/mobx.git",
+      "commit": "96ddd319bc1b82924ecfb3b28a2d50458521a21b",
+      "path": "packages/mobx",
+      "project": "tsconfig.json",
+      "prior_internal_use": false,
+      "description": "HELD OUT and clean — scored once, never designed against.",
+      "tag": "mobx@6.16.1",
+      "pinned": "2026-09-13, before any run of this subject: the latest release tag on that date (issue #38)",
+      "sha256": "17f8a1a7e73bfe0edf2ad1ee936384483004f052419044f6d72eb6725fa5f128"
+    },
+    {
+      "name": "tanstack-query",
+      "split": "heldout",
+      "kind": "github",
+      "owner": "team",
+      "repo": "https://github.com/TanStack/query.git",
+      "commit": "2969edf32f7e0c48e2a108d84712d6e01edfde21",
+      "path": "packages/query-core",
+      "project": "tsconfig.json",
+      "prior_internal_use": false,
+      "description": "HELD OUT and clean — scored once, never designed against.",
+      "tag": "release-2026-08-27-1607",
+      "pinned": "2026-09-13, before any run of this subject: the latest release tag on that date (issue #38)",
+      "sha256": "19c6763b7c6520c5ef37be8a4aa6034779432278d33259eb745994d16b139205"
+    },
+    {
+      "name": "excalidraw",
+      "split": "dev",
+      "kind": "github",
+      "owner": "team",
+      "repo": "https://github.com/excalidraw/excalidraw.git",
+      "commit": "afa3a653fc5d2b742adcbd5a6063187b056d2419",
+      "path": "packages/excalidraw",
+      "project": "packages/excalidraw/tsconfig.json",
+      "prior_internal_use": false,
+      "description": "WAS HELD OUT; moved to dev on 2026-09-12 at the user's request to replace type-graphql in the five-subject comparison. It is no longer blind. Large React/TypeScript app, 185 .ts + 259 .tsx, JSX component calls throughout — a real stress on tools that emit no call site for a JSX element. MONOREPO PACKAGE: the tools index from packages/ so that the sibling packages the checker types through (@excalidraw/common, element, math, utils) are in their view; the scorer strips the excalidraw/ prefix (issue #20).",
+      "sha256": "d2958e4d451d16313dc7fce40bf5744f893fcd73e23acd9d54239552dd4cda2e"
+    },
+    {
+      "name": "apollo-client",
+      "split": "heldout",
+      "kind": "github",
+      "owner": "team",
+      "repo": "https://github.com/apollographql/apollo-client.git",
+      "commit": "d4f87701204441f66b40db157b2bbd8783e46e57",
+      "path": ".",
+      "project": "tsconfig.json",
+      "prior_internal_use": false,
+      "description": "HELD OUT and clean — scored once, never designed against.",
+      "tag": "@apollo/client@4.3.0",
+      "pinned": "2026-09-13, before any run of this subject: the latest release tag on that date (issue #38)",
+      "sha256": "b4e2a8148bcde80022da515eb2e33c5ae9994daac50051929cd4a5b2782f3b93"
+    },
+    {
+      "name": "immutable-js",
+      "split": "heldout",
+      "kind": "github",
+      "owner": "team",
+      "repo": "https://github.com/immutable-js/immutable-js.git",
+      "commit": "329f7a680efa262c310b938a343295880eefe4fc",
+      "path": ".",
+      "project": "tsconfig.src.json",
+      "prior_internal_use": false,
+      "description": "HELD OUT and clean — scored once, never designed against.",
+      "tag": "v5.1.9",
+      "pinned": "2026-09-13, before any run of this subject: the latest release tag on that date (issue #38)",
+      "sha256": "205dca1a4a4676adab897ffc8ab8c5d40d597ccd135189a9a065f5c92c7130d7"
+    },
+    {
+      "name": "typeorm",
+      "split": "heldout",
+      "kind": "github",
+      "owner": "anonymous",
+      "repo": "https://github.com/typeorm/typeorm.git",
+      "commit": "3ecf2c8dfccd02dd77f593fd7aa478c25ea9d428",
+      "path": ".",
+      "project": "tsconfig.json",
+      "prior_internal_use": true,
+      "description": "HELD OUT in the team's split, but ALREADY IN THE ENGINE'S OWN TS CORPUS — it is not held out from the tool, only from this harness.",
+      "tag": "1.1.1",
+      "pinned": "2026-09-13, before any run of this subject: the latest release tag on that date (issue #38)",
+      "sha256": "579136abe50d60310442d4f6a75d91e092e78b5925293c966ace390e26e513af"
+    },
+    {
+      "name": "axios",
+      "split": "blocked",
+      "kind": "github",
+      "owner": "anonymous",
+      "repo": "https://github.com/axios/axios.git",
+      "commit": "84a9f3b9a4f3244b8c8e818f557d64c7b964fb25",
+      "path": ".",
+      "project": "tsconfig.json",
+      "prior_internal_use": true,
+      "description": "HELD OUT in the team's split, but ALREADY IN THE ENGINE'S OWN TS CORPUS — it is not held out from the tool, only from this harness.",
+      "tag": "v1.20.0",
+      "blocked_reason": "JavaScript source (lib/*.js, hand-written index.d.ts only): there is no TypeScript program for the checker oracle to resolve"
+    },
+    {
+      "name": "nest",
+      "split": "heldout",
+      "kind": "github",
+      "owner": "anonymous",
+      "repo": "https://github.com/nestjs/nest.git",
+      "commit": "6494a6c27400547ea6cd9b78da07b2e9c2547ca0",
+      "path": "packages/core",
+      "project": "tsconfig.json",
+      "prior_internal_use": true,
+      "description": "HELD OUT in the team's split, but ALREADY IN THE ENGINE'S OWN TS CORPUS — it is not held out from the tool, only from this harness.",
+      "tag": "v12.0.0",
+      "pinned": "2026-09-13, before any run of this subject: the latest release tag on that date (issue #38)",
+      "sha256": "15ea53d1e8ff7257f44390dab9f1556e2ce95995e9e3dbc2db8e754b72997ec8"
+    },
+    {
+      "name": "trpc",
+      "split": "heldout",
+      "kind": "github",
+      "owner": "anonymous",
+      "repo": "https://github.com/trpc/trpc.git",
+      "commit": "6aec1578a899df50a17e4e78d5512a099b574c18",
+      "path": "packages/server",
+      "project": "tsconfig.json",
+      "prior_internal_use": true,
+      "description": "HELD OUT in the team's split, but ALREADY IN THE ENGINE'S OWN TS CORPUS — it is not held out from the tool, only from this harness.",
+      "tag": "v11.18.0",
+      "pinned": "2026-09-13, before any run of this subject: the latest release tag on that date (issue #38)",
+      "sha256": "ae978d3c3e9855c2f18ff686d205c55e54cec4f825f7bb383f70f106e9a7a04c"
+    },
+    {
+      "name": "rxjs",
+      "split": "heldout",
+      "kind": "github",
+      "owner": "anonymous",
+      "repo": "https://github.com/ReactiveX/rxjs.git",
+      "commit": "e5351d02e225e275ac0e497c7b66eaa5f0c88791",
+      "path": ".",
+      "project": "tsconfig.json",
+      "prior_internal_use": true,
+      "description": "HELD OUT in the team's split, but ALREADY IN THE ENGINE'S OWN TS CORPUS — it is not held out from the tool, only from this harness.",
+      "tag": "7.8.2",
+      "pinned": "2026-09-13, before any run of this subject: the latest release tag on that date (issue #38)",
+      "sha256": "34059d516d0ead85522eb319130829e7bb8491392e57da70b7274f94bb1d242c"
+    }
+  ]
+}

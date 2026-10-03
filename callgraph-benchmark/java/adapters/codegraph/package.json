@@ -1,0 +1,8 @@
+{
+  "name": "benchmark-tool-codegraph",
+  "private": true,
+  "description": "The pinned install of @colbymchenry/codegraph. package-lock.json beside this file is the FULL closure, committed so a clean install resolves what the committed scores were produced by (#103); install.sh runs `npm ci`, which installs the lock and refuses to update it.",
+  "dependencies": {
+    "@colbymchenry/codegraph": "1.6.0"
+  }
+}

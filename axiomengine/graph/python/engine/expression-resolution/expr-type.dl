@@ -1,0 +1,740 @@
+// ============================================================================
+// EXPRESSION RESOLUTION · EXPRESSION TYPE
+//
+// What class of object does this expression yield. Java answers this from declared
+// types; 68.2% of Python parameters have none, so the answer has to come from flow, and
+// the honest set of shapes it can come from is small and worth naming explicitly:
+//
+//   self                      the enclosing class            (exact, plus dispatch)
+//   cls                       the class the classmethod was reached through
+//   Foo(...)                  a construction                 (exact)
+//   self.x                    a single-write attribute       (resolution/field-flow.dl)
+//   f()                       the callee's declared return   (47% have one)
+//   x  (a local)              single-binding local flow
+//
+// TWO DISTINCT KINDS OF ANSWER, and conflating them is the classic Python mistake:
+//   expr_type              the expression yields an INSTANCE of this class
+//   expr_type_class_object the expression yields the CLASS ITSELF
+// `Base.make_default()` and `Base("x")` differ only in that: in the first, `Base` is a
+// class object being attribute-accessed; in the second it is being CALLED, which
+// constructs. Since there is no OBJECT_CREATION expression kind (schema §4.5), that
+// distinction is entirely the engine's to make.
+// ============================================================================
+
+// ── expr_type_class_object(Prov, ExprHash, TypeHash) — yields the CLASS ──────
+// (a) a bare name that denotes a class: `Base`, `Child`, `_Aliased`.
+expr_type_class_object(p, e, t) :- expr_names_type(p, e, t).
+// (b) a dotted name into a module: `models.Base`.
+expr_type_class_object(p, e, t) :- expr_attr_names_type(p, e, t).
+// (c) `cls` inside a classmethod — the class the method was REACHED THROUGH, not
+//     necessarily the class that declares it. See cls_bound_type below.
+expr_type_class_object(p, e, t) :- expr_cls_type(p, e, t).
+
+// ── expr_lib_type(ClientExprHash, LibTypeHash) — yields a LIBRARY instance ───
+// THE LIB COUNTERPART OF expr_type, and it lives here because this file owns the
+// question "what class of object does this expression yield" regardless of which side
+// the class was declared on. Java does the same: expr-type.dl there is 45 client / 15
+// lib rather than a separate library typing engine.
+//
+// WHY IT IS A SEPARATE RELATION rather than a "lib"-tagged expr_type row. Every
+// expr_type clause above joins provenance UNIFORMLY -- expr_node(p,...) with
+// expr_owner(p,...) -- because the expression and the type it yields are both client
+// facts. A library-typed row would be read by those joins as though the EXPRESSION were
+// a library expression, and library expressions are staged empty by design
+// (templates/staging.conf, LIB_BODY), so such a row would be silently unsound. The
+// split keeps the client-expression invariant intact: the expression is always client,
+// only the TYPE crosses.
+//
+// The four seeds are the shapes the boundary establishes; none of them re-implements a
+// lookup, they consume what resolution/lib-linking.dl mapped across the import.
+expr_lib_type(e, t) :- call_of_expr(e, s), call_constructs_lib_type(s, t).
+expr_lib_type(e, t) :-
+    expr_binding("client", b, ctx, e), ctx != "STORE",
+    binding_lookup("client", b, b2), binding_value_lib_type(b2, t).
+expr_lib_type(e, t) :-
+    expr_attr_of_self("client", e, n, owner),
+    type_attr_field("client", owner, n, f), field_lib_type(f, t).
+expr_lib_type(e, t) :- expr_names_param("client", e, ph), param_lib_type(ph, t).
+// a loop or comprehension variable over a container of LIBRARY instances:
+// `for s in (Square(), Circle()): s.name()`. resolution/iteration.dl types the element
+// from the constructions; this carries it to the loop variable, mirroring clause (j).
+expr_lib_type(e, t) :-
+    expr_binding("client", b, ctx, e), ctx != "STORE",
+    binding_lookup("client", b, b2),
+    binding_element_lib_type(b2, t).
+
+// ── expr_type(Prov, ExprHash, TypeHash) — yields an INSTANCE ──────────────────
+// (a) `self`. The STATIC answer is the enclosing class; widening to subclasses is
+//     dispatch's job (resolution/dispatch.dl), not typing's, so the two stay separable
+//     and the dispatch cap has something to cap.
+expr_type(p, e, t) :-
+    expr_node(p, "SELF_REFERENCE", _, _, e),
+    expr_owner(p, _, _, t, e), t != "".
+// (a') `self` as the FIRST PARAMETER OF A LAMBDA WRITTEN IN A CLASS BODY. A class-level
+//     table of handlers, `_handlers = {tuple: lambda self, obj: self._tuple(obj), ...}`,
+//     is called as `self._handlers[k](self, obj)`: the lambda is a function stored on the
+//     class, so its first argument is the instance exactly as a method's is. The parser
+//     tags that `self` a PARAMETER (it is one), and a lambda parameter has no annotation
+//     to type it from, so every `self.<method>(..)` inside the lambda was a declared
+//     unknown and the handlers had no callers (#704: 42 sites in one such table).
+//     Typed as `self` in a method is: the enclosing class, plus the constructed
+//     subclasses dispatch admits for a `self` receiver (resolution/dispatch.dl), since a
+//     receiver typed through expr_type does not pass through call_self_dispatch_type.
+class_body_lambda_self(p, ph, k) :-
+    param_decl(p, name, "0", _, lam, ph), instance_receiver_name(name),
+    method_kind(p, "LAMBDA", _, lam),
+    method_enclosing_member(p, init, lam),
+    method_kind(p, "CLASS_INITIALIZER", _, init),
+    method_owner(p, k, init).
+expr_type(p, e, k) :- expr_names_param(p, e, ph), class_body_lambda_self(p, ph, k).
+expr_type(p, e, s) :- expr_names_param(p, e, ph), class_body_lambda_self(p, ph, k),
+    type_subclass(p, k, s), type_instantiated_reachable(p, s).
+// (b) A CALL whose callee denotes a CLASS: a construction. This is where "there is no
+//     OBJECT_CREATION kind" is paid for, and it is one join.
+expr_type(p, e, t) :- call_of_expr(e, site), call_constructs_type(site, t), p = "client".
+// (c) A CALL whose resolved callee has a declared return type that names a class in the
+//     callee's own module. 53% of functions have no `-> X` at all, so this is a bonus
+//     path, not the mechanism.
+expr_type(p, e, t) :- call_of_expr(e, site), call_returns_type(site, t), p = "client".
+// (d) `self.x` where the attribute is single-write and construction-typed.
+expr_type(p, e, t) :-
+    expr_attr_of_self(p, e, n, owner),
+    type_attr_field(p, owner, n, f),
+    field_type(p, f, t).
+// (e) `self.x` where the attribute has SEVERAL writes — the sound union. Feeds
+//     multi_inferred, never known_edge, because the set is an over-approximation of one
+//     runtime value.
+expr_type_union_only(p, e, t) :-
+    expr_attr_of_self(p, e, n, owner),
+    type_attr_field(p, owner, n, f),
+    field_type_union(p, f, t).
+expr_type(p, e, t) :- expr_type_union_only(p, e, t).
+// (f) A local name bound exactly once to something the engine can type: `d = Base(...)`
+//     then `d.describe()`. The bindingCount == 1 guard is the same one the alias rule
+//     uses and carries the same argument — symtable itself says the name is bound once.
+expr_type(p, e, t) :- expr_binding(p, b, ctx, e), ctx != "STORE", binding_lookup(p, b, b2), binding_value_type(p, b2, t).
+
+// (g) A parameter with a DECLARED ANNOTATION, widened over constructed subclasses. This
+//     is the mechanism that carries a dependency-injected service: `def __init__(self,
+//     store: ItemStore)` and `def subtotal(self, client: InventoryClient)` are the whole
+//     of the cross-service plumbing on the measured project, and flow alone never sees
+//     them because the constructor is called once, at module import, from a different
+//     module.
+//     param_type carries BOTH halves: the annotation where there is one (widened over
+//     constructed subclasses), and flow only where there is not. That is what stops a
+//     shared funnel's imprecision leaking through a declaration —
+//     resolution/value-flow.dl.
+expr_type(p, e, t) :- expr_names_param(p, e, ph), param_type(ph, t), p = "client".
+// (h) `self.x` where the attribute was written FROM a parameter — the DI shape.
+//     `self.store = store` carries the annotation of `store` onto the attribute.
+expr_type(p, e, t) :-
+    expr_attr_of_self(p, e, n, owner),
+    type_attr_field(p, owner, n, f),
+    field_type_from_param(p, f, d),
+    declared_dispatch(p, d, t).
+// (i) `self.x` with its OWN annotation.
+expr_type(p, e, t) :-
+    expr_attr_of_self(p, e, n, owner),
+    type_attr_field(p, owner, n, f),
+    field_declared_type(p, f, d),
+    declared_dispatch(p, d, t).
+// (i2) `<anything>.x` — the SAME hop, with the object's own type instead of self's.
+//
+// Every attribute-typing rule above goes through expr_attr_of_self, which is defined to
+// require the object expression to be a SELF_REFERENCE. So `self.x` was typed three ways
+// and `anything_else.x` was typed no way, even where the object's type is perfectly well
+// known -- `def render(layout: Layout)` then `layout.splitter.divide(...)`.
+//
+// It also truncated every chain longer than one attribute, including on self: `self.a`
+// resolves, but `self.a.b` is an attribute whose object is not self.
+//
+// So the self clauses become a special case of this rather than the only case, and a chain
+// of any length follows by recursion, since the object's type is derived the same way.
+// Same two field-type sources and the same declared_dispatch widening as the self clauses,
+// so no new precision assumption is introduced.
+expr_type(p, e, t) :-
+    expr_node(p, "ATTRIBUTE_ACCESS", _, n, e), n != "",
+    expr_parent(p, e, "ATTRIBUTE_OBJECT", _, obj),
+    expr_type(p, obj, ot),
+    type_attr_field(p, ot, n, f),
+    field_declared_type(p, f, d),
+    declared_dispatch(p, d, t).
+expr_type(p, e, t) :-
+    expr_node(p, "ATTRIBUTE_ACCESS", _, n, e), n != "",
+    expr_parent(p, e, "ATTRIBUTE_OBJECT", _, obj),
+    expr_type(p, obj, ot),
+    type_attr_field(p, ot, n, f),
+    field_type_from_param(p, f, d),
+    declared_dispatch(p, d, t).
+expr_type(p, e, t) :-
+    expr_node(p, "ATTRIBUTE_ACCESS", _, n, e), n != "",
+    expr_parent(p, e, "ATTRIBUTE_OBJECT", _, obj),
+    expr_type(p, obj, ot),
+    type_attr_field(p, ot, n, f),
+    field_type_from_construction(p, f, t).
+// ── (i3) A PROPERTY READ IS A CALL, SO IT HAS A RETURN TYPE (issue #286) ─────
+// `attribute-lookup.dl` already argues that `obj.x` on a `@property` is a method call, and
+// `call_chain.dl` emits the PROPERTY_READ edge from it. Nothing gave the ATTRIBUTE
+// EXPRESSION the getter's type, so the edge was emitted and the result was untyped, and
+// anything called on it was unresolvable.
+//
+// The three rules that type a call result -- call_returns_type (a) declared `-> X`,
+// (b) return-of-parameter, (c2) the return expression's own type -- are all keyed on
+// expr_call_candidate(site, m), and a property read HAS NO CALL SITE. attribute-lookup.dl
+// says so outright: "There is no call site spelling `x()` anywhere". So none of them could
+// ever reach these, and the field clauses above cannot either, because a property is not a
+// field.
+//
+// MEASURED, three open-source projects: 995 / 90 / 227 no_rule sites have a property-read
+// receiver, and 840 / 2 / 123 of those have a getter with a declared client return type.
+// On the first that is 60.2% of its whole no_rule residual and 8.6% of every unresolved
+// site in the project. The shape is the framework-accessor idiom:
+//
+//     class Application:
+//         @property
+//         def router(self) -> UrlDispatcher: return self._router
+//
+//     app.router.add_get("/", handler)          # add_get was ambiguous_unknown
+//
+// Same widening as everywhere else: the declared type goes out through declared_dispatch,
+// so an overriding subclass is not dropped and the annotation is not treated as exact.
+property_read_of(p, e, obj, n, g) :-
+    expr_node(p, "ATTRIBUTE_ACCESS", _, n, e), n != "",
+    expr_parent(p, e, "ATTRIBUTE_OBJECT", _, obj),
+    expr_type(p, obj, ot),
+    type_property_getter(p, ot, n, g).
+// A USER-WRITTEN DATA DESCRIPTOR reaches the same two clauses (issue #326). `@property`
+// is itself a data descriptor, so this is one protocol with two spellings and they now
+// agree; type_descriptor_getter (resolution/attribute-lookup.dl) is deliberately shaped
+// like type_property_getter so this is one more clause rather than a parallel path.
+property_read_of(p, e, obj, n, g) :-
+    expr_node(p, "ATTRIBUTE_ACCESS", _, n, e), n != "",
+    expr_parent(p, e, "ATTRIBUTE_OBJECT", _, obj),
+    expr_type(p, obj, ot),
+    type_descriptor_getter(p, ot, n, g).
+// (i3a) the getter's declared `-> X`.
+expr_type(p, e, t) :-
+    property_read_of(p, e, _, _, g),
+    method_declared_return_type(p, g, d),
+    declared_dispatch(p, d, t).
+// (i3b) the type of the getter's own return expression, for the unannotated majority --
+//       `return self._router` types the read from the field it hands back. The same
+//       argument call_returns_type (c2) makes, and it needs no annotation.
+expr_type(p, e, t) :-
+    property_read_of(p, e, _, _, g),
+    method_return_value_expr(p, g, re),
+    expr_type(p, re, t).
+
+// ── (i4) THE SAME READ ACROSS THE LIBRARY BOUNDARY ───────────────────────────
+// Two directions, and both are needed for a chain to survive the boundary:
+//   * a CLIENT property whose getter declares a LIBRARY return type;
+//   * a LIBRARY property read off a library-typed receiver -- `Config("x").tag`.
+// Neither re-implements a lookup: the first reads method_declared_return_type_lib, which
+// resolution/annotations.dl already resolves across the import, and the second reads the
+// lib side of type_property_getter, which attribute-lookup.dl already derives. expr_lib_type
+// is a separate relation for the reason its own header gives -- the EXPRESSION stays
+// client, only the TYPE crosses.
+expr_lib_type(e, t) :-
+    property_read_of("client", e, _, _, g),
+    method_declared_return_type_lib(g, t).
+property_read_lib_of(e, obj, n, g) :-
+    expr_node("client", "ATTRIBUTE_ACCESS", _, n, e), n != "",
+    expr_parent("client", e, "ATTRIBUTE_OBJECT", _, obj),
+    expr_lib_type(obj, ot),
+    type_property_getter("lib", ot, n, g).
+expr_lib_type(e, t) :-
+    property_read_lib_of(e, _, _, g),
+    method_declared_return_type("lib", g, d),
+    declared_dispatch("lib", d, t).
+
+// (j) A loop or comprehension variable over a container whose ELEMENT type is declared:
+//     `for line in self.lines` where lines is List[LineItem]. Without this the whole
+//     order-total chain on the measured project stopped at the generator expression.
+expr_type(p, e, t) :-
+    expr_binding(p, b, ctx, e), ctx != "STORE",
+    binding_lookup(p, b, b2),
+    binding_element_type(p, b2, d),
+    declared_dispatch(p, d, t).
+
+// (k) an `except NotFound as exc` target — the caught class, widened over subclasses.
+expr_type(p, e, t) :-
+    expr_binding(p, b, ctx, e), ctx != "STORE",
+    binding_lookup(p, b, b2),
+    binding_except_type(p, b2, d),
+    declared_dispatch(p, d, t).
+
+// ============================================================================
+// AWAIT — the value of `await E` is the value E's coroutine PRODUCES
+//
+// The parser wraps an awaited expression in its own node: `x = await f()` is
+// ASSIGNMENT -> AWAIT(ASSIGNMENT_VALUE) -> CALL(AWAIT_OPERAND). Every typing rule
+// above reads the ASSIGNMENT_VALUE child, so before this block every one of them
+// saw an AWAIT node, matched no clause, and the awaited value was untyped — and
+// so was the local, field, argument or return it flowed into. MEASURED: 8,394
+// AWAIT nodes across five open-source corpora, 8,203 of them (97.7%) wrapping a
+// CALL, and the string AWAIT appeared in exactly one place in this rule set: a
+// comment listing the column names.
+//
+// WHY THE ASYNC GATE. `await` is not a general type-preserving hop — it UNWRAPS
+// an awaitable, so propagating the operand's type is only correct where the
+// operand's type already IS the awaited value. That holds for exactly one shape,
+// and it holds by language definition rather than by inference: the return
+// annotation of an `async def` describes what the coroutine produces, so `-> T`
+// on an `async def` IS the type of `await f()`. Two shapes it deliberately
+// excludes, both of which transparency alone would answer WRONGLY:
+//
+//   await Foo()                      a construction. If Foo instances are
+//                                    awaitable at all, `await` yields whatever
+//                                    Foo.__await__ produces, never a Foo.
+//   await f()  where `def f() -> Future[T]`   a SYNC function handing back an
+//                                    awaitable. The awaited value is T; the
+//                                    annotation names the wrapper. 104 such
+//                                    annotations in the corpora (Deferred 87,
+//                                    Awaitable 10, Future 5, Task 2), every one
+//                                    subscripted — so element_type_of already
+//                                    reads T off them, and this must not
+//                                    overwrite that with the wrapper.
+//
+// ASYNC_GENERATOR is excluded for the same reason from the other side: `async def`
+// + `yield` annotates `-> AsyncIterator[T]`, which is consumed by `async for`,
+// not by `await`.
+// ============================================================================
+await_operand(p, aw, op) :-
+    expr_node(p, "AWAIT", _, _, aw),
+    expr_parent(p, aw, "AWAIT_OPERAND", _, op).
+
+await_yields(aw, op) :-
+    await_operand("client", aw, op),
+    call_of_expr(op, site), expr_call_candidate(site, m),
+    method_is_async("client", m), !method_kind("client", "ASYNC_GENERATOR", _, m).
+await_yields(aw, op) :-
+    await_operand("client", aw, op),
+    call_of_expr(op, site), call_hits_lib_method(site, m),
+    method_is_async("lib", m), !method_kind("lib", "ASYNC_GENERATOR", _, m).
+
+expr_type("client", aw, t) :- await_yields(aw, op), expr_type("client", op, t).
+expr_lib_type(aw, t)       :- await_yields(aw, op), expr_lib_type(op, t).
+// The LIBRARY half does not go through expr_lib_type, and that is not an oversight in
+// this block. A call whose LIB callee declares `-> AsyncBox` puts its answer in
+// call_returns_lib_type (resolution/generics.dl) and nowhere else — expr_lib_type has a
+// clause for a lib CONSTRUCTION and none for a lib RETURN, because the chained form
+// `IntBox().get().tag()` reads call_returns_lib_type straight off the inner site
+// instead. So the awaited value's type has to be read from the same relation the
+// operand's own consumers read it from.
+expr_lib_type(aw, t) :-
+    await_yields(aw, op), call_of_expr(op, site), call_returns_lib_type(site, t).
+
+// ============================================================================
+// SUBSCRIPT — `xs[i]` yields what the container holds
+//
+// resolution/iteration.dl derives element_type_of for every container shape this
+// engine can read: a parameter annotated `List[Item]`, a field annotation, a list
+// display, a call declaring `-> List[Item]`, a single-write local bound to any of
+// them. Its own doc comment on param_element_type says what the relation is —
+// "the ELEMENT of a container annotation — what iterating OR INDEXING it yields"
+// — and only iteration ever consumed it.
+//
+// MEASURED, and the plainest form is the one that failed:
+//
+//     def f(xs: List[Widget]) -> None:
+//         for w in xs: w.render()   # known_edge -> Widget.render
+//         xs[0].render()            # ambiguous_unknown
+//
+// Two lines, one annotation, one relation, one answer between them. Across five
+// open-source projects 1,497 unresolved call sites carry kind SUBSCRIPT_CALL, and
+// every subscript shape probed was unresolved — annotated parameter, annotated
+// local, annotated field, list display, a call's declared container return, and a
+// dict indexed by a literal.
+//
+// A SLICE IS NOT AN ELEMENT, and this is the one thing that would make the clause
+// unsound rather than merely wide. `xs[1:]` yields a LIST of Widgets, not a
+// Widget, so typing it as the element is a WRONG answer. The parser gives the
+// index its own node of kind SLICE and does so for every spelling — `[1:]`, `[:]`,
+// `[::2]`, `[0:2:1]` all arrive as one SLICE under SUBSCRIPT_INDEX, verified on
+// all four — which is what the negation below tests. 2,292 SLICE nodes in the
+// corpus, so it is load-bearing rather than defensive.
+//
+// A MAPPING contributes BOTH generic arguments to element_type_of, by an argument
+// already stated in resolution/annotations.dl: `Dict[str, Item]` iterates keys and
+// indexes to values, so emitting both over-approximates in the safe direction. A
+// subscript inherits that, and answers a SET wherever the key type is also a class
+// — multi_inferred, never a single wrong target. A builtin key contributes nothing
+// here at all, because element_type_of carries py_type rows and a builtin has none.
+//
+// NOT COVERED, and absent rather than skipped: `xs: List[str]` then `xs[0].upper()`.
+// There is no element relation for builtin element types anywhere in this rule set
+// — expr_builtin_type reads annotations, kinds and literals, never a container's
+// payload — so there is nothing for a subscript clause to consume.
+//
+// The annotation `List[Widget]` is ITSELF a SUBSCRIPT expression (edgeRole
+// ANNOTATION), so this fires on it too. It derives nothing: element_type_of would
+// have to hold a row for the NAME_REFERENCE `List`, and every clause that produces
+// one needs a parameter, a field, a display, a call or a loop target. Left
+// unguarded on purpose — a guard for an empty case only adds a way to be wrong.
+// ============================================================================
+subscript_index_is_slice(p, e) :-
+    expr_parent(p, e, "SUBSCRIPT_INDEX", _, idx),
+    expr_node(p, "SLICE", _, _, idx).
+
+subscript_reads_element(p, e, obj) :-
+    expr_node(p, "SUBSCRIPT", _, _, e),
+    expr_parent(p, e, "SUBSCRIPT_OBJECT", _, obj),
+    !subscript_index_is_slice(p, e).
+
+expr_type(p, e, t) :- subscript_reads_element(p, e, obj), element_type_of(p, obj, t).
+expr_lib_type(e, t) :-
+    subscript_reads_element("client", e, obj), element_lib_type_of(obj, t).
+
+// ── binding_value_type(Prov, BindingHash, TypeHash) ──────────────────────────
+// Single-binding local/module flow. Mirrors Java's local-flow.dl, with the write count
+// coming from symtable instead of from a declared type.
+binding_value_type(p, b, t) :-
+    binding_rebinding(p, "1", _, _, b),
+    expr_binding(p, b, "STORE", tgt),
+    assign_pair(p, tgt, val),
+    expr_type(p, val, t).
+
+// ── MORE THAN ONE WRITE: the UNION, rather than nothing ──────────────────────
+// The single-write gate above is deliberate -- it stops a rebound name inheriting a
+// stale type -- but its fallback was silence, and "build a value, conditionally replace
+// it, then use it" is one of the most ordinary shapes in Python:
+//
+//     out = PlainWriter()
+//     if flag:
+//         out = HtmlWriter()
+//     out.emit()            <- no target at all
+//
+// So a multi-write name takes the type of EVERY value assigned to it. This is
+// FLOW-INSENSITIVE on purpose: both writes reach both uses, and the answer is a set the
+// true target is inside rather than a blank. It is the same trade the design already
+// makes elsewhere, and the tier follows on its own -- site_class reads the target count,
+// so a union of two emits multi_inferred, never known_edge.
+//
+// It cannot dilute an existing answer: every site it reaches emits nothing today.
+binding_value_type(p, b, t) :-
+    binding_rebinding(p, n, _, _, b), n != "1",
+    expr_binding(p, b, "STORE", tgt),
+    assign_pair(p, tgt, val),
+    expr_type(p, val, t).
+
+// ── A CONDITIONAL EXPRESSION IS EITHER BRANCH ────────────────────────────────
+// `w = HtmlWriter() if flag else PlainWriter()`. CONDITIONAL_EXPRESSION was present in
+// the IR with BODY / CONDITION / ORELSE children and NO rule read it, so a ternary had
+// no type -- which also swallowed the single-write FIELD case `self.x = A() if c else B()`,
+// where the write count is 1 and the value is simply untypeable. The CONDITION is not a
+// value of the expression and is deliberately not read.
+expr_type(p, e, t) :-
+    expr_node(p, "CONDITIONAL_EXPRESSION", _, _, e),
+    expr_parent(p, e, "BODY", _, br),
+    expr_type(p, br, t).
+expr_type(p, e, t) :-
+    expr_node(p, "CONDITIONAL_EXPRESSION", _, _, e),
+    expr_parent(p, e, "ORELSE", _, br),
+    expr_type(p, br, t).
+
+// ── `a or b` IS EITHER OPERAND ───────────────────────────────────────────────
+// The standard Python default-argument idiom, `self.writer = writer or PlainWriter()`.
+// Same shape, same reason, and both operands are genuinely reachable values.
+expr_type(p, e, t) :-
+    expr_node(p, "BOOLEAN_OPERATION", _, _, e),
+    expr_parent(p, e, "OPERAND_LEFT", _, o),
+    expr_type(p, o, t).
+expr_type(p, e, t) :-
+    expr_node(p, "BOOLEAN_OPERATION", _, _, e),
+    expr_parent(p, e, "OPERAND_RIGHT", _, o),
+    expr_type(p, o, t).
+
+// ── the LIB twin of both, so a branch holding a LIBRARY instance survives ────
+// `s = Mid() if flag else Base()` where both classes are declared in the library: the
+// constructions are client-side, so the branch types live in expr_lib_type rather than
+// expr_type and need the same union.
+expr_lib_type(e, t) :-
+    expr_node("client", "CONDITIONAL_EXPRESSION", _, _, e),
+    expr_parent("client", e, "BODY", _, br), expr_lib_type(br, t).
+expr_lib_type(e, t) :-
+    expr_node("client", "CONDITIONAL_EXPRESSION", _, _, e),
+    expr_parent("client", e, "ORELSE", _, br), expr_lib_type(br, t).
+expr_lib_type(e, t) :-
+    expr_node("client", "BOOLEAN_OPERATION", _, _, e),
+    expr_parent("client", e, "OPERAND_LEFT", _, o), expr_lib_type(o, t).
+expr_lib_type(e, t) :-
+    expr_node("client", "BOOLEAN_OPERATION", _, _, e),
+    expr_parent("client", e, "OPERAND_RIGHT", _, o), expr_lib_type(o, t).
+
+// ── `copy.copy(x)` / `copy.deepcopy(x)` IS AN x ─────────────────────────────
+// The receiver is the name an `import copy` bound, so a local module or a variable that
+// happens to be called `copy` does not qualify. The copied object's type is exact where
+// x's is, so it goes out with whatever x carries (py_copy_function, builtins.dl).
+expr_type("client", e, t) :-
+    call_of_expr(e, site),
+    call_name(site, fn),
+    call_receiver_object(site, obj),
+    expr_binding("client", rb, ctx, obj), ctx != "STORE",
+    binding_lookup("client", rb, rb2),
+    import_binding("client", rb2, i),
+    import_decl("client", "MODULE_IMPORT", mod, _, i),
+    py_copy_module(mod), py_copy_function(fn),
+    call_arg(site, "0", a),
+    expr_type("client", a, t).
+
+// ── call_returns_type(SiteHash, TypeHash) ────────────────────────────────────
+// The callee's `-> X` annotation, resolved as a member of the CALLEE's own module. A
+// within-module lookup, so no cross-module name matching sneaks in. Restricted to
+// candidates rather than the post-cap set so the type flow does not depend on the cap.
+// (a) a DECLARED return type, resolved by name in the callee's own module and widened
+//     over constructed subclasses. The previous version looked only at types DECLARED in
+//     that module, so `def require(...) -> Item` in a module that merely imports Item
+//     resolved to nothing.
+call_returns_type(site, t) :-
+    expr_call_candidate(site, m),
+    method_declared_return_type("client", m, d),
+    declared_dispatch("client", d, t).
+// (b) RETURN-OF-PARAMETER flow: `def seed(store): ...; return store` gives the call the
+//     type of the argument that was passed in. Python's builder idiom, and Java has no
+//     analogue to port — a Java method's return type is declared, so this shape cannot
+//     arise there.
+call_returns_type(site, t) :-
+    expr_call_candidate(site, m),
+    method_returns_param("client", m, pos),
+    call_arg_offset(site, m, off),
+    !call_flow_imprecise(site),
+    call_arg(site, argPos, a),
+    to_number(pos) = to_number(argPos) + off,
+    expr_type("client", a, t).
+
+// ── (c2) THE TYPE OF THE RETURN EXPRESSION ITSELF ────────────────────────────
+// A method's result is whatever its `return` yields, and that is derivable without any
+// annotation:
+//
+//     @classmethod
+//     def square(cls, side): return cls(side)      # 02-methods
+//     Widget.square(4).area()                      # -> Widget.area
+//
+// `cls` is bound to Widget by the call site, so the construction types the return, so the
+// chained `.area()` resolves. Subsumes the declared-return and return-of-parameter paths
+// wherever an annotation is absent, and generalises past both: a method with two returns
+// contributes both types, which is the sound union.
+//
+// MEASURED: this was the only genuinely wrong site left in the whole regression suite --
+// `Widget.square(4).area()` emitted the classmethod but not the method called on its
+// result, because nothing typed a return value that was neither annotated nor a bare
+// parameter.
+call_returns_type(site, t) :-
+    expr_call_candidate(site, m),
+    method_return_value_expr("client", m, e),
+    expr_type("client", e, t).
+
+// ── expr_any_type(Prov, ExprHash) — typed at all ─────────────────────────────
+// Used to distinguish "the engine has no type for this receiver" from "the engine has
+// several", which are different confidences and must not be merged.
+expr_any_type(p, e) :- expr_type(p, e, _).
+expr_any_type(p, e) :- expr_type_class_object(p, e, _).
+
+// ── A LOCAL VARIABLE'S ANNOTATION (issue #123) ───────────────────────────────
+// PEP 526. The engine read annotations on parameters, fields and returns and ignored the
+// one on a local, so `visited: set[int] = set()` left `visited.add(...)` unresolved -- and
+// `agg: exp.Expr = ...` lost a CLIENT edge, not merely a boundary label.
+//
+// Read from the TYPE-REFERENCE table, not from py_binding.declaredBaseType. The binding
+// column carries the raw spelling (`dict[str, t.Any]`) and would need parsing; the
+// reference row states the head as typeName with a kind, and resolves an FK where the
+// annotation names a class in the tree. That is the distinction #47 exists to record.
+//
+// binding_annotation was already projected for these columns and had NO consumers -- the
+// third unread projection found in one sweep, after module_exports (#105) and param_kind's
+// var-parameter kinds (#111).
+binding_declared_ref(p, bind, r) :-
+    type_ref_owner(p, bind, "BINDING", r),
+    type_ref(p, _, "VARIABLE_ANNOTATION", _, _, r).
+
+// ── binding_declared_nominal(Prov, BindingHash, TypeHash) ────────────────────
+// The annotation names a class in the analysed tree. Structural types are excluded for
+// the reason 5facef0 recorded: nothing is ever nominally an instance of a Protocol, and
+// treating one as authoritative resolves to its own `...` stub and LOSES an edge.
+binding_declared_nominal(p, bind, d) :-
+    binding_declared_ref(p, bind, r),
+    type_ref_resolved(p, d, r),
+    !type_is_structural(p, d).
+// The FK is resolved on only 14 of 479 variable annotations, so the name-based lookup
+// beside it is what carries this -- the same two clauses the parameter path uses, with
+// the same kind restriction. A SUBSCRIPT or a UNION names no single type and is served by
+// the builtin/element rules instead, and conflating them would type a container AS its
+// element.
+//
+// DOTTED_NAME is deliberately NOT handled here: `agg: exp.Expr` arrives with typeName
+// "Expr" and no FK, and resolving it needs the module-alias hop rather than a lookup in
+// the binding's own module. 81 of 479 on one corpus, left for a separate change rather
+// than guessed at -- resolving "Expr" in the wrong module would be a wrong answer.
+// A DOTTED annotation -- `agg: exp.Expr`, where `exp` is a module alias. #123 shipped
+// without this and said so: the FK is unresolved on 108 of 117 dotted annotations, and
+// resolving the head name "Expr" in the binding's own module would find the wrong class
+// or none.
+//
+// The annotation is an EXPRESSION, which is what makes this four lines instead of string
+// surgery. All 81 dotted variable annotations on one corpus carry a pyExpressionLinkHash
+// pointing at an ATTRIBUTE_ACCESS with rootContext=ANNOTATION, and expr_attr_names_type
+// already resolves `module.Type` through the import that binds the alias. Both relations
+// existed; nothing read them together.
+binding_declared_nominal(p, bind, d) :-
+    binding_declared_ref(p, bind, r),
+    type_ref_expr(p, r, e),
+    expr_attr_names_type(p, e, d),
+    !type_is_structural(p, d).
+
+binding_declared_nominal(p, bind, d) :-
+    binding_declared_ref(p, bind, r),
+    type_ref(p, k, "VARIABLE_ANNOTATION", tn, _, r),
+    annotation_single_name_kind(k), tn != "",
+    binding_owner(p, mod, _, bind),
+    type_name_in_module(p, mod, tn, d),
+    !type_is_structural(p, d).
+
+// AN ANNOTATION IS A DECLARED TYPE, NOT AN EXACT ONE, so it goes out through
+// declared_dispatch and is registered with call_recv_declared in dispatch.dl. Without
+// that the annotated class goes out ALONE as known_edge at every site an override runs.
+// That failure has now occurred four times here -- tuple unpacking, container element
+// types, TypeVar bounds, type[T] construction -- and the gate belongs in the same change.
+expr_type(p, e, t) :-
+    expr_binding(p, bref, ctx, e), ctx != "STORE",
+    binding_lookup(p, bref, bind),
+    binding_declared_nominal(p, bind, d),
+    declared_dispatch(p, d, t), p = "client".
+
+// ── expr_type_untypable(Prov, ExprHash, Reason) ──────────────────────────────
+// A receiver expression the engine cannot type, WITH THE REASON — which is the whole
+// difference between a report and a shrug.
+expr_type_untypable(p, e, "parameter") :- expr_names_param(p, e, _), !expr_any_type(p, e).
+expr_type_untypable(p, e, "attribute_untyped") :-
+    expr_attr_of_self(p, e, n, owner), type_attr_field(p, owner, n, f),
+    field_type_unknown(p, f), !expr_any_type(p, e).
+expr_type_untypable(p, e, "unresolved_name") :-
+    expr_binding(p, b, ctx, e), ctx != "STORE",
+    binding_lookup_unresolved(p, b, _, _), !expr_any_type(p, e).
+
+// ── THE REASON RELATION WAS NARROWER THAN THE FAILURE (issue #116) ───────────
+// `no_rule` is defined in call-edge-generation/call_chain.dl as a site that could not be
+// resolved AND could not be explained -- ambiguous_unknown with no call_unresolvable row.
+// It was 59.7% of every unresolved site, 10,226 of 17,122 across eight corpora: the
+// engine's single largest output category, saying nothing about itself.
+//
+// None of those sites are unknowable. Every one has a receiver shape the parser already
+// reports, and the three clauses above simply did not cover them. Naming a shape does not
+// change what the engine KNOWS -- it changes an unhelpful answer into a reviewable one,
+// which is the same argument resolution/builtins.dl makes for naming a builtin boundary.
+//
+// THE ATTRIBUTE CLAUSE ABOVE IS SELF-ONLY, and that is the fourth time this exact defect
+// has been found. builtin-types.dl already carries the warning: "#61 generalised expr_type
+// and #63 generalised element types, and expr_builtin_type was left behind by both. Any
+// relation keyed on expr_attr_of_self is self-only by construction and needs the general
+// form beside it." expr_type_untypable was left behind by all three, which cost the
+// second-largest group -- 2,585 sites on a receiver like `expression.args`.
+// ============================================================================
+
+// (2b) the same hop through ANY object, not only self.
+expr_type_untypable(p, e, "attribute_untyped") :-
+    expr_node(p, "ATTRIBUTE_ACCESS", _, n, e), n != "",
+    expr_parent(p, e, "ATTRIBUTE_OBJECT", _, obj),
+    expr_type(p, obj, ot),
+    type_attr_field(p, ot, n, f),
+    field_type_unknown(p, f), !expr_any_type(p, e).
+
+// (4) THE OBJECT itself has no type, so the attribute cannot be looked up at all. This is
+//     a DIFFERENT failure from the field's type being unknown and it has a different fix:
+//     one wants the field annotated or its writes typed, the other wants the object typed.
+//     Reporting them as one reason would point at the wrong layer.
+expr_type_untypable(p, e, "attribute_object_untyped") :-
+    expr_node(p, "ATTRIBUTE_ACCESS", _, n, e), n != "",
+    expr_parent(p, e, "ATTRIBUTE_OBJECT", _, obj),
+    !expr_any_type(p, obj),
+    !expr_any_type(p, e).
+
+// (4b) `a.b.c()` where `a` IS typed and `b` is not a member of that type at all.
+//
+// The two attribute clauses above between them cover "the attribute is a known field
+// whose own type is unknown" and "the OBJECT is untyped". Neither covers the third case,
+// and it is the largest: the object's type is known, and the attribute is simply not
+// declared on it — a property, a slot, a class attribute of an unstaged base, or an
+// attribute installed at runtime. MEASURED as the dominant shape under `no_rule` with a
+// receiver: 1,141 of 1,578 on one project, 364 of 1,226 and 887 of 3,309 on two more.
+//
+// Both a field lookup and a method lookup are negated. `a.handler.register()` where
+// `handler` is a METHOD is a call through a bound method, which resolution/value-flow.dl
+// owns; labelling it "absent" would be wrong rather than merely unhelpful.
+expr_type_untypable(p, e, "attribute_absent_on_type") :-
+    expr_node(p, "ATTRIBUTE_ACCESS", _, n, e), n != "",
+    expr_parent(p, e, "ATTRIBUTE_OBJECT", _, obj),
+    expr_type(p, obj, ot),
+    !type_attr_field(p, ot, n, _),
+    !mro_lookup(p, ot, n, _),
+    !expr_any_type(p, e).
+
+// (4c) THE SAME MISS WITH A CLASS OBJECT IN THE OBJECT POSITION -- `Model.objects`.
+// Clause (4b) joins expr_type, which is an INSTANCE type, so a receiver whose object is a
+// CLASS had no clause at all and its sites landed in `no_rule` with nothing said about
+// them. Reading the residual on one project: 14,116 of its 19,046 no_rule sites are this,
+// and they are overwhelmingly one idiom --
+//
+//     Number.objects.filter(...)      User.objects.count()
+//     Restaurant.objects.create(...)  Publisher.objects.annotate(...)
+//
+// -- a manager installed on every model class by a metaclass. The engine cannot see the
+// attribute, which is correct; what it could not do was SAY so.
+//
+// A SEPARATE REASON RATHER THAN REUSING (4b)'s, because the two point at different work.
+// An instance attribute the engine cannot see is usually a field it failed to type; a
+// class attribute it cannot see is usually installed by a metaclass or a class decorator,
+// and no amount of field typing will reach it. Merging them would put the largest single
+// shape in the residual behind a name that suggests the wrong fix.
+expr_type_untypable(p, e, "class_attribute_absent") :-
+    expr_node(p, "ATTRIBUTE_ACCESS", _, n, e), n != "",
+    expr_parent(p, e, "ATTRIBUTE_OBJECT", _, obj),
+    expr_type_class_object(p, obj, ot),
+    !type_attr_field(p, ot, n, _),
+    !mro_lookup(p, ot, n, _),
+    !expr_any_type(p, e).
+
+// (5) a CALL RESULT receiver whose own call resolved to no callee -- `f().g()` where `f`
+//     is itself unresolved. The failure is one hop upstream, and saying so stops the site
+//     being counted as its own independent gap.
+expr_type_untypable("client", e, "call_result_untyped") :-
+    call_of_expr(e, site),
+    !expr_call_candidate(site, _),
+    !expr_any_type("client", e).
+// (5b) the call RESOLVED, and what the callee returns has no type the engine can derive:
+//      `q.get_compiler(conn).execute()` where get_compiler returns a class it looked up by
+//      name. Without this the site had no reason at all and read as `no_rule`.
+expr_type_untypable("client", e, "callee_return_untyped") :-
+    call_of_expr(e, site),
+    expr_call_candidate(site, _),
+    !expr_any_type("client", e).
+
+// (6) a SUBSCRIPT receiver: `mapping[k].run()` where the container has no element type.
+expr_type_untypable(p, e, "subscript_untyped") :-
+    expr_node(p, "SUBSCRIPT", _, _, e),
+    !expr_any_type(p, e).
+
+// (7) a name that RESOLVED to a binding and still has no type -- a local holding a value
+//     the engine could not type. Distinct from "parameter" (nothing flowed in) and from
+//     "unresolved_name" (the name went nowhere), and the largest group of the three.
+expr_type_untypable(p, e, "local_untyped") :-
+    expr_binding(p, b, ctx, e), ctx != "STORE",
+    binding_lookup(p, b, _),
+    !expr_names_param(p, e, _),
+    !local_holds_untyped_return(p, e),
+    !expr_any_type(p, e).
+// (7b) the local was assigned the result of a call that RESOLVED, and the callee's return
+//      has no type: `compiler = q.get_compiler(conn)`; `compiler.execute()`, where
+//      get_compiler returns a class it looked up by a name held in a string. The gap is in
+//      the callee's return, not in the local, and the reason says so.
+local_holds_untyped_return("client", e) :-
+    expr_binding("client", b, ctx, e), ctx != "STORE",
+    binding_lookup("client", b, b2),
+    expr_binding("client", b2, "STORE", tgt),
+    assign_pair("client", tgt, val),
+    call_of_expr(val, site),
+    expr_call_candidate(site, _),
+    !expr_any_type("client", val).
+expr_type_untypable(p, e, "local_from_callee_return_untyped") :-
+    local_holds_untyped_return(p, e),
+    !expr_names_param(p, e, _),
+    !expr_any_type(p, e).

@@ -1,0 +1,658 @@
+// ============================================================================
+// Resolution · VALUE FLOW  (what a receiver HOLDS, not what it is declared as)
+//
+// The port of Java's local-flow.dl and type-flow.dl, and the layer this engine was
+// missing. Without it a receiver declared by an INTERFACE dispatches to every
+// implementation of that interface even when the line above says exactly which class
+// it holds:
+//
+//     const h: Handler = new LowerHandler();
+//     h.handle(x);          // four targets, and three of them cannot run
+//
+// ── THE SHAPE OF THE JAVA LAYER, AND WHAT I HAD WRONG ───────────────────────
+// Java ADDS the flowed type to expr_type POSITIVELY, alongside the declared one, and
+// lets the dispatch cap drop the wide interface fan. My first cut instead gated
+// flow-typing behind `!var_has_declared_type`, so an ANNOTATED local never narrowed at
+// all — which is the majority of them, since TypeScript annotations are the norm.
+// "Declared wins over flowed" is the right law for what a receiver IS; it is the wrong
+// law for what it HOLDS, and dispatch asks the second question.
+//
+// ── TYPESCRIPT'S `const` IS A STRONGER GUARANTEE THAN JAVA'S `final` ────────
+// Java's type-flow.dl can only pin a FINAL FIELD, and has to leave locals to an
+// assignment scan. Here `const` forbids rebinding outright and the parser records it
+// directly (measured: 5,541 of 6,254 client variables are const), so a const
+// initialised with `new C()` is provably monomorphic with no scan at all. That is what
+// lets this file emit expr_exact_type — the relation callee-resolution.dl negates to
+// suppress the fan — for a case Java needs a whole extra layer to reach.
+//
+// A `let` gets the flowed type but NOT exactness: it can be reassigned, so its
+// initializer is evidence and not proof. Reassignments are unioned in, which is
+// accurate — the receiver really can hold any of them.
+//
+// ── STRATIFICATION ──────────────────────────────────────────────────────────
+// expr_type additions are POSITIVE and join the existing monotone fixpoint. The
+// expr_exact_type additions are the delicate part: that relation is NEGATED by the fan
+// rule, so anything feeding it must sit BELOW the fixpoint. Both exactness clauses
+// here read new_expression_type only — base facts plus ref_type_target — and never
+// expr_type, which is why the monomorphic-const case can suppress the fan and the
+// qualified-field case (which would need expr_type of the qualifier) deliberately
+// cannot. Java's type-flow.dl records the identical split for the identical reason.
+// ============================================================================
+
+// ── var_flow_type(VarHash, Prov, TypeHash) — what is assigned into a variable ──
+// ADDITIVE, and deliberately not gated on the absence of an annotation.
+var_flow_type(v, prov, t) :- var_initializer("client", _, e, v),
+    e != "",
+    expr_type(e, prov, t).
+var_flow_type(v, prov, t) :- var_reassigned_value(v, e),
+    expr_type(e, prov, t).
+
+// `name = value` where `name` resolves to a variable. TypeScript writes this as an
+// ASSIGNMENT_EXPRESSION with LEFT_OPERAND / RIGHT_OPERAND children — not Java's
+// ASSIGNMENT_TARGET / ASSIGNMENT_VALUE — and the left operand carries the binder's own
+// answer, so the target does not have to be re-bound by name as Java's rule does.
+var_reassigned_value(v, val) :- expr_kind("client", "ASSIGNMENT_EXPRESSION", _, asgn),
+    expr_child("client", asgn, "LEFT_OPERAND", _, tgt),
+    expr_referenced("client", "VARIABLE", v, tgt),
+    expr_child("client", asgn, "RIGHT_OPERAND", _, val).
+var_reassigned(v) :- var_reassigned_value(v, _).
+
+// ── the receiver takes what its variable holds ──────────────────────────────
+expr_type(e, prov, t) :- expr_referenced("client", "VARIABLE", v, e),
+    var_flow_type(v, prov, t).
+expr_shape(e, s) :- expr_referenced("client", "VARIABLE", v, e),
+    var_initializer("client", _, init, v),
+    init != "",
+    expr_shape(init, s).
+
+// ── var_monomorphic(VarHash, TypeHash) — provably one runtime type ──────────
+// A `const` whose initializer is a direct `new C()`. No reassignment is possible, and
+// no other value flows in, so the receiver IS a C. Two guards: exactly one created
+// type (a resolver emitting two candidates is not proof), and the initializer kind is
+// NEW rather than anything that merely returns an object.
+var_new_type(v, t) :- var_initializer("client", "NEW", e, v),
+    e != "",
+    new_expression_type(e, _, t).
+var_multi_new(v) :- var_new_type(v, t1), var_new_type(v, t2), t1 != t2.
+var_monomorphic(v, t) :- var_new_type(v, t),
+    var_flags("client", "true", _, _, v),
+    !var_multi_new(v),
+    !var_reassigned(v).
+
+// THE FAN SUPPRESSION. expr_exact_type is what callee-resolution.dl negates, so this
+// is the clause that turns `const h: Handler = new LowerHandler(); h.handle(x)` from a
+// four-way fan into one target.
+expr_exact_type(e, t) :- expr_referenced("client", "VARIABLE", v, e),
+    var_monomorphic(v, t).
+expr_type(e, "client", t) :- expr_referenced("client", "VARIABLE", v, e),
+    var_monomorphic(v, t),
+    type_decl("client", _, _, _, _, _, t).
+expr_type(e, "lib", t) :- expr_referenced("client", "VARIABLE", v, e),
+    var_monomorphic(v, t),
+    type_decl("lib", _, _, _, _, _, t).
+
+// ── field_monomorphic(FieldHash, TypeHash) — the readonly-field idiom ───────
+// `private readonly repo = new SqlRepo()` and `private readonly repo: Repo = new
+// SqlRepo()`. readonly forbids reassignment outside the constructor, which is the same
+// guarantee Java gets from `final` — measured, 801 of 4,272 client fields are readonly.
+field_new_type(f, t) :- field_initializer("client", e, f),
+    new_expression_type(e, _, t).
+field_multi_new(f) :- field_new_type(f, t1), field_new_type(f, t2), t1 != t2.
+field_is_readonly(f) :- ts_field(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, "true", _, _, _, _, _, _, _, _, _, _, f).
+field_monomorphic(f, t) :- field_new_type(f, t),
+    field_is_readonly(f),
+    !field_multi_new(f).
+
+// A field's flowed type, additive, whether or not it is readonly — the same
+// declared-vs-held distinction as for a variable.
+field_flow_type(f, prov, t) :- field_initializer("client", e, f),
+    expr_type(e, prov, t).
+
+// ── the receiver takes what its field holds ─────────────────────────────────
+// `this.repo.find()`: the property access is typed by the field's flowed type as well
+// as its declared one.
+expr_type(e, prov, t) :- expr_kind("client", "PROPERTY_ACCESS", _, e),
+    property_access_name(e, n),
+    expr_child("client", e, "RECEIVER", _, q),
+    expr_type(q, _, qt),
+    field_in_scope(qt, n, "false", f),
+    field_flow_type(f, prov, t).
+
+// EXACTNESS for a readonly field reached through `this`. Restricted to a THIS_REFERENCE
+// qualifier on purpose: the enclosing type comes from containment, which is below the
+// fixpoint, whereas an arbitrary qualifier's type comes from expr_type and feeding that
+// into a negated relation would put the negation inside its own cycle. Java's
+// type-flow.dl draws the identical line and records the identical reason.
+expr_exact_type(e, t) :- expr_kind("client", "PROPERTY_ACCESS", _, e),
+    property_access_name(e, n),
+    expr_child("client", e, "RECEIVER", _, q),
+    expr_kind("client", "THIS_REFERENCE", _, q),
+    expr_enclosing_type(q, encl),
+    field_in_enclosing(encl, n, f),
+    field_monomorphic(f, t).
+field_in_enclosing(encl, n, f) :- field_decl("client", n, _, encl, f).
+field_in_enclosing(encl, n, f) :- type_ancestor(encl, anc),
+    field_decl("client", n, _, anc, f).
+
+// ============================================================================
+// WHAT A FUNCTION-VALUED HOLDER HOLDS  (#1206)
+//
+// A call through a FIELD, VARIABLE or PARAMETER whose declared type is a function type
+// resolves to that type's call signature: `app.fetch(req)` to `fetch: (req: Request) =>
+// Response`, `this.getPath(req)` to the `GetPath` alias, `mergePath(a, b)` to the
+// annotation on `export const mergePath: (...paths: string[]) => string = …`, `fn()` to
+// `fn: () => T`. That is the compiler's own answer and it stays the call-site answer
+// (callee-resolution.dl (5d) keeps the initializer out of it on purpose). But a signature
+// has no body and no outgoing edges, so a walk over callers stopped there: every call
+// edge ending on a FUNCTION_TYPE_SIGNATURE was a dead end, and `impact` on a function
+// stored in a field reached none of the code that calls it through the field
+// (tests/cases/typescript/function-stored-in-a-holder). The function that runs is the
+// one the holder HOLDS.
+//
+// So what flows into the holder is added to the DISPATCH ENVELOPE, not to the call site:
+// (the signature the call resolved to, a function the holder holds, "value"). impact and
+// path already walk candidate -> base -> callers of the base, which is exactly the hop that
+// was missing, and per-site precision against the compiler is untouched.
+//
+// KEYED ON THE CALLS THAT GO THROUGH A HOLDER, not on the holder's type reference. The
+// base is whatever the call actually resolved to, so no second route to the signature has
+// to agree with the resolver's; and a holder nothing calls through contributes nothing.
+//
+// A function reaches a holder through
+//   * a field:     its initializer, and an assignment to it (`this.f = …`, `this.f ??= …`);
+//   * a variable:  its initializer, and a reassignment;
+//   * a parameter: the argument at that position at every call the resolver bound;
+// and through the value branches of that expression: both arms of a ternary, both
+// operands of `??` and `||`, the right operand of `&&`, and the transparent wrappers
+// (`!`, `as`, `satisfies`). Parentheses never reach the IR.
+//
+// Downstream of every resolver rule and read by none of them: method_dispatch_candidate is
+// an output only (type-hierarchy.dl), so this stratifies above the expr_type fixpoint.
+// ============================================================================
+
+// ── holder_value(Holder, Expr): an expression whose value is stored in the holder ──
+holder_value(f, e) :- field_initializer("client", e, f).
+holder_value(f, v) :- expr_kind("client", "ASSIGNMENT_EXPRESSION", _, a),
+    expr_child("client", a, "LEFT_OPERAND", _, tgt),
+    ts_field_access_target(tgt, f),
+    expr_child("client", a, "RIGHT_OPERAND", _, v).
+holder_value(f, v) :- expr_kind("client", "COMPOUND_ASSIGNMENT", _, a),
+    expr_operator("client", op, a),
+    compound_op_keeps_value(op),
+    expr_child("client", a, "LEFT_OPERAND", _, tgt),
+    ts_field_access_target(tgt, f),
+    expr_child("client", a, "RIGHT_OPERAND", _, v).
+compound_op_keeps_value("??=").
+compound_op_keeps_value("||=").
+holder_value(v, e) :- var_initializer("client", _, e, v), e != "".
+holder_value(v, e) :- var_reassigned_value(v, e).
+holder_value(p, a) :- expr_child("client", ce, "ARGUMENT", pos, a),
+    expr_resolves_to_method(ce, callee),                 # the overload the call SELECTS, not every candidate:
+    param_decl("client", _, pos, _, callee, p),          # an arrow passed to on("close", …) is not a listener of every on
+    !hof_boundary_site(ce).                              # …and a parameter no body reads holds nothing (below)
+
+// ============================================================================
+// A FUNCTION HANDED TO A HIGHER-ORDER FUNCTION WITH NO BODY  (the library boundary)
+//
+// `xs.map((x) => f(x))` where `map` is a declaration with no body in the client: a `.d.ts`
+// interface member, an ambient `declare function`, an interface method nothing implements.
+// Stored in the parameter, the arrow became a `value` candidate of the parameter's function
+// type, and that ONE signature is shared by every `.map` call in the repository: a walk up
+// from any map callback reached every caller of `.map`, and a walk down from any caller of
+// `.map` reached every map callback. One constant read inside one arrow reached 1,078
+// callables in 198 files. No body can call through the parameter, so the envelope row
+// said nothing true that the call site does not say better.
+//
+// The call SITE is what hands the function over, so the edge is the site's own: the
+// function that writes `xs.map(cb)` reaches `cb` (call_chain.dl, `callback_registered`),
+// and a callback passed at one site is never reached from another.
+//
+// Only where no CLIENT body runs at the site. A project function that calls its parameter
+// keeps the holder rule: its body is what runs the callback, and that is a real call.
+// ============================================================================
+call_runs_client_body(ce) :- call_runs_method(ce, m), method_prov(m, "client").
+hof_boundary_site(ce) :- call_site("client", _, _, _, _, ce, _), !call_runs_client_body(ce).
+
+value_branch(a, a) :- hof_boundary_site(ce), expr_child("client", ce, "ARGUMENT", _, a).
+handed_function(ce, m) :- hof_boundary_site(ce), expr_child("client", ce, "ARGUMENT", _, a),
+    value_branch(a, x),
+    !expr_kind("client", "CALL_EXPRESSION", _, x),        # `xs.map(make())` hands over what make RETURNS
+    expr_callable(x, m).
+handed_function(ce, m) :- hof_boundary_site(ce), expr_child("client", ce, "ARGUMENT", _, a),
+    value_branch(a, x),
+    expr_referenced("client", k, h, x),
+    holder_ref_kind(k),
+    holder_holds_function(h, m).
+handed_function(ce, m) :- hof_boundary_site(ce), expr_child("client", ce, "ARGUMENT", _, a),
+    value_branch(a, x),
+    ts_field_access_target(x, f),
+    holder_holds_function(f, m).
+handed_function(ce, m) :- hof_boundary_site(ce), expr_child("client", ce, "ARGUMENT", _, a),
+    value_branch(a, x),
+    expr_kind("client", "CALL_EXPRESSION", _, x),
+    call_runs(x, f),
+    holder_holds_function(f, m).
+handed_function(ce, m) :- hof_boundary_site(ce), expr_child("client", ce, "ARGUMENT", _, a),
+    value_branch(a, x),
+    method_value(x, m).
+
+// ── method_value(Expr, Method): an INSTANCE method read as a value, not called ──
+// `xs.forEach(this.handle, this)`, `el.addEventListener('click', this.onClick)`,
+// `setTimeout(this.onHover.bind(this))`. expr_callable names a free function, an import and
+// a static member (`Util.f`), and stops there on purpose: it feeds the callee resolver's own
+// negation, so reading the receiver's type from it would put that negation in a cycle.
+// Down here every resolver rule has already run, so the member is looked up exactly as an
+// instance call `recv.name()` looks it up (callee-resolution rules 4 and 6). Without it a
+// method passed by reference had no edge from the function that passes it, where a free
+// function passed at the same position had one.
+method_value(x, m) :- expr_kind("client", "PROPERTY_ACCESS", _, x),
+    property_access_name(x, n),
+    expr_child("client", x, "RECEIVER", _, q),
+    expr_type(q, _, qt),
+    method_in_scope(qt, n, "false", m),
+    !method_is_accessor(m).
+method_value(x, m) :- expr_kind("client", "PROPERTY_ACCESS", _, x),
+    property_access_name(x, n),
+    expr_child("client", x, "RECEIVER", _, q),
+    expr_shape(q, s),
+    method_in_scope(s, n, _, m),
+    !method_is_accessor(m).
+// `String(c.current)` with `get current()` READS the property: the getter runs there and its
+// value is what is handed over, and a setter is never read at all.
+method_is_accessor(m) :- method_kind(_, "GETTER", _, m).
+method_is_accessor(m) :- method_kind(_, "SETTER", _, m).
+// `f.bind(thisArg, …)` is `f` with its receiver fixed: what it hands over is `f`. Only `bind`:
+// `f.call(…)` and `f.apply(…)` run `f` there and hand over what it returns.
+method_value(x, m) :- call_site("client", _, "bind", _, recv, x, _),
+    recv != "",
+    method_value(recv, m).
+method_value(x, m) :- call_site("client", _, "bind", _, recv, x, _),
+    recv != "",
+    expr_callable(recv, m).
+
+// ── value_branch(Root, Expr): Expr is a value Root can evaluate to ──
+value_branch(e, e) :- holder_value(_, e).
+value_branch(root, x) :- value_branch(root, e),
+    expr_kind("client", "TERNARY_EXPRESSION", _, e),
+    expr_child("client", e, r, _, x),
+    edge_role_is_ternary_branch(r).
+value_branch(root, x) :- value_branch(root, e),
+    expr_kind("client", "BINARY_EXPRESSION", _, e),
+    expr_operator("client", op, e),
+    binary_op_yields_operand(op, r),
+    expr_child("client", e, r, _, x).
+value_branch(root, x) :- value_branch(root, e),
+    expr_kind("client", k, _, e),
+    expr_kind_is_transparent(k),
+    expr_child("client", e, r, _, x),
+    edge_role_is_operand(r).
+binary_op_yields_operand("??", "LEFT_OPERAND").
+binary_op_yields_operand("??", "RIGHT_OPERAND").
+binary_op_yields_operand("||", "LEFT_OPERAND").
+binary_op_yields_operand("||", "RIGHT_OPERAND").
+binary_op_yields_operand("&&", "RIGHT_OPERAND").
+
+holder_holds_function(h, m) :- holder_value(h, e),
+    value_branch(e, x),
+    !expr_kind("client", "CALL_EXPRESSION", _, x),        # `return make()` holds what make RETURNS, not make:
+    expr_callable(x, m).                                  # a call node carries its callee as its referenced entity
+holder_holds_function(h, m) :- holder_value(h, e),
+    value_branch(e, x),
+    method_value(x, m).
+// …AND WHAT ANOTHER HOLDER HANDS OVER. `run(fn, promise, resolve)` passes the caller's own
+// parameter on, and a wrapper that forwards a callback is the ordinary shape of one: the
+// function reaches the inner parameter only through the outer one.
+holder_holds_function(h, m) :- holder_value(h, e),
+    value_branch(e, x),
+    expr_referenced("client", k, h2, x),
+    holder_ref_kind(k),
+    holder_holds_function(h2, m).
+holder_holds_function(h, m) :- holder_value(h, e),
+    value_branch(e, x),
+    ts_field_access_target(x, f),
+    holder_holds_function(f, m).
+
+// ── called_through(CallExpr, Holder): the callee expression names the holder ──
+called_through(ce, f) :- call_callee_expr(_, ce, ne),
+    ts_field_access_target(ne, f).
+called_through(ce, h) :- call_callee_expr(_, ce, ne),
+    expr_referenced("client", k, h, ne),
+    holder_ref_kind(k).
+holder_ref_kind("VARIABLE").
+holder_ref_kind("PARAMETER").
+
+method_dispatch_candidate(sig, m, "value") :- called_through(ce, h),
+    expr_resolves_to_method(ce, sig),
+    method_kind(_, k, _, sig),
+    method_kind_is_call_signature(k),
+    holder_holds_function(h, m),
+    m != sig.
+
+// ============================================================================
+// A FUNCTION TYPED BY WHERE IT IS WRITTEN  (the Java lambda rule)
+//
+// Java sends a call typed to a functional interface to every lambda and method reference
+// whose TARGET TYPE is that interface, wherever the value then goes: a field, a list, an
+// array, a map. Storage never has to be tracked, because the type carries the link. The
+// holder rules above follow storage instead, so a function that reaches its call through
+// an array element (`callbacks.map((c) => c(opts))`, `middleware[i][0]`) never met it.
+//
+// This is the TypeScript port. A function is an implementation of a function type T when it
+// is written where a value of T is expected: held by a field, variable or parameter
+// declared T, or returned from a function declared to return T. Every call that resolves to
+// T's call signature may then run it, as in Java; the fan is as wide as the type, exactly as
+// a Java call through `Function` or `Handler` is.
+//
+// Envelope only, like the holder rules: no call-site answer moves.
+// ============================================================================
+
+// the call signatures of the function type a reference names: an inline `(a: A) => B`, an
+// alias of one, or an interface with a call signature
+ref_call_signature(r, sig) :- ref_shape_target(r, s), call_signature_in_scope(s, sig).
+ref_call_signature(r, sig) :- ref_type_target(r, _, t), call_signature_in_scope(t, sig).
+
+typed_holder_signature(h, sig) :- field_type_ref("client", r, h), ref_call_signature(r, sig).
+typed_holder_signature(h, sig) :- var_type_ref("client", r, h), ref_call_signature(r, sig).
+typed_holder_signature(h, sig) :- param_type_ref("client", r, h), ref_call_signature(r, sig).
+
+method_dispatch_candidate(sig, m, "value") :- typed_holder_signature(h, sig),
+    holder_holds_function(h, m),
+    m != sig.
+
+// what a function returns is held by it, for this purpose: `makeCb(): CB { return (n) => … }`
+// the ROOT of the returned expression only: method_returns_expr also holds every sub-expression under a `return`
+// (the callee identifier of `return make(x)` among them), and those are not what the function returns
+holder_value(f, e) :- method_returns_expr(f, e), expr_kind("client", _, "ROOT", e).
+// …and the concise body of an arrow that is itself a function: `(n) => (x) => x + n`. That body has no call site and
+// no block, so method_returns_expr has no row for it; the inner arrow's method row names the arrow it is written in.
+holder_value(f, e) :- expr_root_context("client", "ARROW_BODY_EXPRESSION", e), expr_kind("client", _, "ROOT", e),
+    expr_anon_decl("client", m, e), method_enclosing_member(m, f).
+method_dispatch_candidate(sig, m, "value") :- method_return_ref("client", r, f),
+    ref_call_signature(r, sig),
+    holder_holds_function(f, m),
+    m != sig.
+
+// ============================================================================
+// A FUNCTION A CALL HANDS BACK, AND THE CALL THAT RUNS IT  (fn_value_call, as Java has it)
+//
+// `const f = make(1); f(2)`, `make(1)(2)`, and the curried chains of a functional library
+// (`const unionS = union(S); unionS(second)(first)`) call a function that no name at the call
+// site spells: it is what another call RETURNED. The call has no signature to resolve to, so
+// the envelope rules above (keyed on the signature a call resolved to) never see it, and the
+// function it runs had no caller at all.
+//
+//   * a holder holds what a call stored in it RETURNS: the functions the call's target returns;
+//   * a call RUNS what it resolved to, what its holder holds, and, when the callee is itself a
+//     call, what that inner call's target returns.
+//
+// fn_value_call(Caller, Fn) is the pair a walk uses, exactly as Java's: it keeps the call
+// that runs the function, so a caller gets only the functions its own calls can run. An
+// output only, like method_dispatch_candidate: no call-site answer moves.
+// ============================================================================
+method_enclosing_member(m, p) :- ts_method(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, p, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, m), p != "".
+
+holder_holds_function(h, m) :- holder_value(h, e),
+    value_branch(e, x),
+    expr_kind("client", "CALL_EXPRESSION", _, x),
+    call_runs(x, f),
+    holder_holds_function(f, m).
+
+call_runs(ce, f) :- expr_resolves_to_method(ce, f).
+call_runs(ce, m) :- called_through(ce, h), holder_holds_function(h, m).
+call_runs(ce, m) :- call_callee_expr(_, ce, ne),
+    expr_kind("client", "CALL_EXPRESSION", _, ne),
+    call_runs(ne, f),
+    holder_holds_function(f, m).
+
+fn_value_call(caller, m) :- call_runs(ce, m),
+    !expr_resolves_to_method(ce, m),
+    call_site("client", _, _, _, _, ce, cs),
+    call_caller_method(cs, caller),
+    caller != m.
+
+// ============================================================================
+// AN OBJECT LITERAL IMPLEMENTS THE TYPE IT IS WRITTEN AS, AND A CALL ON AN EXPRESSION RUNS
+// WHAT EACH OF ITS BRANCHES HOLDS  (#1208)
+//
+// `createPool(): Pool { return { run, size() {…} } }` then `pool.run(() => work())`. The call
+// resolves to Pool.run, a member SIGNATURE with no body, and nothing implements it: there is no
+// class, so no nominal or structural candidate, and the functions in the literal had no caller.
+// A factory returning an object literal typed by an interface is the ordinary way to build a
+// pool, a client, a store or a plugin, so this was the commonest of the shapes.
+//
+// The literal's type comes from where it is written (contextual-params.dl, objlit_ctx_scope).
+// Each function member is a `value` dispatch candidate of the member signature of the same name;
+// a property whose member is a FIELD of function type is stored in that field, exactly as an
+// initializer or an assignment is, so the holder rules above take it from there. Envelope only:
+// no call-site answer moves.
+// ============================================================================
+objlit_member_value(l, name, val) :- objlit_prop(l, name, val).
+
+objlit_implements(sig, m) :- objlit_member_fn(l, name, m),
+    objlit_ctx_scope(l, s),
+    method_in_scope(s, name, _, sig).
+// `{ run }` and `{ run: runImpl }`: the property names a holder, and what the holder holds runs
+objlit_implements(sig, m) :- objlit_member_value(l, name, val),
+    objlit_ctx_scope(l, s),
+    method_in_scope(s, name, _, sig),
+    expr_referenced("client", k, h, val),
+    holder_ref_kind(k),
+    holder_holds_function(h, m).
+objlit_implements(sig, m) :- objlit_member_value(l, name, val),
+    objlit_ctx_scope(l, s),
+    method_in_scope(s, name, _, sig),
+    !expr_anon_decl("client", _, val),
+    expr_callable(val, m).
+method_dispatch_candidate(sig, m, "value") :- objlit_implements(sig, m),
+    method_kind(_, k, _, sig),
+    method_kind_is_member_signature(k),
+    m != sig.
+method_kind_is_member_signature("METHOD_SIGNATURE").
+method_kind_is_member_signature("TYPE_LITERAL_METHOD_SIGNATURE").
+method_kind_is_member_signature(k) :- method_kind_is_call_signature(k).
+
+// a property stored into a field-typed member: `get(url, { fetch: customFetch })` stores
+// customFetch in Options.fetch, and a call through `opt.fetch` runs it
+holder_value(f, val) :- objlit_member_value(l, name, val),
+    objlit_ctx_scope(l, s),
+    field_in_scope(s, name, _, f).
+holder_holds_function(f, m) :- objlit_member_fn(l, name, m),
+    method_kind(_, "OBJECT_LITERAL_METHOD", _, m),
+    objlit_ctx_scope(l, s),
+    field_in_scope(s, name, _, f).
+
+// ── a call on an expression callee runs what each branch is or holds ──
+call_runs(ce, m) :- callee_branch(ce, x), expr_callable(x, m).
+call_runs(ce, m) :- callee_branch(ce, x),
+    expr_referenced("client", k, h, x),
+    holder_ref_kind(k),
+    holder_holds_function(h, m).
+call_runs(ce, m) :- callee_branch(ce, x),
+    ts_field_access_target(x, f),
+    holder_holds_function(f, m).
+
+// ============================================================================
+// A FUNCTION ASSIGNED TO AN INTERFACE'S METHOD MEMBER IMPLEMENTS IT  (#1283)
+//
+// `inst._i.run = (x) => x + 1`, `inst._i.run = inst._i.parse`: the object's methods are declared
+// on an interface and IMPLEMENTED BY ASSIGNMENT at run time, then called as `schema._i.run(v)`.
+// The call resolves to the member signature, which has no body, and nothing implemented it:
+// there is no class and no literal, and the holder rules above only take a FIELD as the target
+// of an assignment. So the assigned functions had no caller, and a walk stopped at the call.
+//
+// The member signature an assignment writes through is the holder here, exactly as a field is
+// for `this.f = …`, and the receiver may be any chain the resolver types (`inst._i`). A read of
+// the member is what the member holds, so `inst._i.run = inst._i.parse` hands over what
+// `parse` was given. Each function a member holds is a `value` dispatch candidate of it, and a
+// call through the member runs it. Envelope only: no call-site answer moves.
+// ============================================================================
+member_sig_access(e, sig) :- property_access_name(e, n),
+    expr_child("client", e, "RECEIVER", _, q),
+    expr_type(q, _, qt),
+    method_in_scope(qt, n, "false", sig),
+    method_kind(_, k, _, sig),
+    method_kind_is_assignable_signature(k).
+member_sig_access(e, sig) :- property_access_name(e, n),
+    expr_child("client", e, "RECEIVER", _, q),
+    expr_shape(q, qs),
+    method_in_scope(qs, n, _, sig),
+    method_kind(_, k, _, sig),
+    method_kind_is_assignable_signature(k).
+method_kind_is_assignable_signature("METHOD_SIGNATURE").
+method_kind_is_assignable_signature("TYPE_LITERAL_METHOD_SIGNATURE").
+
+holder_value(sig, v) :- expr_kind("client", "ASSIGNMENT_EXPRESSION", _, a),
+    expr_child("client", a, "LEFT_OPERAND", _, tgt),
+    member_sig_access(tgt, sig),
+    expr_child("client", a, "RIGHT_OPERAND", _, v).
+holder_value(sig, v) :- expr_kind("client", "COMPOUND_ASSIGNMENT", _, a),
+    expr_operator("client", op, a),
+    compound_op_keeps_value(op),
+    expr_child("client", a, "LEFT_OPERAND", _, tgt),
+    member_sig_access(tgt, sig),
+    expr_child("client", a, "RIGHT_OPERAND", _, v).
+holder_holds_function(h, m) :- holder_value(h, e),
+    value_branch(e, x),
+    member_sig_access(x, sig),
+    holder_holds_function(sig, m).
+
+called_through(ce, sig) :- call_callee_expr(_, ce, ne), member_sig_access(ne, sig).
+
+method_dispatch_candidate(sig, m, "value") :- member_sig_access(_, sig),
+    holder_holds_function(sig, m),
+    m != sig.
+
+// ============================================================================
+// A FUNCTION HELD AS AN ELEMENT OF A COLLECTION, AND THE CALL THAT RUNS IT  (#967)
+//
+// `const steps = [widen, narrow]; for (const s of steps) s(node)`. A pipeline registers
+// its steps as DATA and calls them by position: the registration is a reference, not a
+// call, and the invocation names an element, not a declaration. Neither line was an edge,
+// so `widen` had no caller and every declaration it reaches inherited that silence: impact
+// on a helper three hops down answered "0 tests" while the tests were all indexed.
+//
+// The holder rules above follow a function into a variable, field or parameter. This adds
+// the one step they lacked: a holder whose value is an ARRAY or OBJECT LITERAL holds each
+// callable ELEMENT of it, and a read of an element runs what the holder's elements hold:
+//
+//   * `for (const s of h)`, `for (const s of Object.values(h))`  the loop binding holds them;
+//   * `h[i](x)`, `h[kind](x)`, `const s = h[i]`                  the element access is one;
+//   * `h.forEach((s) => s(x))`, `h.reduce((acc, s) => s(acc), x)`  the callback's element parameter holds them;
+//   * `h.run(x)` over `{ run: runImpl }`                         only the property of that name.
+//
+// A literal reaches a holder by every route holder_value already has (an initializer, an
+// argument a resolved call passes, a field an options literal fills), through `as const`
+// and `satisfies`, and `push`/`unshift` and a spread `[...base, f]` add to it.
+//
+// Envelope only, like every rule in this file: the call-site answer does not move, and a
+// call run this way is a `fn_value_call` — a dispatch-rung route, not a resolved edge,
+// which is the certainty it has: `steps[0]` runs ONE of the elements.
+// ============================================================================
+
+// ── holder_elem_value(Holder, Expr): Expr is an element of a collection the holder holds ──
+holder_elem_value(h, x) :- holder_value(h, e),
+    value_branch(e, lit),
+    expr_kind("client", k, _, lit),
+    collection_literal_child(k, r),
+    expr_child("client", lit, r, _, x).
+collection_literal_child("ARRAY_LITERAL", "ARRAY_ELEMENT").
+collection_literal_child("OBJECT_LITERAL", "OBJECT_PROPERTY_VALUE").
+// `h.push(f)`, `h.unshift(f)` — a registry filled after it is declared
+holder_elem_value(h, a) :- call_site("client", "METHOD_CALL", n, _, recv, ce, _),
+    array_method_adds(n),
+    expr_holder(recv, h),
+    expr_child("client", ce, "ARGUMENT", _, a).
+array_method_adds("push").
+array_method_adds("unshift").
+
+// ── expr_holder(Expr, Holder): the expression names the holder ──
+expr_holder(x, h) :- expr_referenced("client", k, h, x), holder_ref_kind(k).
+expr_holder(x, f) :- ts_field_access_target(x, f).
+// an imported `const` is the exporting module's variable
+expr_holder(x, v) :- expr_referenced("client", "IMPORT_BINDING", ih, x),
+    import_binds(ih, _, "VARIABLE", v).
+
+// ── holder_elem_fn(Holder, Fn): an element of the holder's collection is, or holds, Fn ──
+holder_elem_fn(h, m) :- holder_elem_value(h, x),
+    !expr_kind("client", "CALL_EXPRESSION", _, x),
+    expr_callable(x, m).
+holder_elem_fn(h, m) :- holder_elem_value(h, x),
+    expr_holder(x, h2),
+    holder_holds_function(h2, m).
+// an object literal's own method: `{ run() {…} }`
+holder_elem_fn(h, m) :- holder_value(h, e),
+    value_branch(e, l),
+    objlit_member_fn(l, _, m).
+// `[...base, f]` — the spread array's elements are this one's
+holder_elem_fn(h, m) :- holder_elem_value(h, x),
+    expr_kind("client", "SPREAD_ELEMENT", _, x),
+    expr_child("client", x, "SPREAD_OPERAND", _, y),
+    expr_holder(y, h2),
+    holder_elem_fn(h2, m).
+// `const all = steps` — a holder handed another holder's collection holds its elements
+holder_elem_fn(h, m) :- holder_value(h, e),
+    value_branch(e, x),
+    expr_holder(x, h2),
+    h2 != h,
+    holder_elem_fn(h2, m).
+
+// ── the reads ───────────────────────────────────────────────────────────────
+// `h[i]`, `h[kind]`: any element (an index or a computed key picks one we cannot)
+elem_read_fn(x, m) :- expr_kind("client", "ELEMENT_ACCESS", _, x),
+    expr_child("client", x, "RECEIVER", _, r),
+    expr_holder(r, h),
+    holder_elem_fn(h, m).
+// `h.run`: the property of that name, when the holder holds an object literal
+elem_read_fn(x, m) :- property_access_name(x, n),
+    expr_child("client", x, "RECEIVER", _, r),
+    expr_holder(r, h),
+    holder_value(h, e),
+    value_branch(e, l),
+    objlit_prop(l, n, val),
+    expr_callable(val, m).
+elem_read_fn(x, m) :- property_access_name(x, n),
+    expr_child("client", x, "RECEIVER", _, r),
+    expr_holder(r, h),
+    holder_value(h, e),
+    value_branch(e, l),
+    objlit_prop(l, n, val),
+    expr_holder(val, h2),
+    holder_holds_function(h2, m).
+
+// the collection an expression iterates: a holder, or `Object.values(holder)`
+iterated_elem_fn(e, m) :- expr_holder(e, h), holder_elem_fn(h, m).
+iterated_elem_fn(ce, m) :- call_site("client", "METHOD_CALL", "values", _, recv, ce, _),
+    expr_literal_value("client", "Object", recv),
+    expr_referenced("client", "AMBIENT_GLOBAL", _, recv),
+    expr_child("client", ce, "ARGUMENT", "0", a),
+    expr_holder(a, h),
+    holder_elem_fn(h, m).
+
+// `for (const s of h)` — a plain binding; a destructuring pattern names a PART of the element
+holder_holds_function(v, m) :- for_binding_iterable(v, e),
+    !var_binding("client", _, _, _, _, v),
+    iterated_elem_fn(e, m).
+// `const s = h[i]`
+holder_holds_function(h, m) :- holder_value(h, e),
+    value_branch(e, x),
+    elem_read_fn(x, m).
+// `h.forEach((s) => …)`: the callback parameter that receives an element
+holder_holds_function(p, m) :- call_site("client", "METHOD_CALL", n, _, recv, ce, _),
+    array_method_element_param(n, pos),
+    iterated_elem_fn(recv, m),
+    expr_child("client", ce, "ARGUMENT", "0", a),
+    expr_anon_decl("client", cb, a),
+    param_decl("client", _, pos, _, cb, p).
+array_method_element_param("forEach", "0").
+array_method_element_param("map", "0").
+array_method_element_param("flatMap", "0").
+array_method_element_param("filter", "0").
+array_method_element_param("find", "0").
+array_method_element_param("findLast", "0").
+array_method_element_param("some", "0").
+array_method_element_param("every", "0").
+array_method_element_param("reduce", "1").
+array_method_element_param("reduceRight", "1").
+
+// `h[i](x)`, `h.run(x)`
+call_runs(ce, m) :- call_callee_expr(_, ce, ne), elem_read_fn(ne, m).

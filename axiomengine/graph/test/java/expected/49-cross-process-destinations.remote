@@ -1,0 +1,6 @@
+http	exact	/api/items/{id}	testcases.destinations.ItemClient#viaConfiguredField(String) -> testcases.destinations.ItemController#get(String)
+http	exact	/api/items/{id}	testcases.destinations.ItemClient#viaConstant(String) -> testcases.destinations.ItemController#get(String)
+http	exact	/api/items/{id}	testcases.destinations.ItemClient#viaLiteral(String) -> testcases.destinations.ItemController#get(String)
+http	exact	/api/items/{id}	testcases.destinations.ItemClient#viaPost(String) -> testcases.destinations.ItemController#replace(String)
+kafka	exact	orders.audit	testcases.destinations.Messaging#publishAudit(String) -> testcases.destinations.Messaging#onAudit(String)
+kafka	exact	orders.created	testcases.destinations.Messaging#publishCreated(String) -> testcases.destinations.Messaging#onCreated(String)

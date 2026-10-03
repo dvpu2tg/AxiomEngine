@@ -1,0 +1,28 @@
+tool               misses  not in graph  overload-blind   fan-out  name-only
+axiom                 120            99              21         0          0
+axiom-nolib           120           104              16         0          0
+code-review-graph    1280           105               0      1150         25
+code-review-graph-dispatch   1200           129               0      1048         23
+codegraph             780           487             276         8          9
+codegraph-dispatch    748           470             258         8         12
+gitnexus              593           423             161         4          5
+graphify              911           911               0         0          0
+
+missed tests recovered by a looser reading (the tool drew a chain the benchmark's reading does not credit):
+  axiom overload-blind: Closure-142 JsDocInfoParserTest::testParseLicenseWithAnnotation; Closure-144 ExternExportsPassTest::testExportDontEmitPrototypePathPrefix; Closure-144 ExternExportsPassTest::testExportMultiple
+  axiom-nolib overload-blind: Closure-144 ExternExportsPassTest::testExportDontEmitPrototypePathPrefix; Closure-144 ExternExportsPassTest::testExportMultiple; Closure-144 ExternExportsPassTest::testExportSymbolWithConstructor
+  code-review-graph fan-out: Cli-10 ParseRequiredTest::testReuseOptionsTwice; Cli-12 GnuParserTest::testShortWithEqual; Cli-12 GnuParserTest::testLongWithEqualSingleDash
+  code-review-graph name-only: Codec-14 PhoneticEngineRegressionTest::testCompatibilityWithOriginalVersion; Codec-16 Base32Test::testCodec200; Compress-10 UTF8ZipFilesTest::testReadWinZipArchive
+  code-review-graph-dispatch fan-out: Cli-10 ParseRequiredTest::testReuseOptionsTwice; Cli-12 GnuParserTest::testShortWithEqual; Cli-12 GnuParserTest::testLongWithEqualSingleDash
+  code-review-graph-dispatch name-only: Codec-14 PhoneticEngineRegressionTest::testCompatibilityWithOriginalVersion; Codec-16 Base32Test::testCodec200; Compress-10 UTF8ZipFilesTest::testReadWinZipArchive
+  codegraph overload-blind: Cli-10 ParseRequiredTest::testReuseOptionsTwice; Cli-12 GnuParserTest::testShortWithEqual; Cli-12 GnuParserTest::testLongWithEqualSingleDash
+  codegraph fan-out: Closure-47 SourceMapGeneratorV3Test::testGoldenOutput0a; Closure-47 SourceMapGeneratorV3Test::testLiteralMappingsGoldenOutput; Closure-47 SourceMapGeneratorV3Test::testBasicMappingGoldenOutput
+  codegraph name-only: Closure-122 ParserTest::testSuspiciousBlockCommentWarning3; Closure-122 ParserTest::testSuspiciousBlockCommentWarning4; Closure-122 ParserTest::testSuspiciousBlockCommentWarning5
+  codegraph-dispatch overload-blind: Cli-12 GnuParserTest::testShortWithEqual; Cli-12 GnuParserTest::testLongWithEqualSingleDash; Cli-12 GnuParserTest::testLongWithEqual
+  codegraph-dispatch fan-out: Closure-47 SourceMapGeneratorV3Test::testGoldenOutput0a; Closure-47 SourceMapGeneratorV3Test::testLiteralMappingsGoldenOutput; Closure-47 SourceMapGeneratorV3Test::testBasicMappingGoldenOutput
+  codegraph-dispatch name-only: Closure-122 ParserTest::testSuspiciousBlockCommentWarning3; Closure-122 ParserTest::testSuspiciousBlockCommentWarning4; Closure-122 ParserTest::testSuspiciousBlockCommentWarning5
+  gitnexus overload-blind: Closure-1 RemoveUnusedVarsTest::testRemoveGlobal1; Closure-1 RemoveUnusedVarsTest::testRemoveGlobal2; Closure-1 RemoveUnusedVarsTest::testRemoveGlobal3
+  gitnexus fan-out: Closure-38 CodePrinterTest::testMinusNegativeZero; Closure-44 CodePrinterTest::testIssue620; Closure-51 CodePrinterTest::testIssue582
+  gitnexus name-only: Closure-41 TypeCheckTest::testIssue368; Closure-43 TypeCheckTest::testLends10; Closure-43 TypeCheckTest::testLends11
+
+self-check against score.py's overload_blind reading: 2852 (bug, tool) pairs, 0 differ

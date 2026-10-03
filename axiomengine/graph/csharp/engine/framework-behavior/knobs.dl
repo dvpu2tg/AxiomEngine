@@ -1,0 +1,388 @@
+// ============================================================================
+// FRAMEWORK-BEHAVIOR · KNOBS
+//
+// Every framework NAME the destination rules key on, in one place, as facts. Adding a
+// broker, an HTTP client or a generated-code convention is a fact here, not a rule in
+// destinations.dl -- the same split the Java engine keeps in config-resolution/knobs.dl.
+// ============================================================================
+
+// ── gRPC: what Grpc.Tools generates ─────────────────────────────────────────
+// For `service Greeter` in a .proto, Grpc.Tools emits a static class `Greeter` holding a
+// nested `GreeterBase` (the server's base) and `GreeterClient` (the client). Both are
+// written into obj/ and are never in the source tree, so they are recognised by the
+// SHAPE of the name a project writes: `Greeter.GreeterBase`, `Greeter.GreeterClient`.
+cs_grpc_server_suffix("Base").
+cs_grpc_client_suffix("Client").
+// Every unary rpc has a blocking method and an `<Rpc>Async` twin on the client.
+cs_grpc_async_suffix("Async").
+// Members every generated client carries that are not rpcs.
+cs_grpc_client_member_not_rpc("WithHost").
+cs_grpc_client_member_not_rpc("NewInstance").
+
+// Namespace roots no generated gRPC type lives under. Grpc.Tools puts the generated
+// classes in the .proto's own (csharp_)namespace, which is the project's. Without this,
+// `System.Net.Http.HttpClient` has the generated SHAPE -- the segment before the last is
+// `Http` and the last is `Http` + `Client` -- and read as a gRPC service called Http.
+cs_framework_namespace_root("System").
+cs_framework_namespace_root("Microsoft").
+
+cs_remote_transport_grpc("grpc").
+cs_remote_confidence_exact("exact").
+
+// ── HTTP: ASP.NET Core on the server ────────────────────────────────────────
+// Attribute routing. `Route` carries a template and no verb; each Http<Verb> carries a
+// verb and an optional template. Written with or without the Attribute suffix.
+cs_http_route_attr("Route").
+cs_http_route_attr("RouteAttribute").
+cs_http_verb_attr("HttpGet", "GET").        cs_http_verb_attr("HttpGetAttribute", "GET").
+cs_http_verb_attr("HttpPost", "POST").      cs_http_verb_attr("HttpPostAttribute", "POST").
+cs_http_verb_attr("HttpPut", "PUT").        cs_http_verb_attr("HttpPutAttribute", "PUT").
+cs_http_verb_attr("HttpDelete", "DELETE").  cs_http_verb_attr("HttpDeleteAttribute", "DELETE").
+cs_http_verb_attr("HttpPatch", "PATCH").    cs_http_verb_attr("HttpPatchAttribute", "PATCH").
+cs_http_verb_attr("HttpHead", "HEAD").      cs_http_verb_attr("HttpHeadAttribute", "HEAD").
+cs_http_verb_attr("HttpOptions", "OPTIONS"). cs_http_verb_attr("HttpOptionsAttribute", "OPTIONS").
+// The suffix ASP.NET strips from a controller's class name for the [controller] token.
+cs_http_controller_suffix("Controller").
+// Minimal APIs: `app.MapGet(template, handler)`, and a route group's prefix.
+cs_http_map_verb("MapGet", "GET").
+cs_http_map_verb("MapPost", "POST").
+cs_http_map_verb("MapPut", "PUT").
+cs_http_map_verb("MapDelete", "DELETE").
+cs_http_map_verb("MapPatch", "PATCH").
+cs_http_map_group("MapGroup").
+
+// ── HTTP: the client ────────────────────────────────────────────────────────
+// A receiver whose written type is HttpClient, and the verb each of its calls sends.
+// The URL is the first argument of every one of them.
+cs_http_client_type("HttpClient").
+cs_http_client_type("System.Net.Http.HttpClient").
+cs_http_client_method("GetAsync", "GET").
+cs_http_client_method("GetStringAsync", "GET").
+cs_http_client_method("GetStreamAsync", "GET").
+cs_http_client_method("GetByteArrayAsync", "GET").
+cs_http_client_method("GetFromJsonAsync", "GET").
+cs_http_client_method("PostAsync", "POST").
+cs_http_client_method("PostAsJsonAsync", "POST").
+cs_http_client_method("PutAsync", "PUT").
+cs_http_client_method("PutAsJsonAsync", "PUT").
+cs_http_client_method("PatchAsync", "PATCH").
+cs_http_client_method("PatchAsJsonAsync", "PATCH").
+cs_http_client_method("DeleteAsync", "DELETE").
+cs_http_client_method("DeleteFromJsonAsync", "DELETE").
+// IHttpClientFactory hands one out: `factory.CreateClient("name").GetAsync(...)`.
+cs_http_client_factory_method("CreateClient").
+// A declarative client (Refit): the interface method IS the send.
+cs_http_declarative_attr("Get", "GET").
+cs_http_declarative_attr("Post", "POST").
+cs_http_declarative_attr("Put", "PUT").
+cs_http_declarative_attr("Delete", "DELETE").
+cs_http_declarative_attr("Patch", "PATCH").
+
+cs_remote_transport_http("http").
+cs_remote_confidence_route_shape("route_shape").
+cs_http_verb_any("any").
+
+// Routes compare case-insensitively, as ASP.NET routing does, and Soufflé has no
+// lower-case functor.
+cs_lower("A","a"). cs_lower("B","b"). cs_lower("C","c"). cs_lower("D","d"). cs_lower("E","e").
+cs_lower("F","f"). cs_lower("G","g"). cs_lower("H","h"). cs_lower("I","i"). cs_lower("J","j").
+cs_lower("K","k"). cs_lower("L","l"). cs_lower("M","m"). cs_lower("N","n"). cs_lower("O","o").
+cs_lower("P","p"). cs_lower("Q","q"). cs_lower("R","r"). cs_lower("S","s"). cs_lower("T","t").
+cs_lower("U","u"). cs_lower("V","v"). cs_lower("W","w"). cs_lower("X","x"). cs_lower("Y","y").
+cs_lower("Z","z").
+
+// `client.SendAsync(new HttpRequestMessage(HttpMethod.Post, url))`: the message names the
+// verb as a member of HttpMethod and the URL as its second argument.
+cs_http_send_message_method("SendAsync").
+cs_http_request_message_type("HttpRequestMessage").
+cs_http_method_member("Get", "GET").
+cs_http_method_member("Post", "POST").
+cs_http_method_member("Put", "PUT").
+cs_http_method_member("Delete", "DELETE").
+cs_http_method_member("Patch", "PATCH").
+cs_http_method_member("Head", "HEAD").
+cs_http_method_member("Options", "OPTIONS").
+// string methods that return the same path they were given, near enough for routing
+cs_string_passthrough("TrimEnd").
+cs_string_passthrough("TrimStart").
+cs_string_passthrough("Trim").
+cs_string_passthrough("ToLower").
+cs_string_passthrough("ToLowerInvariant").
+
+// the parameter types a wrapper takes a path in
+cs_string_type("string").
+cs_string_type("String").
+cs_string_type("System.String").
+
+// characters that start a query or a fragment, never a path segment
+cs_url_not_path_start("&"). cs_url_not_path_start("?"). cs_url_not_path_start("#").
+cs_url_not_path_start("="). cs_url_not_path_start(":").
+
+// ── MESSAGING: brokers keyed on a topic or queue NAME ───────────────────────
+// A receiver's written type decides which client it is: `IProducer<K, V>` is written
+// with typeName `IProducer`. (Family, used below.)
+cs_msg_client_type("IProducer", "kafka_producer").
+cs_msg_client_type("IConsumer", "kafka_consumer").
+cs_msg_client_type("IModel", "amqp_channel").
+cs_msg_client_type("IChannel", "amqp_channel").
+cs_msg_client_type("ServiceBusClient", "servicebus_client").
+// (family, method, argument index of the name, transport)
+cs_msg_name_send("kafka_producer", "Produce", 0, "kafka").
+cs_msg_name_send("kafka_producer", "ProduceAsync", 0, "kafka").
+cs_msg_name_send("servicebus_client", "CreateSender", 0, "azure_servicebus").
+cs_msg_name_serve("kafka_consumer", "Subscribe", 0, "kafka").
+cs_msg_name_serve("amqp_channel", "BasicConsume", 0, "amqp").
+cs_msg_name_serve("amqp_channel", "BasicConsumeAsync", 0, "amqp").
+cs_msg_name_serve("servicebus_client", "CreateProcessor", 0, "azure_servicebus").
+// RabbitMQ publishes to (exchange, routing key) and a binding maps that to a queue
+cs_amqp_publish("BasicPublish").
+cs_amqp_publish("BasicPublishAsync").
+cs_amqp_bind("QueueBind").
+cs_amqp_bind("QueueBindAsync").
+// Service Bus hands messages to the handler added to this event
+cs_servicebus_handler_event("ProcessMessageAsync").
+
+// ── MESSAGING: buses keyed on the message TYPE ──────────────────────────────
+// A handler implements (interface, method) for its message type; a sender calls one
+// of these methods on one of these receivers with a message instance. MediatR's
+// INotificationHandler and IMediator are deliberately ABSENT: they dispatch in
+// process, and a remote edge there would be a wrong answer: Send and Publish are joined in
+// process by cs_med_dispatch below.
+cs_msg_handler_iface("IConsumer", "Consume", "masstransit").
+cs_msg_handler_iface("IHandleMessages", "Handle", "nservicebus").
+cs_msg_handler_iface("IIntegrationEventHandler", "Handle", "event_bus").
+cs_msg_bus_type("IBus", "masstransit").
+cs_msg_bus_type("IBusControl", "masstransit").
+cs_msg_bus_type("IPublishEndpoint", "masstransit").
+cs_msg_bus_type("ISendEndpoint", "masstransit").
+cs_msg_bus_type("ConsumeContext", "masstransit").
+cs_msg_bus_type("IMessageSession", "nservicebus").
+cs_msg_bus_type("IEndpointInstance", "nservicebus").
+cs_msg_bus_type("IMessageHandlerContext", "nservicebus").
+cs_msg_bus_type("IPipelineContext", "nservicebus").
+cs_msg_bus_type("IEventBus", "event_bus").
+cs_msg_bus_send("Publish").
+cs_msg_bus_send("Send").
+cs_msg_bus_send("SendLocal").
+cs_msg_bus_send("PublishAsync").
+cs_msg_bus_send("SendAsync").
+
+cs_remote_confidence_binding("amqp_binding").
+
+// ── IN PROCESS: a mediator keyed on the request TYPE (dispatch.dl) ─────────
+// `mediator.Send(new GetOrder(id))` runs Handle on the one handler the container holds
+// for GetOrder: `IRequestHandler<GetOrder, R>`, or `IRequestHandler<GetOrder>` when the
+// request answers nothing. `Publish(new OrderPlaced(id))` runs EVERY
+// `INotificationHandler<T>` whose T is OrderPlaced or one of its bases. Same process,
+// same call stack, so the hop is a call edge and never a remote_edge.
+// cs_med_dispatch(SendMethod, HandlerBase, Fan): the handler's method is the one
+// cs_framework_callback (below) already names for HandlerBase, so a handler is an entry
+// point and a sent handler also has its sender. Fan "one": the handler of the exact
+// type (the container registers a request handler for the type it closes, and a base's
+// handler is not looked up for a derived request); "all": every handler of the type and
+// of each of its bases (INotificationHandler<in T> is contravariant); "wrap": a pipeline
+// step, run around the handler for its own request type, and around EVERY request when
+// it is open generic over the request (`TimingBehavior<TReq, TRes> : IPipelineBehavior<TReq, TRes>`).
+cs_med_dispatch("Send", "IRequestHandler", "one").
+cs_med_dispatch("Send", "IPipelineBehavior", "wrap").
+cs_med_dispatch("Send", "IRequestPreProcessor", "wrap").
+cs_med_dispatch("Send", "IRequestPostProcessor", "wrap").
+cs_med_dispatch("CreateStream", "IStreamRequestHandler", "one").
+cs_med_dispatch("CreateStream", "IStreamPipelineBehavior", "wrap").
+cs_med_dispatch("Publish", "INotificationHandler", "all").
+// A test that stubs or verifies the mediator writes the send with an argument MATCHER,
+// `mediator.Send(Arg.Any<GetOrder>())` or `m.Send(It.IsAny<GetOrder>(), ..)` inside a
+// mock setup: nothing is dispatched, so no handler is linked from it.
+cs_mock_arg_matcher("Any").    cs_mock_arg_matcher("Is").      // NSubstitute Arg.*
+cs_mock_arg_matcher("IsAny").  cs_mock_arg_matcher("IsNotNull"). // Moq It.*
+cs_mock_arg_matcher("That").                                     // FakeItEasy A<T>.That
+// the receivers a request or notification is sent through
+cs_med_sender_type("IMediator").
+cs_med_sender_type("ISender").
+cs_med_sender_type("IPublisher").
+cs_med_sender_type("Mediator").
+
+// Kafka clients are built, `new ProducerBuilder<K, V>(config).Build()`, usually into a
+// `var`: the builder's name is what says which client the local holds.
+cs_msg_builder("ProducerBuilder", "kafka_producer").
+cs_msg_builder("DependentProducerBuilder", "kafka_producer").
+cs_msg_builder("ConsumerBuilder", "kafka_consumer").
+
+// A RabbitMQ channel comes from the connection, `await conn.CreateChannelAsync()` in v7
+// and `conn.CreateModel()` before it, usually into a `var`.
+cs_msg_factory("CreateModel", "amqp_channel").
+cs_msg_factory("CreateChannel", "amqp_channel").
+cs_msg_factory("CreateChannelAsync", "amqp_channel").
+// MassTransit request/response: the REQUEST type is the client's own type argument,
+// `IRequestClient<StockChanged>`, and GetResponse<TResponse> names only the reply.
+cs_msg_request_client("IRequestClient", "masstransit").
+cs_msg_request_send("GetResponse").
+
+// The service locator: `var session = services.GetRequiredService<IMessageSession>()`
+// holds the type named by the call's type argument.
+cs_di_resolve("GetRequiredService").
+cs_di_resolve("GetService").
+
+// ── ENTRY POINTS (entry-points.dl) ─────────────────────────────────────────
+// A test framework runs these methods; nothing in the project calls them.
+cs_test_attr("Fact").          cs_test_attr("Theory").                        // xUnit
+cs_test_attr("Test").          cs_test_attr("TestCase").  cs_test_attr("TestCaseSource").  // NUnit
+cs_test_attr("TestMethod").    cs_test_attr("DataTestMethod").                // MSTest
+// set-up and tear-down hooks the same runners call around them
+cs_test_lifecycle_attr("SetUp").            cs_test_lifecycle_attr("TearDown").
+cs_test_lifecycle_attr("OneTimeSetUp").     cs_test_lifecycle_attr("OneTimeTearDown").
+cs_test_lifecycle_attr("TestInitialize").   cs_test_lifecycle_attr("TestCleanup").
+cs_test_lifecycle_attr("ClassInitialize").  cs_test_lifecycle_attr("ClassCleanup").
+cs_test_lifecycle_attr("AssemblyInitialize"). cs_test_lifecycle_attr("AssemblyCleanup").
+// cs_framework_callback(Base, Method, Reason): a framework calls Method on a type that
+// derives from Base or implements it, directly or through the project's own bases.
+// Base is the written simple name without type arguments. Method "*" is every public
+// instance method, which is how SignalR dispatches a hub call by name; "Prefix*" is every
+// public instance method whose name starts with Prefix (Razor Pages' `OnGet`, `OnPostAsync`).
+// A hosted service: the host calls these on the type it registered.
+cs_framework_callback("BackgroundService", "ExecuteAsync", "lifecycle").
+cs_framework_callback("BackgroundService", "StartAsync", "lifecycle").
+cs_framework_callback("BackgroundService", "StopAsync", "lifecycle").
+cs_framework_callback("IHostedService", "ExecuteAsync", "lifecycle").
+cs_framework_callback("IHostedService", "StartAsync", "lifecycle").
+cs_framework_callback("IHostedService", "StopAsync", "lifecycle").
+// .NET 8: the host calls these around StartAsync and StopAsync.
+cs_framework_callback("IHostedLifecycleService", "StartingAsync", "lifecycle").
+cs_framework_callback("IHostedLifecycleService", "StartedAsync", "lifecycle").
+cs_framework_callback("IHostedLifecycleService", "StartAsync", "lifecycle").
+cs_framework_callback("IHostedLifecycleService", "StopAsync", "lifecycle").
+cs_framework_callback("IHostedLifecycleService", "StoppingAsync", "lifecycle").
+cs_framework_callback("IHostedLifecycleService", "StoppedAsync", "lifecycle").
+// Options: OptionsFactory<T>.Create runs every registered setup class on first `.Value`.
+cs_framework_callback("IConfigureOptions", "Configure", "framework_hook").
+cs_framework_callback("IConfigureNamedOptions", "Configure", "framework_hook").
+cs_framework_callback("IPostConfigureOptions", "PostConfigure", "framework_hook").
+cs_framework_callback("IValidateOptions", "Validate", "framework_hook").
+// ASP.NET Core: view components, authorization handlers, model binders.
+cs_framework_callback("ViewComponent", "Invoke", "framework_hook").
+cs_framework_callback("ViewComponent", "InvokeAsync", "framework_hook").
+cs_framework_callback("AuthorizationHandler", "HandleRequirementAsync", "framework_hook").
+cs_framework_callback("AuthorizationHandler", "HandleAsync", "framework_hook").
+cs_framework_callback("IAuthorizationHandler", "HandleAsync", "framework_hook").
+cs_framework_callback("IModelBinder", "BindModelAsync", "framework_hook").
+cs_framework_callback("IModelBinderProvider", "GetBinder", "framework_hook").
+// SignalR: a client invokes any public hub method by name.
+cs_framework_callback("Hub", "*", "hub").
+// gRPC: a registered interceptor's handlers wrap every call.
+cs_framework_callback("Interceptor", "UnaryServerHandler", "framework_hook").
+cs_framework_callback("Interceptor", "ClientStreamingServerHandler", "framework_hook").
+cs_framework_callback("Interceptor", "ServerStreamingServerHandler", "framework_hook").
+cs_framework_callback("Interceptor", "DuplexStreamingServerHandler", "framework_hook").
+cs_framework_callback("Interceptor", "BlockingUnaryCall", "framework_hook").
+cs_framework_callback("Interceptor", "AsyncUnaryCall", "framework_hook").
+cs_framework_callback("Interceptor", "AsyncServerStreamingCall", "framework_hook").
+cs_framework_callback("Interceptor", "AsyncClientStreamingCall", "framework_hook").
+cs_framework_callback("Interceptor", "AsyncDuplexStreamingCall", "framework_hook").
+// FluentValidation: the container builds every scanned validator, and the library
+// calls these overrides while validating.
+cs_framework_callback("AbstractValidator", "<constructor>", "framework_hook").
+cs_framework_callback("AbstractValidator", "<primary-constructor>", "framework_hook").
+cs_framework_callback("AbstractValidator", "PreValidate", "framework_hook").
+cs_framework_callback("AbstractValidator", "RaiseValidationException", "framework_hook").
+cs_framework_callback("PropertyValidator", "IsValid", "framework_hook").
+cs_framework_callback("PropertyValidator", "get_Name", "framework_hook").
+cs_framework_callback("PropertyValidator", "GetDefaultMessageTemplate", "framework_hook").
+cs_framework_callback("AsyncPropertyValidator", "IsValidAsync", "framework_hook").
+cs_framework_callback("AsyncPropertyValidator", "get_Name", "framework_hook").
+cs_framework_callback("AsyncPropertyValidator", "GetDefaultMessageTemplate", "framework_hook").
+// EF Core: the model builder, migrations, save interceptors and design-time tooling.
+cs_framework_callback("DbContext", "OnModelCreating", "orm_hook").
+cs_framework_callback("DbContext", "OnConfiguring", "orm_hook").
+cs_framework_callback("DbContext", "ConfigureConventions", "orm_hook").
+cs_framework_callback("IdentityDbContext", "OnModelCreating", "orm_hook").
+cs_framework_callback("IdentityDbContext", "OnConfiguring", "orm_hook").
+cs_framework_callback("IdentityUserContext", "OnModelCreating", "orm_hook").
+cs_framework_callback("IdentityUserContext", "OnConfiguring", "orm_hook").
+cs_framework_callback("IEntityTypeConfiguration", "Configure", "orm_hook").
+cs_framework_callback("Migration", "Up", "orm_hook").
+cs_framework_callback("Migration", "Down", "orm_hook").
+cs_framework_callback("Migration", "BuildTargetModel", "orm_hook").
+cs_framework_callback("ModelSnapshot", "BuildModel", "orm_hook").
+cs_framework_callback("IDesignTimeDbContextFactory", "CreateDbContext", "orm_hook").
+// Razor Pages: a request runs the page model's On<Verb>[Handler][Async] method.
+cs_framework_callback("PageModel", "OnGet*", "http").
+cs_framework_callback("PageModel", "OnPost*", "http").
+cs_framework_callback("PageModel", "OnPut*", "http").
+cs_framework_callback("PageModel", "OnDelete*", "http").
+cs_framework_callback("PageModel", "OnPatch*", "http").
+cs_framework_callback("PageModel", "OnHead*", "http").
+cs_framework_callback("PageModel", "OnOptions*", "http").
+cs_framework_callback("PageModel", "OnPageHandlerSelected", "framework_hook").
+cs_framework_callback("PageModel", "OnPageHandlerExecuting", "framework_hook").
+cs_framework_callback("PageModel", "OnPageHandlerExecuted", "framework_hook").
+cs_framework_callback("PageModel", "OnPageHandlerExecutionAsync", "framework_hook").
+// MediatR: the mediator resolves the handler for a request or notification type from the
+// container and calls it in process. An entry point, not a remote edge (see above).
+cs_framework_callback("IRequestHandler", "Handle", "framework_hook").
+cs_framework_callback("INotificationHandler", "Handle", "framework_hook").
+cs_framework_callback("IStreamRequestHandler", "Handle", "framework_hook").
+cs_framework_callback("IPipelineBehavior", "Handle", "framework_hook").
+cs_framework_callback("IStreamPipelineBehavior", "Handle", "framework_hook").
+cs_framework_callback("IRequestPreProcessor", "Process", "framework_hook").
+cs_framework_callback("IRequestPostProcessor", "Process", "framework_hook").
+cs_framework_callback("IRequestExceptionHandler", "Handle", "framework_hook").
+cs_framework_callback("IRequestExceptionAction", "Execute", "framework_hook").
+// Disposal: the container disposes what it built, and `using` disposes the rest, with no
+// written call to Dispose in either case.
+cs_framework_callback("IDisposable", "Dispose", "framework_hook").
+cs_framework_callback("IAsyncDisposable", "DisposeAsync", "framework_hook").
+cs_framework_save_hook("SavingChanges").     cs_framework_save_hook("SavingChangesAsync").
+cs_framework_save_hook("SavedChanges").      cs_framework_save_hook("SavedChangesAsync").
+cs_framework_save_hook("SaveChangesFailed"). cs_framework_save_hook("SaveChangesFailedAsync").
+cs_framework_save_hook("SaveChangesCanceled"). cs_framework_save_hook("SaveChangesCanceledAsync").
+cs_framework_save_hook("ThrowingConcurrencyException"). cs_framework_save_hook("ThrowingConcurrencyExceptionAsync").
+cs_framework_callback("SaveChangesInterceptor", n, "orm_hook") :- cs_framework_save_hook(n).
+cs_framework_callback("ISaveChangesInterceptor", n, "orm_hook") :- cs_framework_save_hook(n).
+// EF Core: a command interceptor runs around every command the context sends.
+cs_framework_command_hook("ReaderExecuting").   cs_framework_command_hook("ReaderExecutingAsync").
+cs_framework_command_hook("ReaderExecuted").    cs_framework_command_hook("ReaderExecutedAsync").
+cs_framework_command_hook("NonQueryExecuting"). cs_framework_command_hook("NonQueryExecutingAsync").
+cs_framework_command_hook("NonQueryExecuted").  cs_framework_command_hook("NonQueryExecutedAsync").
+cs_framework_command_hook("ScalarExecuting").   cs_framework_command_hook("ScalarExecutingAsync").
+cs_framework_command_hook("ScalarExecuted").    cs_framework_command_hook("ScalarExecutedAsync").
+cs_framework_command_hook("CommandFailed").     cs_framework_command_hook("CommandFailedAsync").
+cs_framework_callback("DbCommandInterceptor", n, "orm_hook") :- cs_framework_command_hook(n).
+cs_framework_callback("IDbCommandInterceptor", n, "orm_hook") :- cs_framework_command_hook(n).
+// ASP.NET Core: an endpoint filter runs around every endpoint it is added to, and a
+// factory-activated middleware around every request.
+cs_framework_callback("IEndpointFilter", "InvokeAsync", "framework_hook").
+cs_framework_callback("IMiddleware", "InvokeAsync", "framework_hook").
+
+// ── PIPELINE REGISTRATION (pipelines.dl) ───────────────────────────────────
+// cs_pipeline_register(Method, ReceiverMember, Form): a call that puts a component into a
+// framework pipeline, whose hooks (cs_framework_callback above) the framework then runs.
+// ReceiverMember "*" is any receiver; otherwise the receiver must be a member access of
+// that name (`options.Interceptors.Add<T>()`: a bare `Add` is every list in the program).
+// Form "type" is the call's type argument, `AddEndpointFilter<T>()`; "value" is an
+// argument whose type is known, `AddEndpointFilter(new T(..))`,
+// `AddInterceptors(sp.GetRequiredService<T>())`.
+cs_pipeline_register("AddHostedService", "*", "type").
+cs_pipeline_register("AddEndpointFilter", "*", "type").
+cs_pipeline_register("AddEndpointFilter", "*", "value").
+cs_pipeline_register("UseMiddleware", "*", "type").
+cs_pipeline_register("AddInterceptor", "*", "type").          // a gRPC client's builder
+cs_pipeline_register("AddInterceptor", "*", "value").
+cs_pipeline_register("Add", "Interceptors", "type").          // a gRPC server's options
+cs_pipeline_register("Add", "Interceptors", "value").
+cs_pipeline_register("AddInterceptors", "*", "value").        // an EF Core context's options
+// What a registered component WRAPS, beyond being called: (Method, ReceiverMember, Scope).
+// "route": the endpoint it is added to, or every endpoint of the route group it is added
+// to (nested groups too). "grpc_host": every rpc of every service the same file maps
+// with cs_grpc_map_service, which is where a host both configures AddGrpc and maps.
+cs_pipeline_wraps("AddEndpointFilter", "*", "route").
+cs_pipeline_wraps("Add", "Interceptors", "grpc_host").
+cs_grpc_map_service("MapGrpcService").
+// EF Core runs every save interceptor added with AddInterceptors when a context saves:
+// the synchronous hooks on SaveChanges, the Async ones on SaveChangesAsync.
+cs_ef_interceptor_register("AddInterceptors").
+cs_ef_save_call("SaveChanges", "sync").
+cs_ef_save_call("SaveChangesAsync", "async").
+// the framework bases a DbContext is written against
+cs_ef_context_base("DbContext").
+cs_ef_context_base("IdentityDbContext").
+cs_ef_context_base("IdentityUserContext").

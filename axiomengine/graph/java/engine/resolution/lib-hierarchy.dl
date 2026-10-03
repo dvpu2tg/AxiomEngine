@@ -1,0 +1,389 @@
+// ============================================================================
+// Resolution · LIBRARY HIERARCHY  (lib -> lib extends/implements, scoped)
+//
+// The library-internal supertype closure, unioned into type_parent/type_ancestor so
+// the exported method_name_in_type is sound for inherited library methods. Without
+// it, a call to an inherited lib method (list.stream(), declared up in Collection,
+// not ArrayList) resolves to nothing and the boundary edge is silently dropped —
+// the exact analog of an interface call reaching only the empty abstract stub, which
+// is why CHA lives in Engine I too.
+//
+// SCOPED to the statically-reached lib slice: only lib types the client actually
+// references (type_ref_resolves "lib") and their transitive lib supertypes. Engine II
+// deepens this on demand when the call-chain fixpoint reaches lib types beyond the
+// static slice.
+//
+// The oracle ships these refs UNRESOLVED (referencedTypeRegistryLinkHash is empty),
+// so the super/interface name is resolved here, three ways (matching how the JDK
+// actually writes them): same-package (AbstractList), java.lang (Cloneable), and
+// inline-FQN (java.io.Serializable). Same-package uses the precompute+equi-join on
+// package (lib_type_pkg) — never cat-of-both-sides.
+//
+// lib_type_reference (18): 1 context 2 typeRegistryLinkHash(sub) 7 depth
+//   8 typeName 9 completeTypeName
+// lib_type (14): 0 name 1 qualifiedName 6 typePlacement 13 hash
+// ============================================================================
+
+// ── reached_lib(TypeHash) — the lib slice in scope ──────────────────────────
+// Seed: lib types the client references directly. Climb: their lib supertypes, and the
+// base return types of their methods (so a chain deepens — Collection.stream returns
+// Stream, whose map() returns Stream, whose collect() ... each hop's owner must be
+// reached for its return AND its inherited-method dispatch to resolve). Monotone
+// recursion over the finite lib type graph reachable from client references.
+reached_lib(t) :- type_ref_resolves("lib", _, t).
+reached_lib(t) :- reached_lib(sub), lib_type_parent(sub, t).
+reached_lib(t) :- lib_method_return_type(_, t).
+// A type reached only as a nested TYPE ARGUMENT of a return — `Map#entrySet()` returns
+// `Set<Map.Entry<K,V>>`, and Map.Entry is named nowhere else. Without this seed the type is
+// outside the lib slice, so lib_method_ret_tvar never fires for its `getValue()` and the call on
+// the result stays untyped even though every binding for it has been computed.
+// Monotone recursion (lib_arg_type_at is reached-scoped in turn) over the finite lib type graph.
+reached_lib(t) :- lib_arg_type_at(_, _, t).
+// EXPRESSION-LEVEL seed: a library type named ONLY as a static qualifier inside an expression
+// (System.out.println, Files.exists, Collectors.toList) produces NO type REFERENCE in the IR —
+// the parser records it as an IDENTIFIER_REFERENCE with referencedEntityKind=TYPE and the
+// resolved name in potentialQualifiedName. Without this seed such a type is outside the lib
+// slice, so lib_field_ref/lib_method_ref never fire for it and a field-access receiver like
+// `System.out` cannot be typed (the call then lands as ambiguous_unknown). Reads only base
+// facts (java_expression + lib_type) so it adds NO cycle: reached_lib stays outside the
+// expr_type -> field_type_resolves -> lib_field_ref -> reached_lib loop.
+// java_expression (25): 15 referencedEntityKind 18 potentialQualifiedName
+// lib_type (14): 2 qualifiedName 14 hash
+reached_lib(t) :- java_expression(_, _, _, _, _, _, _, _, _, _, _, _, _, _, "TYPE", _, _, qname, _, _, _, _, _, _, _),
+    qname != "",
+    lib_type(_, qname, _, _, _, _, _, _, _, _, _, _, _, t).
+
+// ── lib_type_pkg(TypeHash, Package) — precomputed once (packaged lib types) ──
+// A top-level type's package is its qualifiedName minus its name. A nested type
+// takes the package of the top-level type it sits in (line-range containment): a
+// library IR may name it by its full chain (java.util.Map.Entry), whose prefix
+// `java.util.Map.` is not a package, or by the older flattened form, which happens
+// to strip correctly; the containment rule is right under both.
+lib_type_pkg(t, pkg) :- lib_type(name, qname, _, _, _, _, "TOP_LEVEL_PLACEMENT", _, _, _, _, _, _, t),
+    plen = strlen(qname) - strlen(name),
+    plen > 0,
+    pkg = substr(qname, 0, plen).
+lib_type_pkg(t, pkg) :- type_in_type("lib", t, top),
+    lib_type(_, _, _, _, _, _, "TOP_LEVEL_PLACEMENT", _, _, _, _, _, _, top),
+    lib_type_pkg(top, pkg).
+
+// ── String precomputes — hoist the concatenations out of the resolution rules ───────
+// The java.lang and wildcard-import paths below match a constructed qualifiedName /
+// package string. Building that string inside the rule mints a fresh symbol on every
+// evaluation and, in the recursive strata, dominates runtime via symbol-table growth
+// (encode/tryGrow). Constructing it ONCE here, in a leaf stratum over base facts, lets
+// every consumer equi-join an already-interned string instead — the same equi-join
+// discipline the same-package path already uses via lib_type_pkg.
+//
+// lib_java_lang_type(SimpleName, TypeHash): TOP_LEVEL lib types whose qualifiedName is
+// exactly "java.lang."+name (Object, String, Cloneable, …), keyed by simple name.
+lib_java_lang_type(name, ft) :- lib_type(name, qname, _, _, _, _, "TOP_LEVEL_PLACEMENT", _, _, _, _, _, _, ft),
+    qname = cat("java.lang.", name).
+
+// lib_import_pkg_dot(File, PackageDot): a TYPE_ON_DEMAND (wildcard) import's package
+// with the trailing dot appended once, keyed by the importing file, so the wildcard
+// paths equi-join lib_type_pkg (which already carries the trailing dot) on pkgDot.
+lib_import_pkg_dot(file, pkgDot) :- lib_import("TYPE_ON_DEMAND", _, pkg, _, file, _, _, _, _, _, _),
+    pkgDot = cat(pkg, ".").
+
+// ── lib_super_ref(Sub, SuperName, CompleteName) — depth-0 super/interface refs
+// on reached lib types ──────────────────────────────────────────────────────
+lib_super_ref(sub, name, complete) :- reached_lib(sub),
+    lib_type_reference(_, "SUPER_TYPE", sub, _, _, _, _, "0", name, complete, _, _, _, _, _, _, _, _).
+lib_super_ref(sub, name, complete) :- reached_lib(sub),
+    lib_type_reference(_, "IMPLEMENTS_INTERFACE", sub, _, _, _, _, "0", name, complete, _, _, _, _, _, _, _, _).
+
+// ── lib_toplevel_in_pkg(Package, Name, TypeHash) — a (package, simpleName) composite
+// index over TOP_LEVEL lib types, precomputed once. Lets the same-package and wildcard
+// resolutions do a direct (pkg, name) -> type lookup instead of enumerating every type
+// in a package and filtering by name (which materializes all package-mates per sub).
+lib_toplevel_in_pkg(pkg, name, t) :- lib_type(name, _, _, _, _, _, "TOP_LEVEL_PLACEMENT", _, _, _, _, _, _, t),
+    lib_type_pkg(t, pkg).
+
+// ── lib_type_parent(Sub, Super) — the resolved edge ─────────────────────────
+// Same-package: super is the TOP_LEVEL lib type named name in the sub's package —
+// a direct (pkg, name) index lookup, not a package enumeration.
+lib_type_parent(sub, super) :- lib_super_ref(sub, name, _),
+    lib_type_pkg(sub, pkg),
+    lib_toplevel_in_pkg(pkg, name, super).
+// java.lang implicit (Cloneable, Object, …).
+lib_type_parent(sub, super) :- lib_super_ref(sub, name, _),
+    lib_java_lang_type(name, super).
+// Inline-FQN (completeTypeName is the full qualifiedName, e.g. java.io.Serializable).
+lib_type_parent(sub, super) :- lib_super_ref(sub, name, complete),
+    complete != name,
+    lib_type(name, complete, _, _, _, _, _, _, _, _, _, _, _, super).
+
+// Cross-package via SINGLE_TYPE import (import a.b.Super) — the dominant case in the
+// JDK internals (sun.*/jdk.* types extending java.* by import). The oracle ships
+// these unresolved, so resolve the super name through the sub's own file imports,
+// exactly like the client Case 1: the imported path IS the super's qualifiedName.
+lib_type_parent(sub, super) :- lib_super_ref(sub, name, _),
+    lib_type(_, _, _, _, _, _, _, subFile, _, _, _, _, _, sub),
+    lib_import("SINGLE_TYPE", imp, _, name, subFile, _, _, _, _, _, _),
+    lib_type(name, imp, _, _, _, _, "TOP_LEVEL_PLACEMENT", _, _, _, _, _, _, super).
+
+// Cross-package via wildcard import (import a.b.*) — the super is a TOP_LEVEL type in
+// a star-imported package of the sub's file. Equi-join on the package (lib_type_pkg,
+// dot-normalized) rather than cat-of-both-sides.
+lib_type_parent(sub, super) :- lib_super_ref(sub, name, _),
+    lib_type(_, _, _, _, _, _, _, subFile, _, _, _, _, _, sub),
+    lib_import_pkg_dot(subFile, pkgDot),
+    lib_toplevel_in_pkg(pkgDot, name, super).
+
+// ── Union into the shared hierarchy ─────────────────────────────────────────
+// type_ancestor (type-hierarchy.dl) already closes transitively over type_parent,
+// so feeding lib edges in here makes the exported type_ancestor / method_name_in_type
+// cover inherited library methods across the reached slice.
+type_parent(sub, super) :- lib_type_parent(sub, super).
+
+// ============================================================================
+// Library FIELD types — a lib field's declared type, resolved lib-side.
+//
+// Needed to type a field-access receiver whose field lives on a library type
+// (libObj.field.m(), or a client class inheriting a library field). The oracle
+// ships FIELD_TYPE references unresolved and, unlike super-types, mostly by SIMPLE
+// name (completeTypeName == typeName), so the field type is resolved through the
+// declaring type's own file/package — the SAME five paths as lib_type_parent,
+// anchored on the field's owner type instead of the sub type. Scoped to reached lib
+// types. The resolved type flows out as field_type_resolves prov="lib", which the
+// field-access rules (expr-type.dl) consume exactly like the client case.
+//
+// lib_field (14): 0 name 8 typeRegistryLinkHash(owner) 13 hash
+// lib_type_reference (18): 1 context 7 depth 8 typeName 9 completeTypeName
+//   15 typeReferenceOwnerHash(entity) 16 referenceOwnerKind 17 hash(ref)
+// ============================================================================
+
+// ── lib_field_ref(Field, OwnerType, Name, CompleteName, Ref) — a reached lib
+// field's depth-0 declared-type reference ────────────────────────────────────
+lib_field_ref(field, owner, name, complete, ref) :- reached_lib(owner),
+    lib_field(_, _, _, _, _, _, _, _, owner, _, _, _, _, field),
+    lib_type_reference(_, "FIELD_TYPE", _, _, _, _, _, "0", name, complete, _, _, _, _, _, field, "FIELD", ref).
+
+// Same-package: field type is a TOP_LEVEL lib type in the owner's package.
+field_type_resolves("lib", field, ref, ft) :- lib_field_ref(field, owner, name, _, ref),
+    lib_type_pkg(owner, pkg),
+    lib_type_pkg(ft, pkg),
+    lib_type(name, _, _, _, _, _, "TOP_LEVEL_PLACEMENT", _, _, _, _, _, _, ft).
+// java.lang implicit.
+field_type_resolves("lib", field, ref, ft) :- lib_field_ref(field, _, name, _, ref),
+    lib_java_lang_type(name, ft).
+// Inline-FQN (completeTypeName is the full qualifiedName).
+field_type_resolves("lib", field, ref, ft) :- lib_field_ref(field, _, name, complete, ref),
+    complete != name,
+    lib_type(name, complete, _, _, _, _, _, _, _, _, _, _, _, ft).
+// Cross-package via SINGLE_TYPE import in the owner's file.
+field_type_resolves("lib", field, ref, ft) :- lib_field_ref(field, owner, name, _, ref),
+    lib_type(_, _, _, _, _, _, _, ownerFile, _, _, _, _, _, owner),
+    lib_import("SINGLE_TYPE", imp, _, name, ownerFile, _, _, _, _, _, _),
+    lib_type(name, imp, _, _, _, _, "TOP_LEVEL_PLACEMENT", _, _, _, _, _, _, ft).
+// Cross-package via wildcard import in the owner's file.
+field_type_resolves("lib", field, ref, ft) :- lib_field_ref(field, owner, name, _, ref),
+    lib_type(_, _, _, _, _, _, _, ownerFile, _, _, _, _, _, owner),
+    lib_import_pkg_dot(ownerFile, pkgDot),
+    lib_type_pkg(ft, pkgDot),
+    lib_type(name, _, _, _, _, _, "TOP_LEVEL_PLACEMENT", _, _, _, _, _, _, ft).
+
+// ============================================================================
+// LIBRARY METHOD RETURN TYPES — for chained calls off a lib method (libCall().next()).
+// A lib method's declared return type ships UNRESOLVED (simple name, empty link), so
+// resolve it here exactly like lib field types, feeding lib_method_return_type which
+// expr-type.dl consumes to type a chained receiver. Base (depth-0) type only — a
+// generic return Stream<E> types the receiver as Stream (dispatch needs only the base;
+// the type argument E is handled by type-argument substitution in expr-type.dl).
+//
+// lib_method (22): 4 filePath 7 typeRegistryLinkHash(owner) 21 methodRegistryUniqueHash
+// ============================================================================
+
+// lib_method_ret_ref(Method, Owner, File, Name, CompleteName) — a reached lib method's
+// depth-0 CONCRETE return-type reference (CLASS/INTERFACE/PARAMETERIZED — the
+// TYPE_VARIABLE case is handled by substitution, not here). Scoped to reached lib types.
+lib_method_ret_ref(m, owner, file, name, complete) :- lib_method(_, _, _, _, file, _, _, owner, _, _, _, _, _, _, _, _, _, _, _, _, _, m),
+    reached_lib(owner),
+    lib_type_reference(k, "METHOD_RETURN", _, _, _, _, _, "0", name, complete, _, _, _, _, _, m, "METHOD", _),
+    k != "TYPE_VARIABLE",
+    k != "PRIMITIVE".
+
+// Same-package: return type is a TOP_LEVEL lib type in the owner's package.
+lib_method_return_type(m, rt) :- lib_method_ret_ref(m, owner, _, name, _),
+    lib_type_pkg(owner, pkg),
+    lib_type_pkg(rt, pkg),
+    lib_type(name, _, _, _, _, _, "TOP_LEVEL_PLACEMENT", _, _, _, _, _, _, rt).
+// java.lang implicit.
+lib_method_return_type(m, rt) :- lib_method_ret_ref(m, _, _, name, _),
+    lib_java_lang_type(name, rt).
+// Inline-FQN (completeTypeName is the full qualifiedName).
+lib_method_return_type(m, rt) :- lib_method_ret_ref(m, _, _, name, complete),
+    complete != name,
+    lib_type(name, complete, _, _, _, _, _, _, _, _, _, _, _, rt).
+// Cross-package via SINGLE_TYPE import in the method's file (the Stream case:
+// java.util.Collection.stream returns java.util.stream.Stream, imported in the file).
+lib_method_return_type(m, rt) :- lib_method_ret_ref(m, _, file, name, _),
+    lib_import("SINGLE_TYPE", imp, _, name, file, _, _, _, _, _, _),
+    lib_type(name, imp, _, _, _, _, "TOP_LEVEL_PLACEMENT", _, _, _, _, _, _, rt).
+// Cross-package via wildcard import in the method's file.
+lib_method_return_type(m, rt) :- lib_method_ret_ref(m, _, file, name, _),
+    lib_import_pkg_dot(file, pkgDot),
+    lib_type_pkg(rt, pkgDot),
+    lib_type(name, _, _, _, _, _, "TOP_LEVEL_PLACEMENT", _, _, _, _, _, _, rt).
+
+// ── lib_type_ref_resolves(Prov, Ref, Type) — a LIBRARY type reference, keyed by the REFERENCE ──
+// Declared in decls_all.dl, read at six sites (lambda.dl and expr-type.dl), and derived by nothing
+// — so every rule reading it derived nothing and Souffle reported no error. The two consumers that
+// matter are the library halves of the paired clauses that type a receiver from a method's RETURN:
+// the client half reads method_return_type_resolves, which carries its reference, and the library
+// half had no equivalent.
+//
+// The resolution itself already exists — lib_method_return_type walks the same five name paths
+// (same-package, java.lang, inline-FQN, single-type import, wildcard import) — it just discards the
+// reference hash, which is precisely what a consumer needs in order to read TYPE ARGUMENTS off that
+// reference. lib_ret_ref_hash already carries it, so the two only had to be joined.
+lib_type_ref_resolves("lib", retRef, rt) :- lib_ret_ref_hash(m, retRef),
+    lib_method_return_type(m, rt).
+// A library FIELD's declared type is resolved by the same five paths and already carries its
+// reference, so it comes along for free.
+lib_type_ref_resolves("lib", ref, ft) :- field_type_resolves("lib", _, ref, ft).
+
+// ── A NESTED library type named `Outer.Inner` ──────────────────────────────────────────────────
+// A library IR parsed before nested types were named by their chain stores `Map.Entry` as
+// java.util.Entry — a name shared, in java.base alone, by the Entry of Map, Hashtable, TreeMap,
+// EnumMap, LinkedHashMap, WeakHashMap and IdentityHashMap. A reference writes typeName=Entry and
+// completeTypeName=Map.Entry, so the enclosing type IS available on the reference even when the
+// registry cannot express it. Resolving through the nesting works under either naming, and it is consistent
+// across both ground-truth readers — so the enclosing type is recovered here instead.
+//
+// filePath, not fileName: a nested type is declared in the same FILE as its enclosing type, and
+// filePath is unique per module where fileName is not (many modules ship a Map.java). The outer
+// type is found by NAME rather than by assuming the file is named after it, so the resolution does
+// not depend on the one-public-type-per-file convention.
+//
+// lib_type (14): 1 name 7 typePlacement 8 filePath 14 hash
+lib_nested_in(outer, inner, t) :-
+    lib_type(outer, _, _, _, _, _, "TOP_LEVEL_PLACEMENT", fp, _, _, _, _, _, _),
+    lib_type(inner, _, _, _, _, _, plc, fp, _, _, _, _, _, t),
+    plc != "TOP_LEVEL_PLACEMENT", plc != "ANONYMOUS_PLACEMENT".
+
+// UNIQUE resolutions only. Measured over the platform IR, `Outer.Inner` references resolve
+// uniquely 10376 times, ambiguously 116, and not at all 1854 (the enclosing type lives in another
+// module). Emitting the 116 would bind a type parameter to a type the reference does not name, and
+// a wrong BINDING produces a wrong callee rather than an extra one — so they are dropped.
+lib_nested_count(outer, inner, n) :- lib_nested_in(outer, inner, _),
+    n = count : { lib_nested_in(outer, inner, _) }.
+lib_nested_type(outer, inner, t) :- lib_nested_in(outer, inner, t), lib_nested_count(outer, inner, 1).
+
+// ── A depth-1 TYPE ARGUMENT written on a library reference ─────────────────────────────────────
+// The argument is a name in the declaring file exactly as the base type is, so it resolves by the
+// same paths lib_method_return_type walks — with the nested form above added, which is the one the
+// JDK's own generic signatures lean on (`Set<Map.Entry<K,V>>`).
+// lib_type_reference (18): 6 parentRef 7 position 8 depth 9 typeName 10 completeTypeName 18 hash
+lib_arg_ref(baseRef, pos, owner, file, name, complete, argRef) :-
+    lib_method(_, _, _, _, file, _, _, owner, _, _, _, _, _, _, _, _, _, _, _, _, _, m),
+    lib_ret_ref_hash(m, baseRef),
+    lib_type_reference(k, _, _, _, _, baseRef, pos, "1", name, complete, _, _, _, _, _, _, _, argRef),
+    k != "TYPE_VARIABLE", k != "PRIMITIVE".
+
+// same-package
+lib_arg_type_at(baseRef, pos, t) :- lib_arg_ref(baseRef, pos, owner, _, name, _, _),
+    lib_type_pkg(owner, pkg), lib_type_pkg(t, pkg),
+    lib_type(name, _, _, _, _, _, "TOP_LEVEL_PLACEMENT", _, _, _, _, _, _, t).
+// java.lang implicit
+lib_arg_type_at(baseRef, pos, t) :- lib_arg_ref(baseRef, pos, _, _, name, _, _),
+    lib_java_lang_type(name, t).
+// inline-FQN
+lib_arg_type_at(baseRef, pos, t) :- lib_arg_ref(baseRef, pos, _, _, name, complete, _),
+    complete != name,
+    lib_type(name, complete, _, _, _, _, _, _, _, _, _, _, _, t).
+// nested `Outer.Inner`
+lib_arg_type_at(baseRef, pos, t) :- lib_arg_ref(baseRef, pos, _, _, name, complete, _),
+    lib_nested_type(outer, name, t),
+    complete = cat(outer, cat(".", name)).
+// cross-package via SINGLE_TYPE import in the declaring file
+lib_arg_type_at(baseRef, pos, t) :- lib_arg_ref(baseRef, pos, _, file, name, _, _),
+    lib_import("SINGLE_TYPE", imp, _, name, file, _, _, _, _, _, _),
+    lib_type(name, imp, _, _, _, _, "TOP_LEVEL_PLACEMENT", _, _, _, _, _, _, t).
+// cross-package via wildcard import in the declaring file
+lib_arg_type_at(baseRef, pos, t) :- lib_arg_ref(baseRef, pos, _, file, name, _, _),
+    lib_import_pkg_dot(file, pkgDot),
+    lib_type_pkg(t, pkgDot),
+    lib_type(name, _, _, _, _, _, "TOP_LEVEL_PLACEMENT", _, _, _, _, _, _, t).
+
+// ── lib_type_arg_binding(BaseRef, BaseType, ParamName, ArgType) — the library mirror of
+// type_arg_binding, for a concrete type argument written on a library reference ─────────────────
+// Declared, read, and derived by nothing until #253, which wired it to the inline-FQN path alone.
+// The argument is WRITTEN on the reference, so keying the binding on that reference is sound: it
+// is the same fact at every call site, unlike a binding inferred FROM one.
+lib_type_arg_binding(baseRef, baseType, paramName, argType) :- lib_type_ref_resolves(_, baseRef, baseType),
+    lib_type_parameter(paramName, pos, _, _, _, _, baseType, _),
+    lib_arg_type_at(baseRef, pos, argType).
+// Transitive climb to each SUPERTYPE via the positional rename, the exact mirror of the client
+// clause in type-arg-binding.dl. Without it a binding on Set never reaches Iterable, so
+// `for (var e : map.entrySet())` could not read the element type off the iterable.
+lib_type_arg_binding(ref, super, superParam, argType) :- lib_type_arg_binding(ref, sub, subVar, argType),
+    super_tvar_rename(sub, super, superParam, subVar).
+
+// ── The NESTED argument's OWN parameters: Set<Entry<K,V>> ───────────────────────────────────────
+// The rule above gives Set's element type (Entry). Entry's own K and V sit one level further down,
+// at depth 2, written as the OWNER's type variables — `Map<K,V>#entrySet()` returns
+// `Set<Map.Entry<K,V>>`, where K and V are Map's. So the receiver's own bindings substitute into
+// them: for `map.entrySet()` on a `Map<String,Widget>`, Entry.K = String and Entry.V = Widget.
+//
+// Keyed on the CALL EXPRESSION, never on the return reference. #253 learned this the expensive way:
+// a library method has ONE return reference shared by every call site in the program, so a binding
+// inferred at one site is read by all the others. expr_arg_binding is per-expression.
+lib_ret_nested_param(m, nested, nestedParam, ownerTv) :- lib_ret_ref_hash(m, baseRef),
+    lib_type_reference(_, _, _, _, _, baseRef, pos, "1", _, _, _, _, _, _, _, _, _, argRef),
+    lib_arg_type_at(baseRef, pos, nested),
+    lib_type_parameter(nestedParam, q, _, _, _, _, nested, _),
+    lib_type_reference("TYPE_VARIABLE", _, _, _, _, argRef, q, "2", _, _, ownerTv, _, _, _, _, _, _, _),
+    ownerTv != "".
+
+// ── FIX-17: GENERIC RETURN SUBSTITUTION + TVAR ALIASING ─────────────────────
+// Needed for the commonest higher-order shape in real code:
+//     byName.values().forEach(i -> i.validate(t))       // Map<String,Item> -> Collection<V> -> V=Item
+//     items.stream().forEach(i -> i.validate(t))        // List<Item>       -> Stream<E>     -> E=Item
+// The lambda parameter's type is the element type, which is only knowable by substituting the
+// RECEIVER's written type arguments through the callee's generic RETURN type. Two facts are missing
+// to do that, and both are derivable from the staged library signatures:
+//
+//   (1) the return reference's type ARGUMENT when it is one of the OWNER's type variables
+//       (Map.values() : Collection<V> — the arg is V, Map's own variable), and
+//   (2) TVAR ALIASING along the library hierarchy, because the same position is named differently
+//       at each level: Collection<E> extends Iterable<T>, so Collection's E IS Iterable's T. Without
+//       the alias, a binding computed as "Collection.E = Item" never matches the functional
+//       interface reference in Iterable.forEach(Consumer<? super T>).
+//
+// lib_type_reference (18): 1 kind 2 context 3 typeRegistryLinkHash 6 parentReference 7 position
+//   8 depth 9 typeName 10 completeTypeName 11 typeVariableName 18 hash
+lib_ret_ref_hash(m, retRef) :- lib_method(_, _, _, _, _, _, _, owner, _, _, _, _, _, _, _, _, _, _, _, _, _, m),
+    reached_lib(owner),
+    lib_type_reference(_, "METHOD_RETURN", _, _, _, _, _, "0", _, _, _, _, _, _, _, m, "METHOD", retRef).
+lib_ret_arg_tvar(m, p, ownerTv) :- lib_ret_ref_hash(m, retRef),
+    lib_type_reference("TYPE_VARIABLE", _, _, _, _, retRef, p, "1", _, _, ownerTv, _, _, _, _, _, _, _),
+    ownerTv != "".
+
+// the super-type reference WITH its hash, so its type arguments can be read (lib_super_ref drops it)
+lib_super_ref_at(sub, name, supRef) :- reached_lib(sub),
+    lib_type_reference(_, "SUPER_TYPE", sub, _, _, _, _, "0", name, _, _, _, _, _, _, _, _, supRef).
+lib_super_ref_at(sub, name, supRef) :- reached_lib(sub),
+    lib_type_reference(_, "IMPLEMENTS_INTERFACE", sub, _, _, _, _, "0", name, _, _, _, _, _, _, _, _, supRef).
+
+// sub's variable subTv fills sup's type parameter at position p, whose own name is supTv.
+// The parent is paired with THIS reference by simple name, so a type with several supertypes
+// aliases each one through its own reference.
+lib_tvar_alias(sub, subTv, sup, supTv) :- lib_super_ref_at(sub, sname, supRef),
+    lib_type_parent(sub, sup),
+    lib_type(sname, _, _, _, _, _, _, _, _, _, _, _, _, sup),
+    lib_type_reference("TYPE_VARIABLE", _, _, _, _, supRef, p, "1", _, _, subTv, _, _, _, _, _, _, _),
+    type_param("lib", supTv, p, sup, _).
+lib_tvar_alias_star(sub, subTv, sup, supTv) :- lib_tvar_alias(sub, subTv, sup, supTv).
+lib_tvar_alias_star(sub, subTv, sup2, supTv2) :- lib_tvar_alias(sub, subTv, sup, supTv),
+    lib_tvar_alias_star(sup, supTv, sup2, supTv2).
+
+// ── lib_method_ret_tvar(Method, Owner, TypeVarName) — a reached lib method whose
+// return type is a bare TYPE VARIABLE (E get(), T next()). No concrete type here; the
+// real type is the receiver-site's binding for that variable, substituted in
+// expr-type.dl via type_arg_binding. typeVariableName is col 10.
+lib_method_ret_tvar(m, owner, tv) :- lib_method(_, _, _, _, _, _, _, owner, _, _, _, _, _, _, _, _, _, _, _, _, _, m),
+    reached_lib(owner),
+    lib_type_reference("TYPE_VARIABLE", "METHOD_RETURN", _, _, _, _, _, "0", _, _, tv, _, _, _, _, m, "METHOD", _),
+    tv != "".

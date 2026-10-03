@@ -1,0 +1,5 @@
+nominal	InheritedSatisfaction.Handler.handle -> InheritedSatisfaction.Another.handle
+nominal	InheritedSatisfaction.Handler.handle -> InheritedSatisfaction.Base.handle
+nominal	InheritedSatisfaction.Handler.handle -> InheritedSatisfaction.Direct.handle
+nominal	InheritedSatisfaction.Parent.run -> InheritedSatisfaction.Child.run
+nominal	InheritedSatisfaction.Parent.run -> InheritedSatisfaction.Sibling.run

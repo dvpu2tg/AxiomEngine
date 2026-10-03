@@ -1,0 +1,557 @@
+// ============================================================================
+// RESOLUTION · BUILTIN AND EXTERNAL TYPES  (naming the boundary instead of shrugging)
+//
+// `found.append(item)`, `self._items.get(key)`, `self.describe().upper()`,
+// `app.include_router(router)`. Four calls whose callee is known EXACTLY and whose body is
+// in no staged IR — `list.append` and `dict.get` are C methods, and `FastAPI` is a
+// third-party class this build did not load. Left unhandled they came out
+// `ambiguous_unknown / no_rule`, which says "the analysis has a blind spot here". It does
+// not: it knows precisely what is called and precisely why it cannot follow it.
+//
+// MEASURED on test/python/projects/two-service-fastapi: 9 of 16 remaining declared
+// unknowns were exactly this — 7 builtin container/str methods and 2 calls on a FastAPI
+// instance. Naming them does not change what the engine KNOWS; it changes an unhelpful
+// answer into a reviewable one, and stops them competing for attention with the three that
+// are genuinely unknowable.
+//
+// ── THE EVIDENCE IS THE PARSER'S OWN, AND IT WAS UNUSED ──────────────────────
+// py_expression carries inferredTypeName / inferredTypeKind / inferenceEvidence /
+// inferenceConfidence, populated for literals with evidence LITERAL or COLLECTION_LITERAL
+// and confidence CERTAIN (223 such nodes on this project). That is the schema's "parser
+// emits purely syntactic evidence" channel, and nothing read it before this file. Only
+// CERTAIN is consumed: PROBABLE would be a guess.
+// ============================================================================
+
+// ── builtin_container_alias(TypingName, BuiltinName) ─────────────────────────
+// The CONCRETE typing aliases only. `Iterable`, `Sequence`, `Mapping` and friends are
+// deliberately absent: a call on an `Iterable`-annotated receiver is a genuine protocol
+// call, and mapping it to `list` would be a fabrication about which C method runs.
+builtin_container_alias("List", "list").
+builtin_container_alias("Dict", "dict").
+builtin_container_alias("Set", "set").
+builtin_container_alias("FrozenSet", "frozenset").
+builtin_container_alias("Tuple", "tuple").
+builtin_container_alias("DefaultDict", "dict").
+builtin_container_alias("OrderedDict", "dict").
+builtin_container_alias("list", "list").
+builtin_container_alias("dict", "dict").
+builtin_container_alias("set", "set").
+builtin_container_alias("tuple", "tuple").
+builtin_container_alias("frozenset", "frozenset").
+builtin_container_alias("str", "str").
+builtin_container_alias("bytes", "bytes").
+builtin_container_alias("bytearray", "bytearray").
+builtin_container_alias("int", "int").
+builtin_container_alias("float", "float").
+builtin_container_alias("bool", "bool").
+builtin_container_alias("complex", "complex").
+
+// ── container_head_sequence / container_head_mapping ─────────────────────────
+// A subscripted annotation whose HEAD makes it a container, and which SHAPE of one.
+// Separate from builtin_container_alias above, and it has to be: that table answers
+// "which C type is the receiver" and deliberately omits Sequence / Iterable / Mapping,
+// because mapping `Iterable` to `list` would fabricate which C method runs. This table
+// answers a different question — "what does subscripting or iterating this yield" — and
+// there `Sequence[str]` holds strs as certainly as `List[str]` does, whatever concrete
+// class it turns out to be.
+//
+// THE SHAPE SPLIT IS LOAD-BEARING AND WAS MEASURED. A mapping's generic arguments are
+// key at position 0 and value at position 1, and iterating a mapping yields KEYS while
+// subscripting it yields VALUES. Across five open-source projects, of the generic
+// arguments naming a builtin under a mapping head, 918 sit at position 0 and 249 at
+// position 1 — overwhelmingly `Dict[str, something]`. Emitting both, the way the class
+// element path documents itself as doing, would therefore hand nearly every `d[k]` a
+// spurious `str` alongside the real value type, and `str` shares `count` / `index` /
+// `find` / `replace` / `split` with `bytes` and `int`, so the extra member would not
+// self-prune at attribute lookup the way a spurious CLASS does. That is a manufactured
+// wrong answer at scale rather than a wide one, which is why position is read here
+// instead of unioned over.
+//
+// A HEAD NOT IN EITHER LIST YIELDS NOTHING, and that is the point of listing heads at
+// all rather than accepting any SUBSCRIPT annotation. `Mapped[str]`, an ORM descriptor,
+// is 21.2% of the subscripted annotations naming a builtin in this corpus, and it is not
+// a container: its value IS a str, so treating it as one and typing `x[0]` as str would
+// be an answer about a subscript the code never performs.
+container_head_sequence("List").
+container_head_sequence("list").
+container_head_sequence("Set").
+container_head_sequence("set").
+container_head_sequence("FrozenSet").
+container_head_sequence("frozenset").
+container_head_sequence("Sequence").
+container_head_sequence("MutableSequence").
+container_head_sequence("Iterable").
+container_head_sequence("Iterator").
+container_head_sequence("Collection").
+container_head_sequence("Deque").
+container_head_sequence("deque").
+container_head_sequence("Tuple").
+container_head_sequence("tuple").
+container_head_mapping("Dict").
+container_head_mapping("dict").
+container_head_mapping("Mapping").
+container_head_mapping("MutableMapping").
+container_head_mapping("DefaultDict").
+container_head_mapping("defaultdict").
+container_head_mapping("OrderedDict").
+container_head_mapping("Counter").
+
+// ── alias_value_builtin / alias_builtin_type ─────────────────────────────────
+// A module-level TYPE ALIAS onto a builtin container: `Payload = Dict[str, Any]`. Bound
+// exactly once (symtable's own count), so the name cannot mean anything else. Without
+// this, every `payload` / `quote` parameter in the two-service project — annotated
+// `Payload` throughout — is untyped and `quote.get("price")` has no callee.
+alias_value_builtin(p, e, b) :-
+    expr_node(p, "NAME_REFERENCE", _, n, e), builtin_container_alias(n, b).
+alias_value_builtin(p, e, b) :-
+    expr_node(p, "SUBSCRIPT", _, _, e),
+    expr_parent(p, e, "SUBSCRIPT_OBJECT", _, obj),
+    expr_node(p, "NAME_REFERENCE", _, n, obj), builtin_container_alias(n, b).
+alias_builtin_type(p, mod, n, b) :-
+    binding_decl(p, n, modScope, _, "ASSIGNMENT", bind),
+    binding_rebinding(p, "1", _, _, bind),
+    binding_owner(p, mod, _, bind),
+    module_init(p, _, modScope, mod),
+    expr_binding(p, bind, "STORE", tgt),
+    assign_pair(p, tgt, val),
+    alias_value_builtin(p, val, b).
+
+// ── annotation_builtin(Prov, OwnerHash, OwnerKind, BuiltinName) ───────────────
+// An annotation naming a builtin, directly or through an alias.
+annotation_builtin(p, ph, "METHOD_PARAM", b) :-
+    param_annotation(p, base, _, _, ph), builtin_container_alias(base, b).
+annotation_builtin(p, ph, "METHOD_PARAM", b) :-
+    param_annotation(p, base, _, _, ph), base != "",
+    param_decl(p, _, _, _, m, ph), method_module(p, mod, m),
+    builtin_alias_visible(p, mod, base, b).
+annotation_builtin(p, f, "FIELD", b) :-
+    field_annotation(p, _, base, _, f), builtin_container_alias(base, b).
+annotation_builtin(p, f, "FIELD", b) :-
+    field_annotation(p, _, base, _, f), base != "",
+    field_decl(p, _, owner, _, f), type_module(p, mod, owner),
+    builtin_alias_visible(p, mod, base, b).
+annotation_builtin(p, m, "METHOD", b) :-
+    method_decl(p, _, _, _, ret, m), builtin_container_alias(ret, b).
+annotation_builtin(p, m, "METHOD", b) :-
+    method_decl(p, _, _, _, ret, m), ret != "",
+    method_module(p, mod, m), builtin_alias_visible(p, mod, ret, b).
+
+// ── A VAR-PARAMETER'S TYPE IS ITS KIND, AND THE KIND BEATS THE ANNOTATION ────
+// `**kwargs` IS a dict and `*args` IS a tuple. Python guarantees it at every call site,
+// whatever the signature says, so this is a language fact and not an inference.
+//
+// The annotation on one describes the ELEMENT type, never the parameter:
+//
+//     def f(**options: str)   # options is dict[str, str] -- NOT a str
+//     def g(*values: int)     # values is tuple[int, ...] -- NOT an int
+//
+// Reading it as the parameter's own type is a WRONG answer rather than a missing one:
+// `options.get(...)` resolved to a str method that does not exist. Measured across the
+// corpora, 43 parameters were mis-typed exactly this way, so the negation below is
+// load-bearing and not defensive.
+param_kind_builtin(p, ph, "dict")  :- param_kind(p, "VAR_KEYWORD", _, _, ph).
+param_kind_builtin(p, ph, "tuple") :- param_kind(p, "VAR_POSITIONAL", _, _, ph).
+
+// param_builtin -- the parameter's own builtin type: its KIND where it has one, its
+// annotation only where it does not. Stated as a separate relation rather than folded
+// into annotation_builtin because a var-parameter's type is not an annotation at all, and
+// a name that says otherwise is how the mis-typing survived in the first place.
+// param_kind_builtin rests on the param_kind projection alone, outside the resolution
+// fixpoint, so negating it here is stratified.
+param_builtin(p, ph, b) :- param_kind_builtin(p, ph, b).
+param_builtin(p, ph, b) :-
+    annotation_builtin(p, ph, "METHOD_PARAM", b), !param_kind_builtin(p, ph, _).
+
+// ── expr_builtin_type(Prov, ExprHash, BuiltinName) ───────────────────────────
+// (a) the parser's own CERTAIN literal inference — `[]` is a list, `{}` a dict, `"x"` a str.
+expr_builtin_type(p, e, b) :-
+    expr_inferred_type(p, tn, k, _, "CERTAIN", e),
+    k != "USER_CLASS", k != "UNKNOWN",
+    builtin_container_alias(tn, b).
+// (b) a parameter's own builtin type -- its kind for `**kwargs` / `*args`, its annotation
+//     otherwise. See param_builtin above for why the kind wins.
+expr_builtin_type(p, e, b) :-
+    expr_names_param(p, e, ph), param_builtin(p, ph, b).
+// (c) `self.x` annotated with a builtin, or written from a builtin-typed value.
+expr_builtin_type(p, e, b) :-
+    expr_attr_of_self(p, e, n, owner), type_attr_field(p, owner, n, f),
+    annotation_builtin(p, f, "FIELD", b).
+expr_builtin_type(p, e, b) :-
+    expr_attr_of_self(p, e, n, owner), type_attr_field(p, owner, n, f),
+    field_write_value(p, f, val), expr_builtin_type(p, val, b).
+// (d) a call whose callee declares a builtin return type: `def describe(self) -> str`.
+expr_builtin_type("client", e, b) :-
+    call_of_expr(e, site), expr_call_candidate(site, m),
+    annotation_builtin("client", m, "METHOD", b).
+// (d2) `await f()` where `async def f() -> str`. Same argument as clause (d) one hop
+//      out: expression-resolution/expr-type.dl's await_yields already established that
+//      the operand's type IS the awaited value, so the only thing left to do is carry
+//      it. Without this `(await read()).strip()` was a blind spot while
+//      `read_sync().strip()` was not.
+expr_builtin_type("client", aw, b) :-
+    await_yields(aw, op), expr_builtin_type("client", op, b).
+// (c2) `<anything>.x` — the SAME hop with the object's own type, not only self.
+// Clause (c) reads expr_attr_of_self, which by definition requires a SELF_REFERENCE, so
+// `self.buffer.append(x)` typed and `other.buffer.append(x)` did not.
+//
+// THIS IS THE THIRD TIME this pattern has been fixed: #61 generalised expr_type and #63
+// generalised element types, and expr_builtin_type was left behind by both. Any relation
+// keyed on expr_attr_of_self is self-only by construction and needs the general form
+// beside it.
+expr_builtin_type(p, e, b) :-
+    expr_node(p, "ATTRIBUTE_ACCESS", _, n, e), n != "",
+    expr_parent(p, e, "ATTRIBUTE_OBJECT", _, obj),
+    expr_type(p, obj, ot),
+    type_attr_field(p, ot, n, f),
+    annotation_builtin(p, f, "FIELD", b).
+expr_builtin_type(p, e, b) :-
+    expr_node(p, "ATTRIBUTE_ACCESS", _, n, e), n != "",
+    expr_parent(p, e, "ATTRIBUTE_OBJECT", _, obj),
+    expr_type(p, obj, ot),
+    type_attr_field(p, ot, n, f),
+    field_write_value(p, f, val), expr_builtin_type(p, val, b).
+
+// (d2) A BUILTIN METHOD'S RETURN. `key.strip("_")` is a str, so `.lower()` on it resolves
+// and a local assigned from it stays typed. Without this a builtin type died at the first
+// method call, which is what left most chained calls with no receiver type at all.
+expr_builtin_type(p, e, b) :-
+    call_of_expr(e, site),
+    call_recv_kind(site, rk), rk != "NONE", rk != "SUPER",
+    call_receiver_object(site, obj),
+    expr_builtin_type(p, obj, rb),
+    call_name(site, n),
+    builtin_method_returns(rb, n, b).
+
+// (d3) A PROPERTY READ whose getter declares a builtin return: `@property def name(self)
+//      -> str` and then `obj.name.strip()`. Same argument clause (d) makes for a call
+//      site -- the getter IS a call, it just has no call site to key on, so the return
+//      annotation is read off the getter directly (issue #286). property_read_of is
+//      defined in expression-resolution/expr-type.dl.
+//
+//      THE FOURTH TIME the warning above applies: #61 generalised expr_type, #63 the
+//      element types, #286 the property read, and this relation was left behind by all
+//      three. Measured, 346 property getters across five open-source projects declare a
+//      builtin return -- 165 / 125 / 49 / 7 / 0 -- and every call on one of those results
+//      had no receiver type.
+expr_builtin_type(p, e, b) :-
+    property_read_of(p, e, _, _, g),
+    annotation_builtin(p, g, "METHOD", b).
+// (d4) and the unannotated form: whatever builtin the getter's return expression is. One
+//      project in the set has 534 property getters and annotates NONE of them, so without
+//      this clause the largest population is untouched.
+expr_builtin_type(p, e, b) :-
+    property_read_of(p, e, _, _, g),
+    method_return_value_expr(p, g, re),
+    expr_builtin_type(p, re, b).
+
+// (e0) a local whose ANNOTATION names a builtin: `visited: set[int]`. Read from the
+//      type-reference row's head rather than the binding's raw declaredBaseType (#123).
+expr_builtin_type(p, e, b) :-
+    expr_binding(p, bref, ctx, e), ctx != "STORE",
+    binding_lookup(p, bref, bind),
+    binding_declared_ref(p, bind, r),
+    type_ref(p, _, "VARIABLE_ANNOTATION", tn, _, r),
+    builtin_container_alias(tn, b).
+
+// (e) a single-binding local holding any of the above.
+expr_builtin_type(p, e, b) :-
+    expr_binding(p, bref, ctx, e), ctx != "STORE",
+    binding_lookup(p, bref, bind),
+    binding_rebinding(p, "1", _, _, bind),
+    expr_binding(p, bind, "STORE", tgt),
+    assign_pair(p, tgt, val),
+    expr_builtin_type(p, val, b).
+
+// ── a method call on a builtin-typed receiver is a NAMED builtin boundary ─────
+call_hits_builtin(site, cat("builtin:", cat(b, cat(".", n)))) :-
+    call_recv_kind(site, rk), rk != "NONE", rk != "SUPER",
+    call_receiver_object(site, obj),
+    expr_builtin_type("client", obj, b),
+    call_name(site, n), n != "",
+    !expr_call_candidate(site, _).
+
+// ============================================================================
+// EXTERNAL TYPES — a class from a dependency this build did not load
+// ============================================================================
+
+// ── expr_external_type(Prov, ExprHash, ExternalName) ─────────────────────────
+// (a) constructing an unlinked external name: `app = FastAPI(...)`.
+expr_external_type("client", e, n) :-
+    call_of_expr(e, site),
+    call_callee_is_value(site),
+    call_callee_expr(site, callee),
+    expr_node("client", _, _, n, callee),
+    expr_binding("client", b, _, callee),
+    binding_lookup("client", b, b2),
+    import_unlinked(b2, _).
+// (b) a single-binding local holding one.
+expr_external_type(p, e, n) :-
+    expr_binding(p, bref, ctx, e), ctx != "STORE",
+    binding_lookup(p, bref, bind),
+    binding_rebinding(p, "1", _, _, bind),
+    expr_binding(p, bind, "STORE", tgt),
+    assign_pair(p, tgt, val),
+    expr_external_type(p, val, n).
+// (c) a parameter whose annotation names an unlinked external type.
+expr_external_type("client", e, base) :-
+    expr_names_param("client", e, ph),
+    param_annotation("client", base, _, _, ph), base != "",
+    param_decl("client", _, _, _, m, ph), method_module("client", mod, m),
+    module_init("client", _, modScope, mod),
+    import_scope("client", modScope, mod, i),
+    import_decl("client", _, _, base, i),
+    import_binding("client", b, i),
+    import_unlinked(b, _).
+
+// ── a method call on an external-typed receiver is a NAMED external boundary ──
+call_hits_external(site, cat("external:", cat(en, cat(".", n)))) :-
+    call_recv_kind(site, rk), rk != "NONE", rk != "SUPER",
+    call_receiver_object(site, obj),
+    expr_external_type("client", obj, en),
+    call_name(site, n), n != "",
+    !expr_call_candidate(site, _),
+    !call_hits_builtin(site, _).
+
+// ============================================================================
+// EXCEPT TARGETS — `except NotFound as exc:` types `exc` exactly
+// ============================================================================
+
+// ── except_pair(Prov, TypeExprHash, TargetExprHash) ──────────────────────────
+// Two roots on one line in one scope, carrying edgeRoles EXCEPT_TYPE and EXCEPT_TARGET.
+// Same pairing shape as a for-loop's target and iterable, and the same limitation.
+except_pair(p, typeExpr, tgt) :-
+    expr_parent(p, x, "EXCEPT_TYPE", _, typeExpr), expr_parent(p, x, "EXCEPT_TARGET", _, tgt).
+except_pair(p, typeExpr, tgt) :-
+    expr_position(p, "EXCEPT_TYPE", _, _, typeExpr), !expr_has_parent(p, typeExpr),
+    expr_position(p, "EXCEPT_TARGET", _, _, tgt), !expr_has_parent(p, tgt),
+    expr_scope(p, s, _, typeExpr), expr_scope(p, s, _, tgt),
+    expr_span(p, line, _, typeExpr), expr_span(p, line, _, tgt).
+
+// ── binding_except_type(Prov, BindingHash, TypeHash) ─────────────────────────
+// The caught exception's class, written right there. Exact — the only residual
+// uncertainty is subclassing, which declared_dispatch handles like any other declared type.
+binding_except_type(p, b, t) :-
+    except_pair(p, typeExpr, tgt),
+    expr_binding(p, b, _, tgt),
+    expr_names_type(p, typeExpr, t).
+
+// ── builtin_alias_visible(Prov, ModuleHash, AliasName, BuiltinName) ──────────
+// A builtin type alias as seen FROM a module — defined there, or imported there. Aliases
+// are shared exactly like classes are: `Payload = Dict[str, Any]` lives in
+// shared/transport.py and is imported by both services, so a module-local-only lookup
+// misses every annotation that uses it. Measured: that alone left `quote.get("price")` in
+// orders_service/domain.py without a callee.
+builtin_alias_visible(p, mod, n, b) :- alias_builtin_type(p, mod, n, b).
+builtin_alias_visible(p, mod, n, b) :-
+    module_init(p, _, modScope, mod),
+    import_scope(p, modScope, mod, i),
+    import_decl(p, _, _, n, i),
+    import_relative(p, _, pkg, i), pkg != "",
+    import_alias(p, orig, _, i), orig != "",
+    module_decl(p, _, pkg, _, src),
+    alias_builtin_type(p, src, orig, b).
+
+// ============================================================================
+// A REGISTRY LOOKUP WITH A NON-STATIC KEY — named, not shrugged at
+//
+// `handler = self._registry[route]; handler(payload)` and
+// `cls = SERIALIZERS[name]; cls()`. The key is a PARAMETER, so the callee is data and no
+// static answer exists. That is a different fact from "no rule matched", and it is the
+// one place in the whole two-service project where the cross-service chain genuinely
+// stops: a plugin architecture is unanalysable at its dispatch point by construction.
+// ============================================================================
+
+// ── binding_from_unpinnable_subscript(Prov, BindingHash) ─────────────────────
+binding_from_unpinnable_subscript(p, b) :-
+    binding_rebinding(p, "1", _, _, b),
+    expr_binding(p, b, "STORE", tgt),
+    assign_pair(p, tgt, val),
+    expr_node(p, "SUBSCRIPT", _, _, val),
+    expr_parent(p, val, "SUBSCRIPT_INDEX", _, idx),
+    !expr_key_text(p, idx, _).
+
+call_unresolvable(site, "registry_key_not_static") :-
+    call_callee_expr(site, callee),
+    expr_binding("client", b, ctx, callee), ctx != "STORE",
+    binding_lookup("client", b, b2),
+    binding_from_unpinnable_subscript("client", b2).
+call_unresolvable(site, "registry_key_not_static") :- subscript_dispatch_incomplete(site).
+// The receiver came out of one: `cls().to_dict(obj)`.
+call_unresolvable(site, "registry_key_not_static") :-
+    call_receiver_object(site, obj),
+    call_of_expr(obj, inner),
+    call_unresolvable(inner, "registry_key_not_static").
+
+// ── call_hits_builtin — the boundary case, in the file that owns builtins ────
+// A call whose receiver is a library object of a type with no Python source: it is
+// a builtin, not a library method. Kept beside the other builtin rules rather than
+// in the library file, which owns linking and not semantics.
+// ── A LIBRARY CONSTRUCTION WHOSE CLASS HAS NO VISIBLE __init__ ────────────────
+// `pickle.PicklingError(msg)`. The class IS resolved — pickle.PicklingError is in the
+// library IR — but it declares no __init__ and its MRO ends at `Exception`, a C-level
+// builtin with no Python source, so type_constructor("lib", …) is empty and the site
+// produced no edge and no boundary either: it read `no_rule`, i.e. a blind spot, for a
+// class the engine had NAMED.
+//
+// This is the same shape already handled for a CLIENT class with no constructor
+// (resolution/builtins.dl) and it was simply never mirrored onto the library side.
+// MEASURED on the stdlib: `mod.SomeError(...)` is one of the most common call shapes in
+// `logging`, `http` and `json`, and every one of them landed in no_rule.
+call_hits_builtin(site, label) :-
+    call_constructs_lib_type(site, t),
+    !type_constructor("lib", t, _),
+    !type_hierarchy_incomplete("lib", t),
+    builtin_object_init_target(label).
+
+
+// ============================================================================
+// A CONTAINER OF BUILTINS — `List[str]`, `Dict[str, bytes]`, `["a", "b"]`
+//
+// THE LARGEST ELEMENT-TYPE GAP, and it was a missing RELATION rather than a
+// missing clause: nothing anywhere in this rule set carried the element type of a
+// container of builtins. resolution/iteration.dl derives element_type_of for
+// class elements and element_lib_type_of for library ones; there was no third.
+// So every one of these resolved to nothing, iterating and indexing alike:
+//
+//     def f(names: List[str]) -> None:
+//         for n in names: n.upper()      # ambiguous_unknown
+//         names[0].upper()               # ambiguous_unknown
+//     xs = ["a", "b"]
+//     for x in xs: x.upper()             # ambiguous_unknown -- from LITERALS
+//
+// MEASURED, and it is why this is worth a relation of its own: across five
+// open-source projects, of 4,966 generic arguments of container annotations the
+// element named is a BUILTIN 49.4% of the time (2,452) and a class defined in the
+// project only 11.7% (579). The mechanism that existed reached the 11.7%.
+//
+// WHAT MAKES IT SOUND. Every clause bottoms out in an annotation the author wrote
+// or in a literal the parser already typed CERTAIN — the same two sources clause
+// (a) and the param/field clauses above already trust. Nothing is inferred about a
+// container's contents from how it is used.
+// ============================================================================
+
+// ── ref_element_builtin_indexed / _iterated(Prov, AnnotationRef, Builtin) ────
+// What `x[...]` and `for _ in x` yield, kept apart because a mapping answers
+// differently to each. A sequence answers the same to both, and a Tuple answers
+// with every position because the index is not statically known here.
+ref_element_builtin_indexed(p, r, b) :-
+    type_ref(p, k, _, tn, _, r), annotation_container_kind(k),
+    container_head_sequence(tn),
+    type_ref_nesting(p, r, _, "1", child),
+    type_ref(p, _, "GENERIC_ARGUMENT", en, _, child),
+    builtin_container_alias(en, b).
+ref_element_builtin_indexed(p, r, b) :-
+    type_ref(p, k, _, tn, _, r), annotation_container_kind(k),
+    container_head_mapping(tn),
+    type_ref_nesting(p, r, "1", "1", child),
+    type_ref(p, _, "GENERIC_ARGUMENT", en, _, child),
+    builtin_container_alias(en, b).
+ref_element_builtin_iterated(p, r, b) :-
+    type_ref(p, k, _, tn, _, r), annotation_container_kind(k),
+    container_head_sequence(tn),
+    type_ref_nesting(p, r, _, "1", child),
+    type_ref(p, _, "GENERIC_ARGUMENT", en, _, child),
+    builtin_container_alias(en, b).
+ref_element_builtin_iterated(p, r, b) :-
+    type_ref(p, k, _, tn, _, r), annotation_container_kind(k),
+    container_head_mapping(tn),
+    type_ref_nesting(p, r, "0", "1", child),
+    type_ref(p, _, "GENERIC_ARGUMENT", en, _, child),
+    builtin_container_alias(en, b).
+
+// ── expr_container_annotation_ref(Prov, ContainerExpr, AnnotationRef) ────────
+// The annotation governing this container EXPRESSION. Stated once and read by both
+// element relations, so the five positions an annotation can sit in are enumerated
+// here rather than twice over.
+expr_container_annotation_ref(p, src, r) :-
+    expr_names_param(p, src, ph),
+    type_ref_owner(p, ph, "METHOD_PARAM", r),
+    type_ref(p, _, "METHOD_PARAM", _, _, r).
+expr_container_annotation_ref(p, src, r) :-
+    expr_attr_of_self(p, src, n, owner), type_attr_field(p, owner, n, f),
+    type_ref_owner(p, f, "FIELD", r),
+    type_ref(p, _, "FIELD_TYPE", _, _, r).
+// the same hop through ANY object whose type is known, not only self -- the fix that
+// #61 / #63 had to make three times over in the other typing files.
+expr_container_annotation_ref(p, src, r) :-
+    expr_node(p, "ATTRIBUTE_ACCESS", _, n, src), n != "",
+    expr_parent(p, src, "ATTRIBUTE_OBJECT", _, obj),
+    expr_type(p, obj, ot), type_attr_field(p, ot, n, f),
+    type_ref_owner(p, f, "FIELD", r),
+    type_ref(p, _, "FIELD_TYPE", _, _, r).
+expr_container_annotation_ref("client", src, r) :-
+    call_of_expr(src, site), expr_call_candidate(site, m),
+    type_ref_owner("client", m, "METHOD", r),
+    type_ref("client", _, "METHOD_RETURN", _, _, r).
+// The PROPERTY-READ twin of the clause above, and the fifth relation in this family to
+// need one (issue #286): a getter declaring `-> list[str]` makes `for n in obj.names`
+// bind a str. The container reference is the getter's own METHOD_RETURN, exactly as it is
+// for a call, because a property read IS a call -- it just has no call site to key on.
+expr_container_annotation_ref(p, src, r) :-
+    property_read_of(p, src, _, _, g),
+    type_ref_owner(p, g, "METHOD", r),
+    type_ref(p, _, "METHOD_RETURN", _, _, r).
+expr_container_annotation_ref(p, src, r) :-
+    expr_binding(p, bref, ctx, src), ctx != "STORE",
+    binding_lookup(p, bref, bind),
+    binding_declared_ref(p, bind, r).
+
+// ── element_builtin_indexed_of / _iterated_of(Prov, ContainerExpr, Builtin) ──
+element_builtin_indexed_of(p, src, b) :-
+    expr_container_annotation_ref(p, src, r), ref_element_builtin_indexed(p, r, b).
+element_builtin_iterated_of(p, src, b) :-
+    expr_container_annotation_ref(p, src, r), ref_element_builtin_iterated(p, r, b).
+// A DISPLAY written in place: `["a", "b"]`, `{"x", "y"}`, `("a", 1)`. The element type
+// is whatever the elements already type as, which for a literal is the parser's own
+// CERTAIN inference. A display is a sequence, so both answers coincide.
+element_builtin_indexed_of(p, src, b) :- display_element_builtin(p, src, b).
+element_builtin_iterated_of(p, src, b) :- display_element_builtin(p, src, b).
+display_element_builtin(p, src, b) :-
+    expr_node(p, "LIST", _, _, src),
+    expr_parent(p, src, "ELEMENT", _, el), expr_builtin_type(p, el, b).
+display_element_builtin(p, src, b) :-
+    expr_node(p, "SET", _, _, src),
+    expr_parent(p, src, "ELEMENT", _, el), expr_builtin_type(p, el, b).
+display_element_builtin(p, src, b) :-
+    expr_node(p, "TUPLE", _, _, src),
+    expr_parent(p, src, "ELEMENT", _, el), expr_builtin_type(p, el, b).
+display_element_builtin(p, src, b) :-
+    expr_node(p, "LIST_COMPREHENSION", _, _, src),
+    expr_parent(p, src, "COMPREHENSION_ELEMENT", _, el), expr_builtin_type(p, el, b).
+// A single-write local holding a container: `xs = ["a"]` then `for x in xs`. Same
+// single-write gate, and the same argument for it, as binding_value_type.
+element_builtin_indexed_of(p, src, b) :-
+    expr_binding(p, bref, ctx, src), ctx != "STORE",
+    binding_lookup(p, bref, bind), binding_rebinding(p, "1", _, _, bind),
+    expr_binding(p, bind, "STORE", tgt), assign_pair(p, tgt, val),
+    element_builtin_indexed_of(p, val, b).
+element_builtin_iterated_of(p, src, b) :-
+    expr_binding(p, bref, ctx, src), ctx != "STORE",
+    binding_lookup(p, bref, bind), binding_rebinding(p, "1", _, _, bind),
+    expr_binding(p, bind, "STORE", tgt), assign_pair(p, tgt, val),
+    element_builtin_iterated_of(p, val, b).
+// `await load()` where `async def load() -> List[str]`. The await block in
+// expression-resolution/expr-type.dl already argued that the operand's type is the
+// awaited value; this carries the element half of it.
+element_builtin_indexed_of("client", aw, b) :-
+    await_yields(aw, op), element_builtin_indexed_of("client", op, b).
+element_builtin_iterated_of("client", aw, b) :-
+    await_yields(aw, op), element_builtin_iterated_of("client", op, b).
+
+// ── THE TWO CONSUMERS ───────────────────────────────────────────────────────
+// (i) a loop or comprehension variable. Mirrors binding_element_type
+//     (resolution/iteration.dl) exactly, on the builtin relation.
+binding_element_builtin(p, bind, b) :-
+    iter_pair(p, tgt, src),
+    expr_binding(p, bind, _, tgt),
+    element_builtin_iterated_of(p, src, b).
+expr_builtin_type(p, e, b) :-
+    expr_binding(p, bref, ctx, e), ctx != "STORE",
+    binding_lookup(p, bref, bind),
+    binding_element_builtin(p, bind, b).
+// (ii) a subscript. subscript_reads_element (expression-resolution/expr-type.dl) is
+//      already gated on the index not being a SLICE, which matters more here than it
+//      does for a class element: `names[1:]` is a list of strs, and typing it `str`
+//      would put every str method on a list receiver.
+expr_builtin_type(p, e, b) :-
+    subscript_reads_element(p, e, obj), element_builtin_indexed_of(p, obj, b).

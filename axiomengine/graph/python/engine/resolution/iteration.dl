@@ -1,0 +1,284 @@
+// ============================================================================
+// RESOLUTION · ITERATION  (what a loop or comprehension variable holds)
+//
+// `for line in self.lines: ...` and `sum(line.subtotal(c) for line in self.lines)` bind
+// `line` to an ELEMENT of the container. Nothing in the expression tree says what that
+// element is; the container's annotation does — `List[LineItem]` — and the GENERIC_ARGUMENT
+// child of that annotation is the only place it is written down.
+//
+// MEASURED ON test/python/projects/two-service-fastapi: without this, `line.subtotal(...)`
+// inside `Order.total` resolved to nothing, and since that generator expression IS the
+// order-total chain, the project's most interesting cross-service path stopped at its
+// first hop. Comprehensions are not a corner case in Python — 8 of them in this project's
+// 736 lines, and 2,056 comprehension scopes in the measured corpus.
+//
+// ── HOW THE TARGET IS LINKED TO THE ITERABLE ─────────────────────────────────
+// A comprehension's target and iterable are CHILDREN OF THE SAME node
+// (COMPREHENSION_TARGET / COMPREHENSION_ITERABLE), so the pairing is exact. A `for`
+// statement's are two separate ROOTs carrying rootContext FOR_TARGET / FOR_ITERABLE, so
+// they are paired by (scope, line) — the same limitation, and the same reason, as pairing
+// an assignment target with its value in the no-ASSIGNMENT-node IR shape (PD-2).
+//
+// Under the PY3_0_11 emission regime a comprehension also gets its OWN scope, so the
+// target binding lives there rather than in the enclosing function — which is why the
+// LEGB walk has to run before this is asked.
+// ============================================================================
+
+// ── iter_pair(Prov, TargetExprHash, IterableExprHash) ────────────────────────
+iter_pair(p, tgt, src) :-
+    expr_parent(p, c, "COMPREHENSION_TARGET", _, tgt),
+    expr_parent(p, c, "COMPREHENSION_ITERABLE", _, src).
+// THE ASYNC ROOTS ARE THE SAME PAIRING, and they are listed rather than written into the
+// rule body because parser#153 made them a second spelling of one relationship. Before
+// that commit `for` and `async for` produced byte-identical rows and every rule here was
+// keyed on the sync name alone; afterwards an `async for` carries ASYNC_FOR_TARGET /
+// ASYNC_FOR_ITERABLE and matched nothing, so its target silently stopped being bound.
+for_statement_roots("FOR_TARGET", "FOR_ITERABLE").
+for_statement_roots("ASYNC_FOR_TARGET", "ASYNC_FOR_ITERABLE").
+
+iter_pair(p, tgt, src) :-
+    for_statement_roots(trc, irc),
+    expr_root_context(p, trc, tgt), !expr_has_parent(p, tgt),
+    expr_root_context(p, irc, src), !expr_has_parent(p, src),
+    expr_scope(p, s, _, tgt), expr_scope(p, s, _, src),
+    expr_span(p, line, _, tgt), expr_span(p, line, _, src).
+
+// ── with_pair(Prov, TargetExprHash, ContextExprHash) — `with X() as y` (#128) ──
+// The SAME shape as a for statement, and it lives here for that reason: the parser emits
+// WITH_TARGET and WITH_CONTEXT as two separate roots, so they are paired by scope and line
+// exactly as FOR_TARGET and FOR_ITERABLE are above. 181 of 193 targets pair by this rule.
+with_statement_roots("WITH_TARGET", "WITH_CONTEXT").
+with_statement_roots("ASYNC_WITH_TARGET", "ASYNC_WITH_CONTEXT").
+
+with_pair(p, tgt, cm) :-
+    with_statement_roots(trc, crc),
+    expr_root_context(p, trc, tgt), !expr_has_parent(p, tgt),
+    expr_root_context(p, crc, cm), !expr_has_parent(p, cm),
+    expr_scope(p, s, _, tgt), expr_scope(p, s, _, cm),
+    expr_span(p, line, _, tgt), expr_span(p, line, _, cm).
+
+// The two names this needs, stated as facts rather than written into a rule body: one is a
+// dunder the language defines, the other the typing spelling for "the enclosing class".
+// THE ENTRY DUNDER IS PAIRED WITH THE ROOT that selects it, for the same reason: `with c`
+// calls c.__enter__ and `async with c` calls c.__aenter__, and what `as t` binds is that
+// method's declared return either way (`async with` awaits it, and an `async def
+// __aenter__(self) -> Conn` declares the AWAITED value, not the coroutine).
+context_manager_enter_of("WITH_CONTEXT", "__enter__").
+context_manager_enter_of("ASYNC_WITH_CONTEXT", "__aenter__").
+self_return_name("Self").
+
+// ── with_target_declared(Prov, TargetExprHash, TypeHash) ─────────────────────
+// What `with <cm> as t` binds: the declared return of __enter__ on the context manager's
+// own type. The protocol is language-defined, so nothing here is a guess.
+//
+// MEASURED CEILING, recorded so a later reader is not misled by the raw count: 210
+// unresolved sites have a with-bound receiver, but of the 179 context managers that are
+// CALLs only 63 have a callee declaring a return type. Where the callee declares nothing
+// the context manager's own type is unknown and no amount of pairing recovers it.
+with_target_declared(p, tgt, rt) :-
+    with_pair(p, tgt, cm),
+    expr_root_context(p, crc, cm), context_manager_enter_of(crc, en),
+    expr_type(p, cm, ct),
+    mro_lookup(p, ct, en, m),
+    method_declared_return_type(p, m, rt).
+
+// `__enter__` returning Self is the common case and the cheap one -- the target IS the
+// context manager, with no return type to resolve. Kept separate because a resolved
+// return of a class literally named Self would mean something else entirely.
+with_target_declared(p, tgt, ct) :-
+    with_pair(p, tgt, cm),
+    expr_root_context(p, crc, cm), context_manager_enter_of(crc, en),
+    expr_type(p, cm, ct),
+    mro_lookup(p, ct, en, m),
+    method_decl(p, _, _, _, ret, m),
+    self_return_name(ret).
+
+// AN __enter__ RETURN IS A DECLARED TYPE, not an exact one, so it goes out through
+// declared_dispatch and is registered with call_recv_declared in dispatch.dl. A declared
+// type escaping that gate has produced a confident-wrong answer four times in this engine.
+expr_type(p, e, t) :-
+    expr_binding(p, bref, cx, e), cx != "STORE",
+    binding_lookup(p, bref, bind),
+    expr_binding(p, bind, "STORE", tgt),
+    with_target_declared(p, tgt, d),
+    declared_dispatch(p, d, t), p = "client".
+
+// ── element_type_of(Prov, IterableExprHash, ElementTypeHash) ─────────────────
+// Every clause is an ANNOTATION or a literal — never a guess about what a container holds.
+// (a) `self.lines` where the attribute came from a `List[LineItem]` parameter.
+element_type_of(p, src, t) :-
+    expr_attr_of_self(p, src, n, owner),
+    type_attr_field(p, owner, n, f),
+    field_element_from_param(p, f, t).
+// (b) `self.lines` with its own `List[LineItem]` annotation.
+element_type_of(p, src, t) :-
+    expr_attr_of_self(p, src, n, owner),
+    type_attr_field(p, owner, n, f),
+    field_declared_element(p, f, t).
+// (b2) THE SAME TWO, through ANY object whose type is known -- not only self.
+// Clauses (a) and (b) read the container through expr_attr_of_self, which by definition
+// requires the object to be a SELF_REFERENCE. So iterating `self.hooks` resolved and
+// iterating the identical field through any other object did not, leaving the loop
+// variable unbound and every call on it unresolved.
+//
+// Same shape as the attribute-typing fix, one layer down: there the ATTRIBUTE's type was
+// self-only, here the ELEMENT type of a container held on an attribute is. The self
+// clauses stay as the special case; nothing about what an element type means changes.
+element_type_of(p, src, t) :-
+    expr_node(p, "ATTRIBUTE_ACCESS", _, n, src), n != "",
+    expr_parent(p, src, "ATTRIBUTE_OBJECT", _, obj),
+    expr_type(p, obj, ot),
+    type_attr_field(p, ot, n, f),
+    field_declared_element(p, f, t).
+element_type_of(p, src, t) :-
+    expr_node(p, "ATTRIBUTE_ACCESS", _, n, src), n != "",
+    expr_parent(p, src, "ATTRIBUTE_OBJECT", _, obj),
+    expr_type(p, obj, ot),
+    type_attr_field(p, ot, n, f),
+    field_element_from_param(p, f, t).
+// (b3) A PROPERTY READ whose getter declares a CONTAINER return -- `-> List[Item]`
+//      (issue #286). Same argument as (d) below makes for a call site: the getter IS a
+//      call, it just has no call site to key on, so the element comes off the getter
+//      directly. property_read_of is defined in expression-resolution/expr-type.dl.
+element_type_of(p, src, t) :-
+    property_read_of(p, src, _, _, g),
+    method_declared_return_element(p, g, t).
+// (b4) and the unannotated form: the element type of whatever the getter returns.
+element_type_of(p, src, t) :-
+    property_read_of(p, src, _, _, g),
+    method_return_value_expr(p, g, re),
+    element_type_of(p, re, t).
+// (b5) the LIB twin: a library property read off a library-typed receiver whose getter
+//      declares a container return. There is no client-getter-returns-LIB-container twin
+//      because no relation carries that -- method_declared_return_element is client-side
+//      and there is no _lib counterpart -- so that one shape stays uncovered rather than
+//      being invented here.
+element_lib_type_of(src, t) :-
+    property_read_lib_of(src, _, _, g),
+    method_declared_return_element("lib", g, t).
+// (c) a parameter annotated `List[Item]` / `Iterable[Item]` / `Dict[str, Item]`.
+element_type_of(p, src, t) :- expr_names_param(p, src, ph), param_element_type(p, ph, t).
+// (d) a call whose callee declares `-> List[Item]`.
+element_type_of("client", src, t) :-
+    call_of_expr(src, site), expr_call_candidate(site, m),
+    method_declared_return_element("client", m, t).
+// (d2) a call whose callee declares `-> List[T]` and whose receiver BINDS T
+//      (resolution/generics.dl). This is what makes one inherited generic method return
+//      Items for an ItemStore and Orders for an OrderStore.
+element_type_of("client", src, t) :- call_of_expr(src, site), call_returns_element(site, t).
+// (e) a LIST / SET / TUPLE display written in place: the element type is the type of its
+//     ELEMENT children. Exact, and it is what `[LineItem(l["key"], l["qty"]) for l in ...]`
+//     produces.
+element_type_of(p, src, t) :-
+    expr_node(p, "LIST", _, _, src), expr_parent(p, src, "ELEMENT", _, el), expr_type(p, el, t).
+element_type_of(p, src, t) :-
+    expr_node(p, "SET", _, _, src), expr_parent(p, src, "ELEMENT", _, el), expr_type(p, el, t).
+element_type_of(p, src, t) :-
+    expr_node(p, "TUPLE", _, _, src), expr_parent(p, src, "ELEMENT", _, el), expr_type(p, el, t).
+// (f) a list COMPREHENSION being iterated: its element is whatever the comprehension yields.
+element_type_of(p, src, t) :-
+    expr_node(p, "LIST_COMPREHENSION", _, _, src),
+    expr_parent(p, src, "COMPREHENSION_ELEMENT", _, el), expr_type(p, el, t).
+
+// ── (f2) `for x in await load()` where `async def load() -> List[Item]` ──────
+// The element type of an awaited container. Nothing new is inferred here: await_yields
+// (expression-resolution/expr-type.dl) has already argued that the operand's type is the
+// awaited value, and this reads the same annotation every other clause reads.
+element_type_of("client", aw, t) :- await_yields(aw, op), element_type_of("client", op, t).
+element_lib_type_of(aw, t)       :- await_yields(aw, op), element_lib_type_of(op, t).
+element_lib_type_of(aw, t) :-
+    await_yields(aw, op), call_of_expr(op, site), call_returns_lib_element(site, t).
+
+// ── (g) a NAME bound to a container: `items = [Square(), Circle()]; for i in items` ──
+// Every clause above types the container where it is WRITTEN -- a display in place, an
+// annotation, a call's declared return. None of them cross a local binding, so the
+// single most ordinary shape in Python (build a list, then iterate the variable) had no
+// element type at all. MEASURED on test/python/torture: f06_flow.list_of_instances is
+// exactly this and was scored MISSED for both of its links.
+// Mirrors binding_value_type (expression-resolution/expr-type.dl): a SINGLE-write
+// binding takes the element type of the container assigned to it. The single-write gate
+// is what keeps a rebound name from inheriting a stale element type.
+element_type_of(p, src, t) :-
+    expr_binding(p, b, ctx, src), ctx != "STORE",
+    binding_lookup(p, b, b2),
+    binding_rebinding(p, "1", _, _, b2),
+    expr_binding(p, b2, "STORE", tgt),
+    assign_pair(p, tgt, val),
+    element_type_of(p, val, t).
+
+// ── element_lib_type_of(IterableExprHash, LibTypeHash) ───────────────────────
+// THE LIB HALF, FLOW-TYPED rather than widened. `for s in (Square(), Circle())` where
+// Square and Circle are library classes: the element type is the type of the element
+// expressions, which are constructions the CLIENT wrote.
+//
+// PORTED FROM JAVA, and deliberately not the other thing it could have been.
+// java/engine/expression-resolution/expr-type.dl types a receiver from what FLOWS into
+// it (local_new_type, off the `new` initializer) and gates CHA fan-out OFF once the
+// exact type is known, because "RTA/CHA answers the wrong question: the DECLARED type
+// Closeable fans x.close() to all 127 implementers, but x HOLDS a
+// FileImageInputStream -- one target."
+//
+// MEASURED, and it is why the shortcut was rejected: with the library split off,
+// type_instantiated is "client 5, lib 0" -- no library class is ever recorded as
+// constructed, because the construction is client-side. The tempting fix is to add lib
+// rows there and let declared_dispatch widen over them. That imports exactly the
+// fan-out Java warns about. The construction already names the concrete type, so
+// reading it is both tighter and sound.
+//
+// Only the DISPLAY clauses need a lib mirror; the others bottom out in an annotation,
+// which resolution/annotations.dl already resolves across the boundary.
+element_lib_type_of(src, t) :-
+    expr_node("client", "LIST", _, _, src),
+    expr_parent("client", src, "ELEMENT", _, el), expr_lib_type(el, t).
+element_lib_type_of(src, t) :-
+    expr_node("client", "SET", _, _, src),
+    expr_parent("client", src, "ELEMENT", _, el), expr_lib_type(el, t).
+element_lib_type_of(src, t) :-
+    expr_node("client", "TUPLE", _, _, src),
+    expr_parent("client", src, "ELEMENT", _, el), expr_lib_type(el, t).
+element_lib_type_of(src, t) :-
+    expr_node("client", "LIST_COMPREHENSION", _, _, src),
+    expr_parent("client", src, "COMPREHENSION_ELEMENT", _, el), expr_lib_type(el, t).
+
+// ── a call whose LIBRARY callee declares `-> List[LibClass]` ─────────────────
+// The mirror of clause (d) above, which reads method_declared_return_element("client").
+// Nothing read the "lib" side, so a library function's declared CONTAINER return had no
+// element type at all while its declared SCALAR return resolved — an asymmetry, not a
+// ceiling. MEASURED on a two-module probe with a real library IR staged:
+// `for b in boxes_sync(): b.label()` where `def boxes_sync() -> List[Box]` is
+// ambiguous_unknown, while `box_sync() -> Box` followed by `.label()` resolves.
+//
+// call_returns_lib_element (resolution/generics.dl) is the only other producer of a lib
+// element type and it is derived solely from a return-element TYPE VARIABLE, so a plain
+// `-> List[Box]` reached neither relation.
+element_lib_type_of(src, t) :-
+    call_of_expr(src, site), call_hits_lib_method(site, m),
+    method_declared_return_element("lib", m, t).
+
+// the same hop for a container of LIBRARY instances
+element_lib_type_of(src, t) :-
+    expr_binding("client", b, ctx, src), ctx != "STORE",
+    binding_lookup("client", b, b2),
+    binding_rebinding("client", "1", _, _, b2),
+    expr_binding("client", b2, "STORE", tgt),
+    assign_pair("client", tgt, val),
+    element_lib_type_of(val, t).
+
+// ── binding_element_lib_type(BindingHash, LibTypeHash) ───────────────────────
+binding_element_lib_type(b, t) :-
+    iter_pair("client", tgt, src),
+    expr_binding("client", b, _, tgt),
+    element_lib_type_of(src, t).
+
+// ── binding_element_type(Prov, BindingHash, ElementTypeHash) ─────────────────
+// The binding a loop or comprehension target creates, and what it holds. A DECLARED
+// element type, so the consumer widens it over constructed subclasses like any other.
+binding_element_type(p, b, t) :-
+    iter_pair(p, tgt, src),
+    expr_binding(p, b, _, tgt),
+    element_type_of(p, src, t).
+
+// ── iteration_untyped(Prov, TargetExprHash, IterableExprHash) ────────────────
+// A loop whose container the engine could not type. Emitted so the cost is countable
+// rather than absorbed into a general "receiver untyped".
+iteration_untyped(p, tgt, src) :- iter_pair(p, tgt, src), !element_type_of(p, src, _).

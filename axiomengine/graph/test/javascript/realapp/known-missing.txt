@@ -1,0 +1,13 @@
+# Executed edges the engine does not have. Format: <caller> <callee> (file:line:col;
+# a library function is node_modules/<pkg>/<file>:line:col).
+
+# lodash is one 17,000-line IIFE whose methods are installed by `mixin(lodash, source)`
+# over a runtime-built object; the modular files export the results of generic
+# factories. Not modelled; every call into it is a declared unknown.
+lib/store.js:9:3 node_modules/lodash/lodash.js:6612:14
+
+# (Was listed here as a tracer artifact: the `res.on('finish', ...)` arrow of the timing
+# middleware runs in the async context the previous request's promise chain left on the
+# HTTP parser, so execution attributed it to `wrap`'s arrow. The tracer now records who
+# REGISTERED a callback beside its natural caller, and the scorer matches the edge through
+# `timingMiddleware`, whose callback_registered edge the engine has: #609.)

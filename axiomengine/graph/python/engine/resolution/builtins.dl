@@ -1,0 +1,360 @@
+// ============================================================================
+// RESOLUTION · BUILTINS  (a named library boundary, not a blind spot)
+//
+// THE DISTINCTION THIS FILE EXISTS TO MAKE. A call to `super()` and a call through an
+// untyped parameter both fail to produce a client callee, but they are not the same
+// kind of failure:
+//
+//   super()          the callee is known EXACTLY. It is CPython's `super` type, written
+//                    in C. There is no Python source anywhere to point at, in the client
+//                    or in the stdlib IR — VERIFIED: the 3.10.4 stdlib IR (31 shards,
+//                    2,906 classes) contains ZERO py_type rows named `super`, `object`
+//                    or `type`, because those live in Objects/*.c. So the chain ENDS at
+//                    a library boundary, and that is what boundary_lib means.
+//   f(x) where f is a parameter
+//                    the callee is genuinely unknown. ambiguous_unknown.
+//
+// Collapsing the first into the second would report 7 of linkage-sample's 49 sites as
+// analysis blind spots when the analysis knows precisely what they are. Promoting it to
+// known_edge would be a fabrication, because there is no target hash to name.
+//
+// THE CATALOG IS EXPLICIT AND SMALL, in the same spirit as Java's junit_entry_ann /
+// http_entry_ann knob lists: a builtin is only treated as a boundary if it is NAMED
+// here. An unlisted unresolved name stays ambiguous_unknown, so the catalog can only
+// ever move a site from "unknown" to "known boundary" — never the other way, and never
+// silently.
+// ============================================================================
+
+// ── py_builtin_callable(Name) — CPython C-level callables ────────────────────
+// The subset that appears as a CALL callee in real code. Types (which construct) and
+// functions are both here because both are callable and neither has Python source.
+py_builtin_callable("super").
+py_builtin_callable("object").
+py_builtin_callable("type").
+py_builtin_callable("isinstance").
+py_builtin_callable("issubclass").
+py_builtin_callable("getattr").
+py_builtin_callable("setattr").
+py_builtin_callable("delattr").
+py_builtin_callable("hasattr").
+py_builtin_callable("len").
+py_builtin_callable("repr").
+py_builtin_callable("str").
+py_builtin_callable("bytes").
+py_builtin_callable("bytearray").
+py_builtin_callable("int").
+py_builtin_callable("float").
+py_builtin_callable("complex").
+py_builtin_callable("bool").
+py_builtin_callable("list").
+py_builtin_callable("tuple").
+py_builtin_callable("dict").
+py_builtin_callable("set").
+py_builtin_callable("frozenset").
+py_builtin_callable("iter").
+py_builtin_callable("next").
+py_builtin_callable("enumerate").
+py_builtin_callable("zip").
+py_builtin_callable("map").
+py_builtin_callable("filter").
+py_builtin_callable("range").
+py_builtin_callable("reversed").
+py_builtin_callable("sorted").
+py_builtin_callable("sum").
+py_builtin_callable("min").
+py_builtin_callable("max").
+py_builtin_callable("abs").
+py_builtin_callable("round").
+py_builtin_callable("divmod").
+py_builtin_callable("pow").
+py_builtin_callable("print").
+py_builtin_callable("input").
+py_builtin_callable("open").
+py_builtin_callable("hash").
+py_builtin_callable("id").
+py_builtin_callable("callable").
+py_builtin_callable("format").
+py_builtin_callable("vars").
+py_builtin_callable("dir").
+py_builtin_callable("globals").
+py_builtin_callable("locals").
+py_builtin_callable("staticmethod").
+py_builtin_callable("classmethod").
+py_builtin_callable("property").
+py_builtin_callable("slice").
+py_builtin_callable("memoryview").
+py_builtin_callable("compile").
+py_builtin_callable("eval").
+py_builtin_callable("exec").
+py_builtin_callable("chr").
+py_builtin_callable("ord").
+py_builtin_callable("hex").
+py_builtin_callable("oct").
+py_builtin_callable("bin").
+py_builtin_callable("ascii").
+py_builtin_callable("any").
+py_builtin_callable("all").
+py_builtin_callable("iter").
+py_builtin_callable("StopIteration").
+py_builtin_callable("Exception").
+py_builtin_callable("BaseException").
+py_builtin_callable("ValueError").
+py_builtin_callable("TypeError").
+py_builtin_callable("KeyError").
+py_builtin_callable("IndexError").
+py_builtin_callable("AttributeError").
+py_builtin_callable("RuntimeError").
+py_builtin_callable("NotImplementedError").
+py_builtin_callable("OSError").
+py_builtin_callable("IOError").
+
+// ── py_builtin_callable, DERIVED — whatever the pinned interpreter says ──────
+// THE CATALOG ABOVE IS NOW A FLOOR, NOT THE WHOLE ANSWER, and the reason is that a
+// hand-listed set of a language's builtins drifts the moment the language adds one.
+// The parser hit exactly this and fixed it on its own side (Parser@2c2396f): its
+// CALLABLE_BUILTINS was ~60 names and omitted EVERY exception type, so `raise
+// ValueError(...)` read as an unresolved name — 2,235 stdlib sites in the gap bucket.
+// It now generates the list from the pinned interpreter and emits `bindingKind=BUILTIN`
+// (PD-5), so the engine no longer has to guess, and keeping a second hand list here
+// would just reproduce the bug one layer up.
+//
+// MEASURED on a 77-file stdlib corpus (asyncio, json, http, email, logging, typing,
+// dataclasses): the parser labels 98 distinct names BUILTIN; the explicit catalog above
+// carries 78 and MISSES 29, almost all of them exception types — ConnectionError,
+// ImportError, KeyboardInterrupt, FileNotFoundError, TimeoutError, UnicodeDecodeError.
+// That is 23 of 9,130 call sites (0.25%) which were reported as `unbound_name` — an
+// analysis blind spot — when the callee is in fact known exactly and is C code. They
+// become boundary_lib, which is what they are.
+//
+// The explicit facts are KEPT rather than deleted. They are the floor: an IR produced by
+// a parser build that does not emit BUILTIN still gets `super`, `len` and the common
+// exceptions rather than silently losing every builtin boundary at once. Widening can
+// only ever move a site from "unknown" to "known boundary", never the other way, so the
+// direction of a mistake here is bounded.
+//
+// NOT EVERY BUILTIN NAME IS CALLABLE. `True`, `False`, `None`, `Ellipsis` and
+// `NotImplemented` are BUILTIN bindings and are not callables, so they are excluded by
+// name — the relation means what it says. The exclusion is exhaustive: those five are
+// the complete set of non-callable public builtins in the pinned interpreter.
+py_builtin_noncallable("True").
+py_builtin_noncallable("False").
+py_builtin_noncallable("None").
+py_builtin_noncallable("Ellipsis").
+py_builtin_noncallable("NotImplemented").
+
+py_builtin_callable(n) :-
+    binding_decl(_, n, _, "BUILTIN", _, _),
+    n != "",
+    !py_builtin_noncallable(n).
+
+// ── py_str_concat_operator(Operator) ─────────────────────────────────────────
+// The operator that joins two str values with the left one as a PREFIX. `%` and an
+// f-string also build names, but `"as_%s" % x` puts the literal around the value rather
+// than before it, so its literal text is not a prefix of the result (name-resolution.dl,
+// computed_name_prefix).
+py_str_concat_operator("+").
+
+// ── importlib: a module object made from a NAME or a FILE written in the source ──
+// importlib.import_module(name) returns the module `name` denotes, exactly as `import`
+// would bind it; importlib.util.module_from_spec(spec) returns the module the spec's file
+// defines, where the spec comes from spec_from_file_location(name, path) or from
+// spec_from_loader(name, SourceFileLoader(name, path)). The second is how a file that
+// `import` cannot reach is loaded: a hyphenated or extensionless script, a plugin file.
+// The pairs name the FUNCTION and the POSITION of the argument that decides the module
+// (0-based, as the parser writes argument positions); name-resolution.dl joins on them.
+py_importlib_import_by_name("import_module", "0").
+py_importlib_module_from_spec("module_from_spec", "0").
+py_importlib_spec_path_arg("spec_from_file_location", "1").
+py_importlib_spec_loader_arg("spec_from_loader", "1").
+py_importlib_loader_path_arg("SourceFileLoader", "1").
+// How a path is BUILT from a directory and a written file name: os.path.join(dir, "x.py")
+// puts the file name last, and pathlib's `dir / "x.py"` puts it on the right.
+py_path_join_function("join").
+py_path_join_operator("/").
+
+// ── py_copy_module(Module) / py_copy_function(Name) ──────────────────────────
+// The standard library's `copy` module, whose two functions return an object of their
+// argument's type. They are the clone idiom: `def copy(self): return copy.copy(self)`,
+// then `clone = self.copy(); clone.set_sources(...)`. The module is never
+// staged in a client-only run, so without this the clone is untyped at every such site
+// (expression-resolution/expr-type.dl).
+py_copy_module("copy").
+py_copy_function("copy").
+py_copy_function("deepcopy").
+
+// ── py_builtin_dynamic(Name) — the escape hatches ────────────────────────────
+// These do not merely lack Python source; they make the PROGRAM unanalysable at that
+// point. A call to getattr/eval/exec means the engine cannot know what runs, and the
+// schema marks the sites (callKind=DYNAMIC_CALL) precisely so it can be said out loud.
+// Reported separately from an ordinary builtin boundary.
+py_builtin_dynamic("getattr").
+py_builtin_dynamic("setattr").
+py_builtin_dynamic("delattr").
+py_builtin_dynamic("eval").
+py_builtin_dynamic("exec").
+py_builtin_dynamic("compile").
+py_builtin_dynamic("__import__").
+py_builtin_dynamic("globals").
+py_builtin_dynamic("locals").
+py_builtin_dynamic("vars").
+
+// ── builtin_target(Name, TargetLabel) — how a boundary edge is written ────────
+// The label is NOT a hash and is not shaped like one, deliberately: it must be
+// impossible to mistake for a py_method FK, because no such entity exists in any IR.
+// It names the CPython callable so a chain ending here says why it ended.
+builtin_target(n, cat("builtin:", n)) :- py_builtin_callable(n).
+
+// ── builtin_object_init_target(TargetLabel) ──────────────────────────────────
+// The implicit constructor: `Sibling()` where nothing in A(Sibling) defines __init__ or
+// __new__. The target is object.__init__, a C slot.
+builtin_object_init_target("builtin:object.__init__").
+
+// ============================================================================
+// STDLIB CALLABLES WHOSE SEMANTICS ARE PART OF THE LANGUAGE CONTRACT
+//
+// A tiny, EXPLICIT model — the same discipline as the builtin catalog above and as
+// Java's per-ecosystem knob lists. Nothing is inferred; a function is modelled only if
+// it is named here, so the model can only ever move a site from unknown to known, never
+// silently change an answer.
+//
+// functools.partial(f, ...) returns a callable that calls f. That is not a heuristic:
+// it is the documented contract, and CPython exposes it as `.func`, which is how the
+// oracle itself names the target. Without it, `add_ten = functools.partial(add, 10)`
+// followed by `add_ten(5)` is a dead end even though the callee is written two lines
+// above.
+// ============================================================================
+
+// ── partial_factory_path(DottedPath) ─────────────────────────────────────────
+partial_factory_path("functools.partial").
+partial_factory_path("partial").
+
+// ── call_is_partial(SiteKey) ─────────────────────────────────────────────────
+// The site is a functools.partial application, recognised by the written dotted path
+// against the catalog — never by simple name alone unless the name IS the whole path.
+call_is_partial(site) :- call_dotted(site, d), partial_factory_path(d).
+
+
+// ── dict_lookup_method(Name) — a mapping method that RETURNS A VALUE ─────────
+// The mapping API is named, so reading a registry through it is unavoidably name-based —
+// but it belongs in a declared catalogue beside the builtins rather than as a literal
+// buried in a rule body, for the same reason py_builtin_callable does: the set is a
+// property of the language, it is reviewable in one place, and adding a spelling is a
+// one-line change rather than an edit to resolution logic.
+//
+// Only the members that yield a VALUE of the mapping. `keys`, `items` and `values` yield
+// something else and must not be here; `popitem` yields a pair, not a value.
+//
+// A mapping type that spells its lookup differently is NOT covered, and that limit is
+// real rather than hidden: a custom container with `.fetch(k)` reads as an ordinary
+// method call. Every use of this relation is additionally gated on the receiver already
+// being a known registry, so an unrelated `.get` cannot pick up a class from it.
+dict_lookup_method("get").
+dict_lookup_method("pop").
+dict_lookup_method("setdefault").
+
+
+// ── builtin_method_returns(ReceiverBuiltin, MethodName, ReturnBuiltin) ───────
+// A builtin type does not survive a method call without this: `key.strip("_").lower()`
+// typed the first hop and lost the second, and any local assigned from such a call was
+// untyped from that point on. Measured as the dominant shape underneath `no_rule`, which
+// is 72.5% of all unresolved sites.
+//
+// DERIVED FROM CPYTHON, NOT WRITTEN BY HAND. A first hand-written version had 34 entries
+// and omitted 24 correct ones -- every `bytes.*` mirror of the `str.*` methods, the
+// `frozenset.*` mirrors of `set.*`, and `str.swapcase` / `translate` / `format_map`. That
+// asymmetry is the signature of listing what one has SEEN rather than what the language
+// defines, so the list is now generated by introspection instead:
+//
+//   for each builtin receiver, call every public method on TWO VALUES WITH DIFFERENT
+//   ELEMENT TYPES (e.g. [1,2] and ['a','b']); include the method only if the return
+//   type is the SAME for both AND is itself a builtin.
+//
+// The two-element-type test is what makes "unambiguous" a property rather than a
+// judgement. It excludes, on principle rather than by luck:
+//   - element-returning members (`list.pop`, `dict.get`, `tuple.index`) -- the return
+//     tracks the container's payload, so asserting a builtin would be a fabrication;
+//   - view-returning members (`dict.keys`/`values`/`items`) -- a view is not a list, and
+//     typing it `list` would make a later `.append()` resolve wrongly;
+//   - predicates returning bool, which carry no useful receiver type onward.
+//
+// A member left out costs a missing name; a member guessed wrong costs a wrong answer.
+// The generated set was additionally verified by execution: every entry's declared return
+// matches `type(...)` of an actual call.
+builtin_method_returns("str", "capitalize", "str").
+builtin_method_returns("str", "casefold", "str").
+builtin_method_returns("str", "center", "str").
+builtin_method_returns("str", "encode", "bytes").
+builtin_method_returns("str", "expandtabs", "str").
+builtin_method_returns("str", "format", "str").
+builtin_method_returns("str", "format_map", "str").
+builtin_method_returns("str", "join", "str").
+builtin_method_returns("str", "ljust", "str").
+builtin_method_returns("str", "lower", "str").
+builtin_method_returns("str", "lstrip", "str").
+builtin_method_returns("str", "maketrans", "dict").
+builtin_method_returns("str", "partition", "tuple").
+builtin_method_returns("str", "removeprefix", "str").
+builtin_method_returns("str", "removesuffix", "str").
+builtin_method_returns("str", "replace", "str").
+builtin_method_returns("str", "rjust", "str").
+builtin_method_returns("str", "rpartition", "tuple").
+builtin_method_returns("str", "rsplit", "list").
+builtin_method_returns("str", "rstrip", "str").
+builtin_method_returns("str", "split", "list").
+builtin_method_returns("str", "splitlines", "list").
+builtin_method_returns("str", "strip", "str").
+builtin_method_returns("str", "swapcase", "str").
+builtin_method_returns("str", "title", "str").
+builtin_method_returns("str", "translate", "str").
+builtin_method_returns("str", "upper", "str").
+builtin_method_returns("str", "zfill", "str").
+builtin_method_returns("bytes", "capitalize", "bytes").
+builtin_method_returns("bytes", "center", "bytes").
+builtin_method_returns("bytes", "decode", "str").
+builtin_method_returns("bytes", "expandtabs", "bytes").
+builtin_method_returns("bytes", "hex", "str").
+builtin_method_returns("bytes", "ljust", "bytes").
+builtin_method_returns("bytes", "lower", "bytes").
+builtin_method_returns("bytes", "lstrip", "bytes").
+builtin_method_returns("bytes", "rjust", "bytes").
+builtin_method_returns("bytes", "rsplit", "list").
+builtin_method_returns("bytes", "rstrip", "bytes").
+builtin_method_returns("bytes", "split", "list").
+builtin_method_returns("bytes", "splitlines", "list").
+builtin_method_returns("bytes", "strip", "bytes").
+builtin_method_returns("bytes", "swapcase", "bytes").
+builtin_method_returns("bytes", "title", "bytes").
+builtin_method_returns("bytes", "upper", "bytes").
+builtin_method_returns("bytes", "zfill", "bytes").
+builtin_method_returns("list", "copy", "list").
+builtin_method_returns("dict", "copy", "dict").
+builtin_method_returns("set", "copy", "set").
+builtin_method_returns("set", "difference", "set").
+builtin_method_returns("set", "intersection", "set").
+builtin_method_returns("set", "symmetric_difference", "set").
+builtin_method_returns("set", "union", "set").
+builtin_method_returns("frozenset", "copy", "frozenset").
+builtin_method_returns("frozenset", "difference", "frozenset").
+builtin_method_returns("frozenset", "intersection", "frozenset").
+builtin_method_returns("frozenset", "symmetric_difference", "frozenset").
+builtin_method_returns("frozenset", "union", "frozenset").
+
+
+// ── class_definition_keyword(Name) ───────────────────────────────────────────
+// A keyword argument Python itself gives meaning to in a class header. `metaclass` is the
+// only one the engine reads today; `Generic`/`Protocol` bases are handled as type names
+// rather than keywords.
+//
+// Declared here rather than written inline because the literal gate requires it: a keyword
+// name is a language fact, and language facts belong in a reviewable list. The gate found
+// this one -- it was the last inline literal in a join position anywhere in the engine.
+class_definition_keyword("metaclass").
+
+// ── instance_receiver_name(Name) ─────────────────────────────────────────────
+// The conventional name of the first parameter of an instance method. Not a language
+// rule: `self` is convention (PEP 8), and the language binds whatever the first
+// parameter is called. The engine reads it in exactly one place, to recognise a lambda
+// written in a class body as a function that will be handed the instance
+// (expression-resolution/expr-type.dl, clause a'), where the convention is the only
+// signal there is: a lambda has no annotation and no `def` to classify.
+instance_receiver_name("self").

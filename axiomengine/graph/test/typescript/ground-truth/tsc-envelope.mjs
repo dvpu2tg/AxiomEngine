@@ -1,0 +1,397 @@
+#!/usr/bin/env node
+/**
+ * THE DISPATCH ENVELOPE — the TypeScript analogue of the JVM front end's CHA/RTA sets.
+ *
+ * ── WHY A SECOND BOUND IS NEEDED AT ALL ─────────────────────────────────────
+ * The JVM oracle reads two different truths from compiled artifacts: the DECLARED
+ * target (`invokevirtual` names one method — a miss is undeniable) and the DISPATCH
+ * ENVELOPE (class-hierarchy analysis over the same hierarchy — a result outside it is
+ * a demonstrable false positive). Scoring an engine against only the first punishes
+ * every sound over-approximation; scoring against only the second hides real misses.
+ *
+ * `getResolvedSignature` gives the first. This program gives the second, and it has
+ * to be built rather than read, because TypeScript ships no compiled artifact and its
+ * hierarchy is not the whole story.
+ *
+ * ── WHY CHA DOES NOT PORT AS-IS, AND WHAT REPLACES IT ───────────────────────
+ * Java CHA walks `extends`/`implements`: a call on a `Handler`-typed receiver may
+ * reach any class that DECLARES itself a Handler. In TypeScript that walk sees at
+ * best two fifths of the truth — 60.4% of classes satisfy their interfaces with no
+ * `implements` clause, and 21.5% of assignable pairs appear in no syntax anywhere.
+ * The relation that actually governs dispatch is ASSIGNABILITY, and the compiler
+ * computes it exactly:
+ *
+ *     checker.isTypeAssignableTo(candidateInstanceType, receiverType)
+ *
+ * So the envelope here is: every class in the program whose instance type is
+ * assignable to the receiver's type, and which declares (or inherits) the member
+ * being called. That is the honest superset — a value of the receiver's type can only
+ * be an instance of such a class.
+ *
+ * ── TWO BOUNDS, AS IN THE JVM HARNESS ───────────────────────────────────────
+ *   CHA  every assignable class that has the member.
+ *   RTA  the subset whose class is actually INSTANTIATED in the program (`new C()`,
+ *        or a class expression). This is Rapid Type Analysis's refinement, and it is
+ *        what makes the bound tight enough to be worth reporting: a class nothing
+ *        constructs cannot be the runtime receiver.
+ *
+ * ── COST, AND THE BOUND ON IT ───────────────────────────────────────────────
+ * Assignability is not cheap and the naive form is |receiver types| x |classes|. Two
+ * bounds keep it tractable: candidate classes are PROJECT classes only (a library
+ * class the client never constructs cannot be a runtime receiver of a client-typed
+ * value, and including the whole of lib.dom would dominate the run), and the
+ * per-receiver-type answer is memoised by the checker's own type id, so a receiver
+ * type appearing at 400 call sites is computed once.
+ *
+ * Output TSV, one row per call site:
+ *   callFile callLine callCol callEndLine callEndCol callKind calleeName
+ *   mustTarget   file:line:col of getResolvedSignature's declaration ("" if none)
+ *   chaCount     size of the assignable-class envelope
+ *   rtaCount     size of the instantiated subset
+ *   chaTargets   ';'-joined file:line:col, capped
+ *   rtaTargets   ';'-joined file:line:col, capped
+ *
+ * Usage: node tsc-envelope.mjs <project-dir> <out.tsv> [maxTargets]
+ */
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { loadTypeScript } from './load-typescript.mjs';
+
+const projectDir = path.resolve(process.argv[2]);
+const outPath = path.resolve(process.argv[3]);
+const MAX_TARGETS = Number(process.argv[4] ?? 64);
+
+// Loaded from the project under analysis, so the oracle speaks the version the
+// project is written against; see load-typescript.mjs for the preference order and
+// for why an unsupported compiler is a refusal rather than a TypeError (#239).
+const ts = loadTypeScript(projectDir, { toolName: 'tsc-envelope' });
+
+// ── relPath(sourceFile) — the PARSER's path convention, not ours ─────────────
+// The scorer joins the oracle and the IR on (file, line, col, endLine, endCol), and the
+// file on the IR side is the parser's `filePath`, which is relative to the project the
+// parser discovered — one per workspace package on a monorepo. Emitting paths relative
+// to the analysis root instead produced `packages/pkg/src/X.ts` against the IR's
+// `src/X.ts`, and the two never joined: 36,500 IR sites, 40,827 oracle sites, ZERO
+// matched, which the conservation guard reported as 100% loss.
+//
+// So the roots the parser actually used are passed in, and each file is emitted relative
+// to the LONGEST root that contains it. One normalisation applied to both sides, rather
+// than a compensation applied to one.
+const ROOTS = (() => {
+  const f = process.env.PARSER_PROJECT_ROOTS;
+  if (!f) return [];
+  try {
+    return fs.readFileSync(f, 'utf8').split('\n').map((s) => s.trim()).filter(Boolean)
+      .map((p) => fs.realpathSync(p))
+      .sort((a, b) => b.length - a.length);
+  } catch { return []; }
+})();
+const REAL_PROJECT_DIR = (() => { try { return fs.realpathSync(projectDir); } catch { return projectDir; } })();
+// The SEPARATOR is part of the join key. score.py compares the site as a raw tuple of
+// strings — `(file, line, col, endLine, endCol)` — against the IR's `filePath`, which is
+// always "/"-separated. `path.relative` returns the PLATFORM separator, so on a platform
+// whose separator is not "/" the two sides never meet: measured 121 oracle sites, 121 IR
+// sites, 0 joined, reported as 100% conservation loss. TARGET identity in the same
+// comparison goes through realpath and canonicalises, so targets joined and sites did
+// not — one column of one comparison normalised and the other not (#341).
+//
+// Split/join on path.sep rather than replacing backslashes, so a file legitimately NAMED
+// with a backslash on a POSIX filesystem is left alone.
+const toPosix = path.sep === '/' ? (p) => p : (p) => p.split(path.sep).join('/');
+function relPath(fileName) {
+  let real = fileName;
+  try { real = fs.realpathSync(fileName); } catch { /* keep */ }
+  for (const r of ROOTS) {
+    const rel = path.relative(r, real);
+    if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) return toPosix(rel);
+  }
+  return toPosix(path.relative(REAL_PROJECT_DIR, real));
+}
+
+// Same upward-only discovery bug the oracle had: on a workspace repository whose
+// tsconfig lives under each package there is nothing at the root to find, and the
+// envelope simply produced no bound. Prefer an enclosing config, else take the first
+// workspace one — a single program is enough for a dispatch BOUND, which does not need
+// the whole repository the way the oracle's ground truth does.
+function findAnyConfig(dir) {
+  const up = ts.findConfigFile(dir, ts.sys.fileExists, 'tsconfig.json');
+  if (up && !path.relative(dir, up).startsWith('..')) return up;
+  const SKIP = new Set(['node_modules', '.git', 'dist', 'build', 'out', 'coverage', '.next', '.turbo']);
+  const walk = (d, depth) => {
+    if (depth > 4) return null;
+    let entries;
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return null; }
+    if (entries.some((e) => e.isFile() && e.name === 'tsconfig.json')) return path.join(d, 'tsconfig.json');
+    for (const e of entries) {
+      if (e.isDirectory() && !SKIP.has(e.name) && !e.name.startsWith('.')) {
+        const hit = walk(path.join(d, e.name), depth + 1);
+        if (hit) return hit;
+      }
+    }
+    return null;
+  };
+  return walk(dir, 0);
+}
+const configPath = findAnyConfig(projectDir);
+if (!configPath) {
+  console.error(`no tsconfig.json under ${projectDir}`);
+  process.exit(2);
+}
+const parsed = ts.parseJsonConfigFileContent(
+  ts.readConfigFile(configPath, ts.sys.readFile).config,
+  ts.sys,
+  path.dirname(configPath)
+);
+const program = ts.createProgram(parsed.fileNames, parsed.options);
+const checker = program.getTypeChecker();
+
+function pos(sf, offset) {
+  const lc = sf.getLineAndCharacterOfPosition(offset);
+  return [lc.line + 1, lc.character + 1];
+}
+function siteOf(decl) {
+  const dsf = decl.getSourceFile();
+  const [l, c] = pos(dsf, decl.getStart(dsf));
+  return `${path.basename(dsf.fileName)}:${l}:${c}`;
+}
+
+// ── the candidate universe: every class declared in the PROJECT ─────────────
+// Plus which of them are constructed anywhere, which is the RTA refinement.
+const projectClasses = [];
+const instantiated = new Set();
+
+for (const sf of program.getSourceFiles()) {
+  if (sf.isDeclarationFile) continue;
+  const rel = relPath(sf.fileName);
+  if (rel.startsWith('..')) continue;
+  const visit = (node) => {
+    if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+      const sym = node.name ? checker.getSymbolAtLocation(node.name) : node.symbol;
+      if (sym) {
+        const inst = checker.getDeclaredTypeOfSymbol(sym);
+        if (inst) projectClasses.push({ node, sym, inst });
+      }
+    }
+    if (ts.isNewExpression(node)) {
+      const t = checker.getTypeAtLocation(node);
+      const s = t?.getSymbol?.();
+      if (s) instantiated.add(s);
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sf, visit);
+}
+
+/**
+ * Every project class assignable to `recvType`, memoised on the checker's type id.
+ * The id is stable within one program, which is exactly the lifetime this cache has.
+ */
+const assignableCache = new Map();
+function assignableClasses(recvType) {
+  if (!recvType) return [];
+  const id = recvType.id ?? checker.typeToString(recvType);
+  const hit = assignableCache.get(id);
+  if (hit) return hit;
+  const out = [];
+  for (const c of projectClasses) {
+    try {
+      if (checker.isTypeAssignableTo(c.inst, recvType)) out.push(c);
+    } catch {
+      // An assignability question the checker cannot answer (a circular conditional
+      // type, a deferred inference) is recorded as "not in the envelope" rather than
+      // guessed. Under-reporting the envelope makes the bound TIGHTER, which risks
+      // calling a real dispatch possibility a false positive — so it is counted.
+      envelopeErrors += 1;
+    }
+  }
+  assignableCache.set(id, out);
+  return out;
+}
+let envelopeErrors = 0;
+
+/** The declarations of `name` on a type, following its own inheritance. */
+function memberDeclarations(type, name) {
+  const prop = checker.getPropertyOfType(type, name);
+  if (!prop) return [];
+  return prop.getDeclarations() ?? [];
+}
+
+const rows = [];
+let sites = 0;
+
+for (const sf of program.getSourceFiles()) {
+  if (sf.isDeclarationFile) continue;
+  const rel = relPath(sf.fileName);
+  if (rel.startsWith('..')) continue;
+
+  const visit = (node) => {
+    const isCall =
+      ts.isCallExpression(node) ||
+      ts.isNewExpression(node) ||
+      ts.isTaggedTemplateExpression(node) ||
+      ts.isJsxSelfClosingElement(node) ||
+      ts.isJsxOpeningElement(node) ||
+      ts.isDecorator(node);
+    if (isCall) {
+      sites += 1;
+      const [line, col] = pos(sf, node.getStart(sf));
+      const [eline, ecol] = pos(sf, node.getEnd());
+
+      let must = '';
+      let callKind = 'FUNCTION_CALL';
+      let calleeName = '';
+      try {
+        const sig = checker.getResolvedSignature(node);
+        if (sig?.declaration) must = siteOf(sig.declaration);
+      } catch {
+        /* left empty — an unresolvable site has no must-have target */
+      }
+
+      const cha = new Set();
+      const rta = new Set();
+      const expr = node.expression;
+      if (ts.isNewExpression(node)) {
+        callKind = 'CONSTRUCTOR_CALL';
+        calleeName = expr ? expr.getText() : '';
+        // EVERY construct signature of the constructed value's type. `new Error(msg)`
+        // has three across lib.es5 and lib.es2022; the compiler names one, and an
+        // engine that cannot separate them is over-approximating within one entity
+        // rather than naming a different one. That belongs inside the envelope, the
+        // same way an overload set does.
+        try {
+          const ctorType = expr ? checker.getTypeAtLocation(expr) : undefined;
+          for (const sig of ctorType?.getConstructSignatures?.() ?? []) {
+            if (sig.declaration) {
+              const sd = siteOf(sig.declaration);
+              cha.add(sd);
+              rta.add(sd);
+            }
+          }
+        } catch { /* no construct signatures to add */ }
+      } else if (expr && ts.isPropertyAccessExpression(expr)) {
+        callKind = 'METHOD_CALL';
+        calleeName = expr.name.getText();
+        // THE DISPATCH QUESTION: what can the receiver actually be at run time, and
+        // which body would then run. The receiver's type is taken at the receiver
+        // expression, not at the call — narrowing applies to the former.
+        let recvType;
+        try {
+          recvType = checker.getTypeAtLocation(expr.expression);
+        } catch {
+          recvType = undefined;
+        }
+        if (recvType) {
+          for (const c of assignableClasses(recvType)) {
+            for (const d of memberDeclarations(c.inst, calleeName)) {
+              const s = siteOf(d);
+              cha.add(s);
+              if (instantiated.has(c.sym)) rta.add(s);
+            }
+          }
+        }
+      } else if (expr && ts.isIdentifier(expr)) {
+        calleeName = expr.getText();
+      }
+
+      // The must-have target is always inside both bounds by construction: the
+      // compiler named it, so it is a dispatch possibility. Adding it explicitly
+      // keeps the envelope a true SUPERSET even where the receiver is a library type
+      // and no project class is assignable to it.
+      if (must) {
+        cha.add(must);
+        rta.add(must);
+      }
+
+      // THE OVERLOAD SET IS INSIDE THE ENVELOPE, and leaving it out makes the bound
+      // wrong rather than merely tight. Picking a different overload of the SAME
+      // function is an over-approximation — the call does reach that function — while
+      // picking a different function is a defect. The envelope has to be able to tell
+      // those apart, so every declaration of the resolved symbol belongs in it.
+      //
+      // Measured on this corpus: `new Error(msg)` has three construct signatures
+      // across lib.es5 and lib.es2022, the compiler names one, and an engine that
+      // emits all three was being scored as three false positives for what is one
+      // ordinary ambiguity.
+      //
+      // ── TWO SYMBOLS, BECAUSE NEITHER ALONE IS THE DECLARATION SET (#242) ──
+      // `sig.declaration.symbol` is the symbol the RESOLVED DECLARATION belongs to.
+      // It carries every overload declared in the SAME file and only those. The
+      // symbol the callee NAME resolves to is the MERGED one, and a `declare
+      // function` repeated in two .d.ts files — or an `interface` reopened in
+      // another — merges into a single symbol whose declarations span both. Measured
+      // on a two-file synthetic:
+      //
+      //   dual("a")      same file    both symbols give both declarations
+      //   ping("hi")     two files    declaration-local gives ONE, merged gives both
+      //   theBox.open()  two files    declaration-local gives ONE, merged gives both
+      //
+      // Reading only the first is what made an engine edge to a merged `setTimeout`
+      // or `String#replace` declaration — the very symbol the compiler resolved, in
+      // the other file it is also declared in — score as a fabrication.
+      //
+      // ── AND WHY THE UNION IS FILTERED ─────────────────────────────────────
+      // The merged symbol's declarations are NOT all bodies. Unfiltered, the union
+      // added 16,686 declarations across 15,830 sites on one dev project, of which
+      // 9,989 were `VariableDeclaration` and 5,654 `PropertySignature` — `declare
+      // const expect: ExpectStatic`, `interface X { toBe: ... }`. A value
+      // declaration is not something a call can dispatch INTO, and admitting it
+      // would widen the bound severalfold in the direction that flatters the engine,
+      // which is the one direction SCORING says to distrust. Only 56 of those
+      // additions were function-like, and those are the ones this is for.
+      //
+      // An import alias is resolved through first: the alias symbol's own
+      // declaration is the `import` statement, which is not a body either.
+      const declSymbols = [];
+      try {
+        const sig = checker.getResolvedSignature(node);
+        if (sig?.declaration?.symbol) declSymbols.push(sig.declaration.symbol);
+      } catch {
+        /* no resolved signature, so no declaration-local overload set */
+      }
+      try {
+        const nameNode = expr && ts.isPropertyAccessExpression(expr) ? expr.name : expr;
+        let merged = nameNode ? checker.getSymbolAtLocation(nameNode) : undefined;
+        if (merged && merged.flags & ts.SymbolFlags.Alias) {
+          try { merged = checker.getAliasedSymbol(merged); } catch { /* keep the alias */ }
+        }
+        if (merged) declSymbols.push(merged);
+      } catch {
+        /* the callee names no symbol — a computed or synthesised call */
+      }
+      for (const sym of declSymbols) {
+        for (const d of sym.getDeclarations?.() ?? []) {
+          if (!ts.isFunctionLike(d)) continue;
+          const s = siteOf(d);
+          cha.add(s);
+          rta.add(s);
+        }
+      }
+
+      const chaList = [...cha].slice(0, MAX_TARGETS);
+      const rtaList = [...rta].slice(0, MAX_TARGETS);
+      rows.push(
+        [
+          rel, line, col, eline, ecol, callKind,
+          calleeName.replace(/\t|\n/g, ' '),
+          must,
+          cha.size, rta.size,
+          chaList.join(';'), rtaList.join(';'),
+        ].join('\t')
+      );
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sf, visit);
+}
+
+fs.writeFileSync(
+  outPath,
+  ['callFile','callLine','callCol','callEndLine','callEndCol','callKind','calleeName',
+   'mustTarget','chaCount','rtaCount','chaTargets','rtaTargets'].join('\t') +
+    '\n' + rows.join('\n') + '\n'
+);
+console.error(
+  `envelope: ${sites} sites, ${projectClasses.length} project classes ` +
+    `(${instantiated.size} instantiated), ${assignableCache.size} distinct receiver types, ` +
+    `${envelopeErrors} assignability errors -> ${outPath}`
+);

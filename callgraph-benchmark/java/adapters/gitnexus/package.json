@@ -1,0 +1,8 @@
+{
+  "name": "benchmark-tool-gitnexus",
+  "private": true,
+  "description": "The pinned install of gitnexus. package-lock.json beside this file is the FULL closure, committed so a clean install resolves what the committed scores were produced by (#103); install.sh runs `npm ci`, which installs the lock and refuses to update it.",
+  "dependencies": {
+    "gitnexus": "1.6.11"
+  }
+}

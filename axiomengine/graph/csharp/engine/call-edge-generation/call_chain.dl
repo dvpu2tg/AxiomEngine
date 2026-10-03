@@ -1,0 +1,390 @@
+// ============================================================================
+// CALL-EDGE GEN · CALL CHAIN  (confidence-classified, queryable call graph)
+//
+// One self-describing row per edge, in the shape every front end exports:
+//
+//   call_chain_edge(FromExpr, FromMethod, ToExpr, ToMethod, Prov, EdgeStatus, Kind)
+//
+// THE INVARIANT THIS FILE EXISTS TO HOLD: every invocation site in the IR appears
+// in the output at least once. A site that resolved appears with its target; a site
+// that did not appears with ToMethod "-" and a status saying so. There is no third
+// outcome. A resolution gap must degrade to a declared unknown, never to silence,
+// because a missing row is indistinguishable from a site that was never in the
+// source and is therefore unfindable.
+//
+// That is enforced structurally rather than by discipline: the final clause keys on
+// whether an edge was ACTUALLY DERIVED for the site, not on how the site was
+// classified. So the next filter someone adds that removes every target from a site
+// produces a visible unknown instead of deleting the site. The Java engine learned
+// this the hard way (a shadowing filter removed both targets of a resolved site and
+// the site vanished), and the same structure is used here for the same reason.
+//
+// CONFIDENCE TIERS:
+//   known_edge        exactly one target. In C# this is the COMMON case, because
+//                     dispatch is opt-in: a method is non-virtual unless it says
+//                     otherwise. An engine that ports Java's every-method-is-virtual
+//                     assumption reports multi_inferred on most of a C# codebase.
+//   multi_inferred    2+ targets: a sound SET, the true target is among them.
+//   fan_capped        the fan exceeded --dispatch-cap and was REFUSED. Named base
+//                     only; not monomorphic, and dispatch_capped_site has the count.
+//   boundary_lib      the target is in a staged library, or behind an unresolved
+//                     base. Marked and not expanded.
+//   ambiguous_unknown a real site that resolved to nothing. The chain dead-ends and
+//                     this is where the blind spots are counted.
+//   ambiguous_dynamic a call through `dynamic`. Unresolvable BY DESIGN: the DLR
+//                     decides at runtime. Separated from ambiguous_unknown so a
+//                     known-undecidable site is never counted as an engine failure.
+//   event_dispatch    NOT the site's own target: a framework runs this method for the
+//                     site in process (a mediator's Send reaching the handler for the
+//                     request type). Added beside the site's row, by
+//                     framework-behavior/dispatch.dl.
+// ============================================================================
+
+// ── THE SITE UNIVERSE ───────────────────────────────────────────────────────
+// Seeded from cs_call_site, which is the parser's record of every call WRITTEN.
+// The kind is carried through so a consumer can filter by form and so a synthesised
+// edge is never mistaken for a written one.
+invocation_site(prov, e, "method") :- call_needs_member_lookup(prov, e).
+invocation_site(prov, e, "method") :- call_is_unqualified(prov, e), !call_is_dynamic(prov, e).
+invocation_site(prov, e, "new") :- call_needs_ctor_lookup(prov, e).
+invocation_site(prov, e, "ctor_delegate") :- call_is_this_ctor(prov, e).
+invocation_site(prov, e, "ctor_delegate") :- call_is_base_ctor(prov, e).
+invocation_site(prov, e, "delegate") :- call_is_delegate_invoke(prov, e).
+invocation_site(prov, e, "operator") :- call_is_operator(prov, e).
+invocation_site(prov, e, "conversion") :- call_is_conversion(prov, e).
+invocation_site(prov, e, "indexer") :- call_is_element_access(prov, e).
+invocation_site(prov, e, "dynamic") :- call_is_dynamic(prov, e).
+
+// ANY call site the clauses above did not classify. This is the catch-all that makes
+// the universe equal to the parser's own site list: a call kind added to the schema
+// later, or one this engine has no rule for, still reaches the output as a site.
+// Without it, a new kind would be invisible rather than unresolved.
+//
+// DERIVED FROM THE CALL KINDS, NOT FROM invocation_site. Negating invocation_site
+// here puts a negation inside its own recursion and souffle refuses to stratify the
+// program ("Unable to stratify relation(s) {invocation_site,
+// invocation_site_classified}"). Listing the kinds that ARE handled keeps the
+// catch-all in an earlier stratum, and it also makes the omission explicit: a kind
+// added to CsCallKind and not added here lands in "other" rather than being
+// silently absorbed.
+invocation_site_classified(prov, e) :- call_needs_member_lookup(prov, e).
+invocation_site_classified(prov, e) :- call_is_unqualified(prov, e).
+invocation_site_classified(prov, e) :- call_needs_ctor_lookup(prov, e).
+invocation_site_classified(prov, e) :- call_is_this_ctor(prov, e).
+invocation_site_classified(prov, e) :- call_is_base_ctor(prov, e).
+invocation_site_classified(prov, e) :- call_is_delegate_invoke(prov, e).
+invocation_site_classified(prov, e) :- call_is_operator(prov, e).
+invocation_site_classified(prov, e) :- call_is_conversion(prov, e).
+invocation_site_classified(prov, e) :- call_is_element_access(prov, e).
+invocation_site_classified(prov, e) :- call_is_dynamic(prov, e).
+invocation_site(prov, e, "other") :- csite(prov, e), !invocation_site_classified(prov, e).
+
+// ── OBJECT CREATION WITH NO CALL-SITE ROW ───────────────────────────────────
+// An OBJECT_CREATION expression the parser did not also record as a call site is
+// still a construction. Seeded from the raw expression kind, so an unresolvable
+// `new ThirdPartyThing()` produces a site and is flagged, rather than producing
+// nothing at all. Symmetric with how the Java engine seeds `new`.
+invocation_site(prov, e, "new") :-
+    expr_kind(prov, e, "OBJECT_CREATION"), !csite(prov, e).
+
+// ── PER-SITE TARGET COUNT ───────────────────────────────────────────────────
+call_target_count(prov, e, n) :-
+    invocation_site(prov, e, _),
+    n = count : { expr_resolves_to_method(prov, e, _) }.
+
+// ── THE TIER ────────────────────────────────────────────────────────────────
+// A site whose receiver type has an INCOMPLETE HIERARCHY is never known_edge. The
+// member may well be declared in the base nobody staged, so the one target that
+// resolved is a target and so is whatever the missing base declares. Saying
+// known_edge there claims monomorphism the engine cannot support.
+site_leaves_client(prov, e) :- call_recv_type(prov, e, gk), type_hierarchy_incomplete(prov, gk).
+site_leaves_client(prov, e) :- client_calls_lib(prov, e, _, _).
+// A site whose target is an UNSTAGED type leaves the client too. Without this every
+// `Console.WriteLine` in a client-only run is counted as an engine blind spot, and on
+// a real project that is most of the unresolved sites -- which makes the number that
+// matters unreadable.
+site_leaves_client(prov, e) :- external_target(prov, e, _).
+// A call through a field or property holding a delegate lands on the delegate's
+// Invoke, which the runtime supplies (resolution/delegates.dl). The site gets an edge
+// to that member's Invoke node and the stored functions are in the envelope.
+site_leaves_client(prov, e) :- delegate_member_call(prov, e, _).
+
+call_class(prov, e, "fan_capped") :- call_fan_refused(prov, e).
+call_class(prov, e, "known_edge") :-
+    call_target_count(prov, e, 1), !site_leaves_client(prov, e), !call_fan_refused(prov, e).
+call_class(prov, e, "multi_inferred") :-
+    call_target_count(prov, e, 1), site_leaves_client(prov, e), !call_fan_refused(prov, e).
+call_class(prov, e, "multi_inferred") :-
+    call_target_count(prov, e, n), n >= 2, !call_fan_refused(prov, e).
+
+// Zero targets, split by REASON. The split matters: only the last of these is a
+// defect in this engine, and lumping them together makes the blind-spot count
+// useless for deciding what to fix next.
+call_class(prov, e, "ambiguous_dynamic") :-
+    call_target_count(prov, e, 0), call_unresolvable_by_design(prov, e, _).
+// A type with no declared constructor: `new Foo()` where Foo declares none. There is
+// no user code to call, so nothing resolving is the right answer.
+call_class(prov, e, "known_implicit_ctor") :-
+    call_target_count(prov, e, 0), call_ctor_implicit(prov, e, _).
+
+// AN OPERATOR OR CAST THAT RAN NO USER CODE. `i + 1`, `s == null`, `(int)d`: the
+// operator is one of the language's built-ins and the cast is a numeric or
+// reference conversion. There is no method anywhere -- System.Int32 declares no
+// op_Addition, it is an IL instruction -- so the engine saying nothing is the
+// truthful answer, on the same footing as a compiler-synthesised default
+// constructor and counted in its own bucket rather than as a blind spot.
+//
+// EVERY C# PROGRAM IS MOSTLY THIS. The parser emits a site for every written
+// operator and cast, because deciding whether one is user-defined needs the
+// operand's type and that is this layer's question, not syntax's. Folding the
+// remainder into ambiguous_unknown would put thousands of correct answers into the
+// one number the engine is judged on and make it unreadable, which is the same
+// mistake the external-type clause exists to avoid for `Console.WriteLine`.
+//
+// WHAT THIS GIVES UP, AND WHERE IT IS KEPT. The blind-spot count can no longer
+// separate "built-in operator" from "a declared operator the engine failed to
+// find". That distinction needs the compiler, and the harness HAS the compiler: the
+// Roslyn oracle emits a ground-truth row for every user-defined operator site, so a
+// failure to resolve one shows up as a missed site or a disagreement there. The
+// distinction is kept in the instrument that can make it.
+// GATED ON THERE BEING NO NAMED BOUNDARY. An operator on an unstaged operand type
+// -- `DateTime - DateTime` -- IS a real method in a library, and external-types.dl
+// names it; that site is boundary_lib and a consumer can follow it. This bucket is
+// for the remainder, where there is no member anywhere to name.
+call_class(prov, e, "known_builtin_operator") :-
+    call_target_count(prov, e, 0), call_ran_no_user_code(prov, e),
+    !site_leaves_client(prov, e).
+// The receiver's hierarchy is incomplete, so the member may be in an unstaged base.
+call_class(prov, e, "boundary_lib") :-
+    call_target_count(prov, e, 0), site_leaves_client(prov, e),
+    !call_unresolvable_by_design(prov, e, _), !call_ctor_implicit(prov, e, _).
+// A genuine blind spot.
+call_class(prov, e, "ambiguous_unknown") :-
+    call_target_count(prov, e, 0),
+    !site_leaves_client(prov, e),
+    !call_unresolvable_by_design(prov, e, _),
+    !call_ctor_implicit(prov, e, _),
+    !call_ran_no_user_code(prov, e).
+
+// The two above, as one name, so the negations read as the single claim they are.
+call_ran_no_user_code(prov, e) :- call_is_operator(prov, e).
+call_ran_no_user_code(prov, e) :- call_is_conversion(prov, e).
+
+// ── THE EDGES ───────────────────────────────────────────────────────────────
+call_chain_edge(e, caller, "-", callee, "client", cls, kind) :-
+    client_calls_client("client", e, "client", callee),
+    call_from("client", e, caller),
+    call_class("client", e, cls),
+    invocation_site("client", e, kind).
+
+call_chain_edge(e, caller, "-", callee, "lib", "boundary_lib", kind) :-
+    client_calls_lib("client", e, "lib", callee),
+    call_from("client", e, caller),
+    invocation_site("client", e, kind).
+
+// client -> THE BODILESS DECLARATION A FANNED CALL BINDS TO. `s.Area()` on an
+// IShape resolves to every implementation, and the declaration it is written
+// against -- the interface member, or an abstract method -- is in no resolved set,
+// because no body of it can run. Without this edge the declaration has no caller:
+// asking who depends on IShape.Area finds nothing while every caller of it is in the
+// graph. It is what the compiler binds the call to, and it takes the site's own class,
+// so the site keeps the tier its runtime targets gave it. Emitted here and not in
+// expr_resolves_to_method, which is the fan the oracle scores and the count the tier
+// is read from.
+call_chain_edge(e, caller, "-", declared, "client", cls, kind) :-
+    call_names_bodiless(e, declared),
+    call_from("client", e, caller),
+    call_class("client", e, cls),
+    invocation_site("client", e, kind).
+call_names_bodiless(e, declared) :-
+    expr_call_candidate("client", e, declared),
+    method_decl("client", _, _, _, declared),
+    method_is_bodiless("client", declared),
+    !dispatch_is_exact("client", e),
+    !ovl_drop("client", e, declared),
+    expr_resolves_to_method("client", e, _).
+method_is_bodiless(prov, m) :- method_is_abstract(prov, m).
+method_is_bodiless(prov, m) :-
+    interface_member(prov, _, _, "method", m), !interface_has_default_impl(prov, m).
+
+// client -> EXTERNAL. The target is outside every staged IR, so ToMethod is a LABEL
+// (`external:<Type>.<Member>`) rather than a method hash, and the bundle routes it to
+// callee_label by the "external" provenance -- the same convention Java and Python
+// use for unstaged imports. A chain then ends at a named boundary instead of stopping.
+call_chain_edge(e, caller, "-", label, "external", "boundary_lib", kind) :-
+    client_calls_external(e, label),
+    call_from("client", e, caller),
+    invocation_site("client", e, kind).
+
+// client -> A DELEGATE MEMBER'S INVOKE (#1206). `getPath(url)` on a field holding a
+// delegate calls Invoke -- Roslyn's answer too -- and which stored function then runs
+// is value flow, recorded in method_dispatch_candidate with basis `value` rather than
+// claimed at the site. The node is `generated:<owner>#<member>.Invoke`, one per
+// member, and the bundle gives it a methods row. An explicit `f.Invoke(x)` keeps the
+// external label it already had and gains this row beside it.
+call_chain_edge(e, caller, "-", node, "client", "boundary_lib", kind) :-
+    delegate_member_call("client", e, mem),
+    delegate_invoke_node(mem, node),
+    call_from("client", e, caller),
+    invocation_site("client", e, kind).
+
+// ── SYNTHESISED EDGES: A PRIMARY CONSTRUCTOR'S BASE INVOCATION ──────────────
+// `class D(int a) : B(a)` calls B's constructor with no call syntax anywhere in the
+// body. The kind says primary_ctor_base so a synthesised edge is never mistaken for
+// a written call, and the FromExpr is the heritage's type reference, which is where
+// the call is written.
+//
+// Not an invocation_site, deliberately: the conservation guard asks that every
+// invocation-shaped IR expression reaches the output, and inventing a site would put
+// a row on the other side of that ledger.
+call_chain_edge(tr, caller, "-", ctor, "client", "known_edge", "primary_ctor_base") :-
+    heritage_has_ctor_args("client", t, pos),
+    type_group("client", t, gk),
+    heritage_of_entity("client", gk, pos, _, _, tr), tr != "",
+    primary_ctor_base_target("client", gk, ctor),
+    method_decl("client", _, _, _, ctor),
+    type_ctor("client", gk, caller).
+call_chain_edge(tr, caller, "-", ctor, "lib", "boundary_lib", "primary_ctor_base") :-
+    heritage_has_ctor_args("client", t, pos),
+    type_group("client", t, gk),
+    heritage_of_entity("client", gk, pos, _, _, tr), tr != "",
+    primary_ctor_base_target("client", gk, ctor),
+    method_decl("lib", _, _, _, ctor),
+    type_ctor("client", gk, caller).
+
+// ── ACCESSOR EDGES: A PROPERTY READ IS A CALL ───────────────────────────────
+// `x.Name` invokes get_Name, `a[i]` an indexer accessor, `e += h` an add accessor.
+// These have no cs_call_site row -- the parser cannot know whether `x.Name` is a
+// field, a property or an event, so the site is a MEMBER_ACCESS and the engine
+// decides -- which is why they are emitted here rather than through invocation_site.
+//
+// KINDED SEPARATELY (property_read, property_write, indexer, event_subscribe) so a
+// consumer asking "who calls this method" gets them while one asking "who calls it
+// explicitly" can exclude them. Folding them into `method` makes both questions
+// unanswerable.
+//
+// NOT invocation_site rows, deliberately: the conservation guard asks that every
+// invocation-shaped IR expression reach the output, and a MEMBER_ACCESS is not one.
+// Adding them to that universe would put rows on the other side of the ledger.
+call_chain_edge(e, caller, "-", acc, "client", tier, kind) :-
+    accessor_edge("client", e, acc, kind),
+    method_decl("client", _, _, _, acc),
+    call_from_expr("client", e, caller),
+    accessor_tier("client", e, tier).
+call_chain_edge(e, caller, "-", acc, "lib", "boundary_lib", kind) :-
+    accessor_edge("client", e, acc, kind),
+    method_decl("lib", _, _, _, acc),
+    call_from_expr("client", e, caller).
+
+// The tier of an accessor site, by the same rule as a call site: one target is
+// known_edge, several is a sound set. A property accessor can be virtual, so the fan
+// is real rather than theoretical.
+// An indexer that also carries an external label (an unstaged base may declare the
+// indexer that binds) is one of two, exactly as a call site with an incomplete receiver
+// hierarchy is never known_edge.
+accessor_tier(prov, e, "known_edge") :- accessor_edge_count(prov, e, 1), !external_element_access(prov, e, _).
+accessor_tier(prov, e, "multi_inferred") :- accessor_edge_count(prov, e, 1), external_element_access(prov, e, _).
+accessor_tier(prov, e, "multi_inferred") :- accessor_edge_count(prov, e, c), c >= 2.
+
+// call_from_expr: the caller of an ARBITRARY expression, not only of a call site.
+// call_from is keyed on csite and an accessor site is not one, so it needs its own
+// attribution with the same guarantee -- never blank.
+call_from_expr(prov, e, m) :- expr_ultimate_method(prov, e, m).
+call_from_expr(prov, e, t) :- expr_ultimate_type(prov, e, t), !expr_ultimate_method(prov, e, _).
+
+// ── UNRESOLVED SITES KEEP A ROW ─────────────────────────────────────────────
+// Keyed on whether an edge was DERIVED, not on the tier. This is the clause that
+// makes a resolution gap visible instead of silent: any later filter that removes
+// every target from a site produces a declared unknown here rather than deleting
+// the site from the output.
+call_has_edge(prov, e) :- client_calls_client(prov, e, _, _).
+call_has_edge(prov, e) :- client_calls_lib(prov, e, _, _).
+call_has_edge("client", e) :- client_calls_external(e, _).
+call_has_edge("client", e) :- delegate_member_call("client", e, _).
+
+call_chain_edge(e, caller, "-", "-", "-", cls, kind) :-
+    invocation_site("client", e, kind),
+    call_from("client", e, caller),
+    !call_has_edge("client", e),
+    call_class("client", e, cls).
+
+// A site with no tier at all would still be lost, so the last resort names one.
+// Should be empty; if it is not, the count says so instead of the rows vanishing.
+call_chain_edge(e, caller, "-", "-", "-", "ambiguous_unknown", kind) :-
+    invocation_site("client", e, kind),
+    call_from("client", e, caller),
+    !call_has_edge("client", e),
+    !call_class("client", e, _).
+
+// A PROPERTY READ ON AN EXTERNAL RECEIVER. Named, not resolved, exactly as an
+// external method call is.
+call_chain_edge(acc, caller, "-", label, "external", "boundary_lib", "property_read") :-
+    external_property_read("client", acc, label),
+    call_from_expr("client", acc, caller).
+
+// AN ELEMENT ACCESS ON AN EXTERNAL RECEIVER, for the same reason and in the same
+// shape. `xs[0]` is a call to get_Item; with the receiver's type unstaged there is
+// no member to resolve, and the site used to reach the output as no row at all.
+call_chain_edge(e, caller, "-", label, "external", "boundary_lib", "indexer") :-
+    external_element_access("client", e, label),
+    call_from_expr("client", e, caller).
+
+// A PROPERTY READ THROUGH `dynamic`. The same declared blind spot as a call through
+// `dynamic`, and it reaches the output for the same reason: a site that produced no
+// row is indistinguishable from one the engine never saw. No target, because there
+// is no member to name.
+call_chain_edge(acc, caller, "-", "-", "-", "ambiguous_dynamic", "property_read") :-
+    dynamic_property_read("client", acc),
+    call_from_expr("client", acc, caller).
+
+// ── A GENERATED RECORD PROPERTY READ ────────────────────────────────────────
+// `formatting.UsesInvariantDigits` on a positional record invokes a getter the
+// compiler generated. There is no cs_method row to point at, correctly, because no
+// accessor was written, so the edge carries a LABEL in the shape the oracle uses for
+// the member. The site stops being a blind spot and the row says there is no body to
+// walk into.
+call_chain_edge(acc, caller, "-", label, "generated", "boundary_generated", "property_read") :-
+    generated_accessor_read("client", acc, label),
+    call_from_expr("client", acc, caller).
+
+// ── RUNTIME-OBSERVED EDGES ──────────────────────────────────────────────────
+// An edge the TRACE saw and the static pass did not name. Real by construction: it
+// happened. Emitted with the tier `runtime_observed` and the kind `runtime`, so a
+// consumer can tell at a glance that it has no written call site behind it and that
+// its evidence is a workload rather than a reading of the source.
+//
+// FromExpr is the CALLER METHOD, not an expression. The tracer probes method entry,
+// so it knows the caller called the callee and cannot say from which site --
+// claiming one would invent precision the instrument does not have.
+//
+// These only ever ADD. Nothing in the engine removes an edge because a trace did not
+// contain it: a workload is a lower bound, and a run that covered 554 of 604 methods
+// says nothing about the other 50.
+call_chain_edge(callerM, callerM, "-", calleeM, "client", "runtime_observed", "runtime") :-
+    runtime_closes_blind_spot(callerM, calleeM).
+call_chain_edge(callerM, callerM, "-", calleeM, "client", "runtime_observed", "runtime") :-
+    runtime_unexplained_edge(callerM, calleeM).
+
+// ── CALLER-SCOPED BLIND SPOTS ───────────────────────────────────────────────
+// Which methods contain sites the engine could not resolve, so change-impact can
+// say "this answer is incomplete, and here is where".
+method_has_unknown_call(caller, e) :-
+    call_class("client", e, "ambiguous_unknown"), call_from("client", e, caller).
+method_has_unknown_call(caller, e) :-
+    call_class("client", e, "fan_capped"), call_from("client", e, caller).
+
+// ── THE CONSERVATION GUARD ──────────────────────────────────────────────────
+// call_site_dropped(SiteExpr) -- a call site in the IR that produced NO row in the
+// output. This must be empty. It is exported so that it is checked by a number
+// rather than believed, and the suite fails on a non-zero count.
+//
+// This is the difference between an engine that reports its own coverage and one
+// that reports the coverage of whatever happened to resolve.
+site_in_output(e) :- call_chain_edge(e, _, _, _, _, _, _).
+call_site_dropped(e) :- csite("client", e), !site_in_output(e).
+
+// call_chain_summary(Tier, Count) -- the per-tier tally, which is the one number a
+// run is judged on.
+call_chain_summary(cls, n) :-
+    call_class("client", _, cls),
+    n = count : { call_class("client", _, cls) }.

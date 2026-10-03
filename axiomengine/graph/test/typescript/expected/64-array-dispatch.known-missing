@@ -1,0 +1,24 @@
+# Accepted gaps for 64-array-dispatch. Each line is an edge the TypeScript compiler
+# resolves and this engine does not. A NEW missing edge fails the suite;
+# a line here that STARTS working also fails, so the debt cannot rot.
+#
+# All three are the same family: a callable registered as DATA and reached through
+# the collection holding it, rather than named at the call site. They are pinned
+# here rather than left silent because an absent edge and an unmodelled one are
+# indistinguishable to a consumer, and an empty impact answer reads as "nothing
+# depends on this", which is the most costly thing to say incorrectly.
+#
+# Measured against the TypeScript compiler's own answer (checker.getResolvedSignature,
+# via tools/tsc_oracle_case.mjs): oracle=7 engine=4 agree=4 extra=0. runDirect, and
+# each step's own call to measure, resolve and are the controls.
+#
+# They are no longer SILENT (#967): each is a `value_call` in
+# expected/64-array-dispatch.envelope, a dispatch-rung route that impact, path and
+# test selection walk. The call-site answer stays absent on purpose. For a collection
+# of several functions the compiler names one arbitrary member of the element union,
+# and a call-site answer could only match it by being wrong at every other element
+# (case 78 measures that).
+pipeline#runIterated(Node) -> steps#widenRange(Node)
+pipeline#runIndexed(Node) -> steps#widenRange(Node)
+# runByName (`byName.square(node)`) resolves: a NAMED property of a literal is one function,
+# not an element of a union, so the compiler's answer is exact and now matched.

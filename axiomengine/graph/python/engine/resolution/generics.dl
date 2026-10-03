@@ -1,0 +1,284 @@
+// ============================================================================
+// RESOLUTION · GENERICS  (binding a type argument to a type parameter)
+//
+// `class Repository(Generic[T], ABC)` declares T; `class ItemStore(Repository[Item])`
+// binds it. So `Repository.get_all(...) -> List[T]` returns a list of ITEMS when the
+// receiver is an ItemStore and a list of ORDERS when it is an OrderStore — from ONE
+// inherited method with ONE annotation. Without the substitution the annotation reads
+// `List[T]`, T resolves to nothing, and the element type is lost.
+//
+// MEASURED on test/python/projects/two-service-fastapi: that cost the
+// `[order.label for order in self.store.get_all(keys)]` chain in
+// OrderHandlers.describe_all — a property read on a comprehension variable whose
+// container came back from a generic method. It was the only recall gap left that was not
+// a registry indirection.
+//
+// This is the analogue of java/engine/resolution/type-arg-binding.dl, and the shape is
+// simpler here for one reason: Python has no wildcards and no bounded-wildcard variance to
+// propagate, so a binding is a plain (subclass, superclass, parameter name) -> type map.
+//
+// ── WHAT IS DELIBERATELY NOT DONE ────────────────────────────────────────────
+// A TypeVar is NOT a class, and an UNBOUND one stays unbound. `class
+// ItemSerializer(Serializer)` inherits `to_dict(self, obj: T)` without ever saying what T
+// is, so `obj` has no type here and the site is a declared unknown — correctly. Guessing
+// from the one call site would be flow, not generics, and it would be wrong the moment a
+// second caller appeared.
+// ============================================================================
+
+// ── generic_declarator(Name) — the bases that DECLARE parameters ─────────────
+// `Generic[T]` and `Protocol[T]` are the two forms that introduce type parameters. Any
+// other subscripted base (`Repository[Item]`, `Mapping[str, int]`) SUPPLIES arguments.
+generic_declarator("Generic").
+generic_declarator("Protocol").
+
+// ── type_type_param(Prov, TypeHash, Position, ParamName) ─────────────────────
+// The type parameters a class declares, in order. Read off the GENERIC_ARGUMENT children
+// of its `Generic[...]` base — position is the parameter's index, which is what a later
+// `Repository[Item]` matches against.
+type_type_param(p, t, pos, name) :-
+    type_base_slot(p, t, _, "SUBSCRIPT", simple, _, bh), generic_declarator(simple),
+    type_base_ref(p, bh, r),
+    type_ref_nesting(p, r, pos, "1", child),
+    type_ref(p, _, "GENERIC_ARGUMENT", name, _, child), name != "".
+
+// ── type_base_ref(Prov, BaseHash, TypeRefHash) ───────────────────────────────
+// The twin type_reference row of a base slot. THE SANCTIONED PATH: py_type_base carries
+// pyTypeReferenceLinkHash on every row and deliberately does NOT carry a direct
+// pyExpressionLinkHash — a second edge to the same node could disagree with the first.
+// So everything that needs a base's annotation structure goes through the reference.
+type_base_ref("client", h, r) :- py_type_base(_, _, _, _, _, _, _, _, _, r, _, _, _, _, _, h), r != "".
+type_base_ref("lib", h, r) :- lib_py_type_base(_, _, _, _, _, _, _, _, _, r, _, _, _, _, _, h), r != "".
+
+// ── type_generic_binding(Prov, SubType, SuperType, ParamName, ArgType) ───────
+// `class ItemStore(Repository[Item])` binds Repository's T to Item. The argument at
+// position i binds the parameter the SUPERCLASS declared at position i.
+type_generic_binding(p, sub, sup, name, arg) :-
+    type_base_slot(p, sub, _, "SUBSCRIPT", _, _, bh),
+    type_base_resolved_via_ref(p, bh, sup),
+    type_base_ref(p, bh, r),
+    type_ref_nesting(p, r, pos, "1", child),
+    type_ref_resolved(p, arg, child),
+    type_type_param(p, sup, pos, name).
+
+// ── type_base_resolved_via_ref(Prov, BaseHash, SuperTypeHash) ────────────────
+// A subscripted base's class, through the reference. `Repository[Item]`'s reference
+// resolves to Repository — the subscript object, which is the runtime base.
+type_base_resolved_via_ref(p, bh, sup) :- type_base_ref(p, bh, r), type_ref_resolved(p, sup, r).
+// And by NAME, so it survives a library boundary where no hash can match.
+type_base_resolved_via_ref(p, bh, sup) :-
+    type_base_slot(p, sub, _, "SUBSCRIPT", simple, _, bh), simple != "",
+    type_module(p, mod, sub),
+    type_name_in_module(p, mod, simple, sup).
+
+// ── type_generic_binding_inherited ───────────────────────────────────────────
+// A binding is visible to every ancestor that declares the parameter, so a method
+// inherited two levels up still substitutes. `AuditedItemStore(ItemStore)` inherits
+// ItemStore's T=Item without restating it.
+type_generic_binding(p, sub, sup, name, arg) :-
+    type_base_resolved(p, sub, _, mid),
+    type_generic_binding(p, mid, sup, name, arg).
+
+// ── generic_unbound(Prov, TypeHash, SuperType, ParamName) ────────────────────
+// The class inherits a generic base WITHOUT supplying an argument:
+// `class ItemSerializer(Serializer)`. The parameter stays unbound, every annotation
+// mentioning it is untyped, and that is the correct answer — recorded so the cost is a
+// countable row rather than a silent miss.
+generic_unbound(p, sub, sup, name) :-
+    type_base_resolved(p, sub, _, sup),
+    type_type_param(p, sup, _, name),
+    !type_generic_binding(p, sub, sup, name, _).
+
+// ============================================================================
+// SUBSTITUTING A TYPE PARAMETER INTO A RETURN OR PARAMETER ANNOTATION
+// ============================================================================
+
+// ── method_return_typevar(Prov, MethodHash, TypeVarName) ─────────────────────
+// `-> T` and `-> Optional[T]`: the method returns the parameter itself.
+method_return_typevar(p, m, name) :-
+    type_ref_owner(p, m, "METHOD", r),
+    type_ref(p, "TYPE_VAR", "METHOD_RETURN", name, _, r), name != "".
+// A bare `-> T` is emitted with kind NAME, not TYPE_VAR -- the reference records what
+// was WRITTEN, and `T` is syntactically indistinguishable from a class of that name.
+// The clause above therefore never fires for the ordinary form, which is the only form
+// most generic code uses, so a method returning its own type parameter had no row and
+// the substitution below had nothing to consume.
+// Telling the two apart is the engine's job and the guard already exists:
+// method_owner_declares_param holds only when the OWNING class actually declares that
+// name as a parameter, which is what stops a class named `T` being read as a variable.
+method_return_typevar(p, m, name) :-
+    type_ref_owner(p, m, "METHOD", r),
+    type_ref(p, "NAME", "METHOD_RETURN", name, _, r), name != "",
+    method_owner_declares_param(p, m, name).
+// NOTE the guard that is deliberately NOT here. An earlier version also required
+// !type_ref_resolved -- "if the parser resolved it to a class it cannot be a variable".
+// test/python/torture/lib/tlib/generics.py breaks that: it declares a CLASS named T
+// beside the TypeVar T, so the parser resolves `-> T` on Box.get to the class and the
+// guard suppressed the very case it was meant to allow. Ownership is the whole test:
+// Box declares T as a parameter so `-> T` there is the variable; Plain does not, so
+// `-> T` there is the class.
+method_return_typevar(p, m, name) :-
+    type_ref_owner(p, m, "METHOD", r),
+    type_ref(p, k, "METHOD_RETURN", _, _, r), annotation_optional_kind(k),
+    type_ref_nesting(p, r, _, "1", child),
+    type_ref(p, _, "GENERIC_ARGUMENT", name, _, child), name != "",
+    !type_ref_resolved(p, _, child),
+    method_owner_declares_param(p, m, name).
+
+// ── method_return_element_typevar(Prov, MethodHash, TypeVarName) ─────────────
+// `-> List[T]`: the method returns a CONTAINER of the parameter.
+method_return_element_typevar(p, m, name) :-
+    type_ref_owner(p, m, "METHOD", r),
+    type_ref(p, k, "METHOD_RETURN", _, _, r), annotation_container_kind(k),
+    type_ref_nesting(p, r, _, "1", child),
+    type_ref(p, _, "GENERIC_ARGUMENT", name, _, child), name != "",
+    !type_ref_resolved(p, _, child),
+    method_owner_declares_param(p, m, name).
+
+// ── param_typevar(Prov, ParamHash, TypeVarName) ──────────────────────────────
+// `def add(self, item: T)`.
+param_typevar(p, ph, name) :-
+    param_annotation(p, name, _, _, ph), name != "",
+    param_decl(p, _, _, _, m, ph),
+    method_owner_declares_param(p, m, name).
+
+// ── method_owner_declares_param(Prov, MethodHash, ParamName) ─────────────────
+// The guard that keeps a bare class name from being mistaken for a type variable: `T` is
+// only a parameter if the method's OWNING class actually declares it.
+method_owner_declares_param(p, m, name) :-
+    method_owner(p, owner, m), type_type_param(p, owner, _, name).
+
+// ── the substitution, at a call site ─────────────────────────────────────────
+// The receiver's type supplies the argument for the parameter the callee's annotation
+// mentions. `self.store.get_all(keys)` with self.store an OrderStore: get_all is declared
+// on Repository as `-> List[T]`, OrderStore binds Repository's T to Order, so the result
+// is a list of Orders.
+call_returns_type(site, arg) :-
+    expr_call_candidate(site, m),
+    method_return_typevar("client", m, name),
+    method_owner("client", owner, m),
+    call_recv_type(site, recv),
+    type_generic_binding("client", recv, owner, name, arg).
+call_returns_element(site, arg) :-
+    expr_call_candidate(site, m),
+    method_return_element_typevar("client", m, name),
+    method_owner("client", owner, m),
+    call_recv_type(site, recv),
+    type_generic_binding("client", recv, owner, name, arg).
+
+// ── THE LIB HALF, alongside the client one ───────────────────────────────────
+// PORTED FROM JAVA, which solved this first and solved it by writing every generic
+// rule TWICE: generic-chain.dl's type_fixes_super has a java_type clause and a
+// lib_type clause side by side, in the layer that owns generics rather than in a
+// separate library engine.
+//
+// Everything above this line is already prov-parametric and DID derive the library
+// answers -- measured on test/python/torture: `ItemRepo -> Box, T = Payload` and
+// `StrBox -> Box, T = Marker`, both tagged "lib", plus generic_unbound for the class
+// that supplies no argument. Only the substitution pinned "client" on all three of its
+// premises, so a correct binding on a library type had no consumer and
+// `IntBox().get().tag()` died one hop short.
+//
+// The receiver comes from the boundary (call_recv_lib_type); the SUBSTITUTION is here,
+// because that is the semantics this file owns.
+// ── a LIBRARY method's own declared return type ──────────────────────────────
+// `Factory.from_config(cfg) -> "Factory"`, then `.build()` on the result. The clause in
+// lib-linking.dl covers a CLIENT method declaring a library return; this is the other
+// half -- a library method declaring a library return -- and without it the result of
+// any library factory method is untyped.
+// BLOCKED BY #21 for a STRING forward reference (`-> "Factory"`): fact staging reads
+// the IR as TSV, so a CSV-quoted returnTypeName reaches Souffle still escaped and the
+// name never matches. The rule is correct and fires for a plain `-> Factory`.
+call_returns_lib_type(site, t) :-
+    call_hits_lib_method(site, m),
+    method_declared_return_type("lib", m, d),
+    declared_dispatch("lib", d, t).
+
+call_returns_lib_type(site, arg) :-
+    call_hits_lib_method(site, m),
+    method_return_typevar("lib", m, name),
+    method_owner("lib", owner, m),
+    call_recv_lib_type(site, recv),
+    type_generic_binding("lib", recv, owner, name, arg).
+call_returns_lib_element(site, arg) :-
+    call_hits_lib_method(site, m),
+    method_return_element_typevar("lib", m, name),
+    method_owner("lib", owner, m),
+    call_recv_lib_type(site, recv),
+    type_generic_binding("lib", recv, owner, name, arg).
+
+
+// ============================================================================
+// A TYPE VARIABLE'S DECLARED BOUND (issue #93)
+//
+//     CmdType = TypeVar("CmdType", bound=Command)
+//     def decorate(cls: type[CmdType]): cmd = cls(name=..., callback=f)
+//
+// The bound arrives as a type reference with context=TYPEVAR_BOUND owned by the BINDING of
+// the variable itself, and a kind=TYPE_VAR reference carries the variable's name in
+// typeName -- so the two sides join directly with no new projection. Until the parser
+// emitted it there was nothing to read, which is why the `cls` population was measured and
+// set aside rather than fixed.
+//
+// An upper bound is a DECLARED type, not an exact one. Everything typed here is therefore
+// registered with call_recv_declared below; without that the bound goes out ALONE as
+// known_edge and the change manufactures confident-wrong answers at every site it newly
+// resolves. That has already happened twice, on tuple unpacking and on container element
+// types, and it is the first thing to get right rather than the last.
+//
+// OUT OF SCOPE, and not guessed at:
+//   - constraints. `TypeVar("C", int, str)` is a closed set of alternatives, not an upper
+//     bound; the parser reports nothing for it and inventing one would be a wrong answer.
+//   - a function-scoped TypeVar's bound, which the parser skips rather than mis-owning, so
+//     no bound arrives and the annotation stays opaque.
+//   - PEP 695 `class C[T: Base]`, not emitted.
+// ============================================================================
+
+// ── typevar_bound(Prov, VariableName, BoundTypeHash) ─────────────────────────
+// Keyed on the variable's NAME, deliberately, and not on its module or scope. A type
+// variable is routinely declared in one module and imported into others -- a bounded name
+// used outside its declaring module is observed on a real corpus -- so a module-scoped
+// join would silently drop those uses, which is the failure this rule exists to fix.
+//
+// The cost of the name join is that two modules declaring the same name with different
+// bounds would contribute both. That is a WIDENING, not a wrong answer: both bounds are
+// declared types, both feed call_recv_declared, and the site becomes multi_inferred with
+// the true target still in the set. A scope-keyed join would trade an observed loss for
+// protection against a collision that does not appear on any corpus measured here.
+typevar_bound(p, name, t) :-
+    type_ref_owner(p, b, "BINDING", r),
+    type_ref(p, _, "TYPEVAR_BOUND", _, _, r),
+    type_ref_resolved(p, t, r),
+    binding_decl(p, name, _, _, _, b), name != "".
+
+// ── a bare bounded variable in an annotation position takes the bound ────────
+param_declared_type(p, ph, t) :-
+    type_ref_owner(p, ph, "METHOD_PARAM", r),
+    type_ref(p, "TYPE_VAR", "METHOD_PARAM", tn, _, r), tn != "",
+    typevar_bound(p, tn, t).
+method_declared_return_type(p, m, t) :-
+    type_ref_owner(p, m, "METHOD", r),
+    type_ref(p, "TYPE_VAR", "METHOD_RETURN", tn, _, r), tn != "",
+    typevar_bound(p, tn, t).
+field_declared_type(p, f, t) :-
+    type_ref_owner(p, f, "FIELD", r),
+    type_ref(p, "TYPE_VAR", "FIELD_TYPE", tn, _, r), tn != "",
+    typevar_bound(p, tn, t).
+
+// ── `type[T]` where T is bounded holds the CLASS, not an instance ────────────
+// The same distinction type[X] already required: typing it as an instance of the bound
+// would resolve `cls.create()` to the bound's instance methods, which is a wrong answer
+// rather than a missing one.
+// Named rather than inlined because dispatch.dl has to gate on the SAME condition: an
+// instance CONSTRUCTED from this class object is an instance of an upper bound, not an
+// exact type, and the site that receives it has to widen. Duplicating this join there
+// would let the two drift apart, which is precisely how a declared type escapes the gate.
+param_class_object_bound("client", ph, t) :-
+    type_ref_owner("client", ph, "METHOD_PARAM", r),
+    type_ref("client", _, "METHOD_PARAM", tn, _, r),
+    annotation_names_a_class(tn),
+    type_ref_nesting("client", r, _, "1", child),
+    type_ref("client", "TYPE_VAR", _, vn, _, child), vn != "",
+    typevar_bound("client", vn, t).
+expr_type_class_object("client", e, t) :-
+    expr_names_param("client", e, ph),
+    param_class_object_bound("client", ph, t).

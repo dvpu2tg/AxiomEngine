@@ -1,0 +1,4 @@
+nominal	testcases.engine.EdgeCHA.Box.set -> testcases.engine.EdgeCHA.SBox.set
+nominal	testcases.engine.EdgeCHA.Codec.encode -> testcases.engine.EdgeCHA.UpperCodec.encode
+nominal	testcases.engine.EdgeCHA.Sink.accept -> testcases.engine.EdgeCHA$anon:Sink.accept
+nominal	testcases.engine.EdgeCHA.Sink.accept -> testcases.engine.EdgeCHA.NamedSink.accept

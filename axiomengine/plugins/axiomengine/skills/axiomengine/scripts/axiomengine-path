@@ -1,0 +1,1696 @@
+#!/usr/bin/env python3
+"""axiomengine path <from> <to> [<repo>] [--every | --paths N] [--all] [--limit N] [--in <path>] [--json]   is there a chain of calls from A to B, and through what?
+   axiomengine path --selftest <lang>                                 the engine's own expected edges, replayed through this tool
+
+An endpoint is anything that names code, written the way it appears in the code — resolved EXACTLY, never guessed:
+    Owner.method   Owner.Inner.method   method (a free function, or that name under any owner)   Type (every method it declares)
+    file.ts:123 (the method containing that line)   file.py / dir/file.ts (every method in the file)
+A miss lists the exact names that are close and stops. It does not answer a question about a name that does not exist.
+
+`*` as one endpoint asks for a closure instead of a chain: path '*' X = everything that can reach X (upstream, by hop, with the
+entry points among them: tests, main, decorated handlers, and methods nothing resolved calls); path X '*' = everything X reaches (--depth N bounds either; the library calls at the ends are listed, never traversed).
+
+By default the answer is ONE SHORTEST chain per reached target. --every adds every route: the full set of methods and calls
+that lie on any chain from a source to a target (computed in Datalog, polynomial), then the simple paths through it,
+shortest first, up to --paths N (default 20).
+
+The chains are computed in Datalog (dl/path.dl, Soufflé) over facts exported from graph.sqlite: the engine's resolved
+client edges, dispatch steps to instantiated overrides, and closures under the callable that defines them. Every
+answer is then checked twice before it is printed: each hop is looked up again in the graph, and a second, independent
+traversal over the same facts must find the same length. The line `verified …` says so; if either check fails the answer is marked.
+
+Every hop is printed as `[tier · kind @ file:line]`: how certain the edge is, what kind of call it is in one
+vocabulary that means the same thing in all five languages (call · new · ctor · super · decorator · property ·
+method-ref · with · import), and THE LINE THE CALL IS WRITTEN ON — not the callee's declaration, which the
+callee's name already gives you. A hop that is not a call at all (`defines`: the callee is written inside the
+caller's body) is marked as such and left out of the call count, so "A reaches B in 7 calls" is a count of calls.
+The tiers an answer used are legended under it. --json gives the same answer as one document, hops included.
+
+When no resolved chain exists, the optimistic closure — every unresolved site taken as a call to the client method
+written there — says whether one WOULD exist and through which unresolved site(s). That is printed as a bridge to
+look at, never as a path.
+"""
+import contextlib, io, json, os, re, sys, sqlite3, subprocess, tempfile, shutil, collections, glob, time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE); import dl_program, graph_sql, ax_edges, ax_contract, ax_text
+# The certainty table used to live here with SEVEN entries and a default of 5 for everything else. The
+# engine emits ELEVEN tiers, and the five it did not list all fell BELOW `defines` — which is not a call
+# at all — so on a JavaScript graph, where 8,916 of 25,048 traversable edges are `callback_registered`,
+# the chain reader preferred a containment hop to a real registered-callback call. ax_edges lists every
+# tier and ranks an unknown one LAST. One table, shared, because two copies is how this drifted.
+TIER_RANK = ax_edges.TIER_RANK
+
+def die(msg, code=2): print(msg); sys.exit(code)
+UNRESOLVED = []                                     # endpoints G.resolve found nothing by, in the order refused
+
+# ── --json: the same answer, for a program ────────────────────────────────────────────────────────
+# Filled as the human output is produced, from the SAME chain objects, so the two cannot disagree:
+# a second traversal for the machine shape is a second implementation to keep in step.
+RESULT = {'query': None, 'answers': [], 'reached': [], 'bound': None, 'verified': None}
+
+
+def chain_json(g, chain):
+    """one chain: its nodes, and for every hop the tier, the kind, and where the call is written."""
+    out = {'hops': [], 'from': g.disp(chain[0][0]), 'to': g.disp(chain[-1][0])}
+    prev = chain[0][0]
+    for n, t in chain[1:]:
+        kind, at = hop_detail(g, prev, n, t)
+        out['hops'].append({'to': g.disp(n), 'declared_at': g.loc(n), 'tier': t, 'kind': kind,
+                            'call_at': at, 'is_call': t not in ax_edges.NOT_A_CALL})
+        prev = n
+    out['calls'], out['containment'] = chain_size(chain)
+    return out
+
+# ── the graph ────────────────────────────────────────────────────────────────────────────────────────────────────
+# declarations that describe a callable and have no body (score.py's bodiless_kinds)
+BODILESS_KINDS = {'METHOD_SIGNATURE', 'TYPE_LITERAL_METHOD_SIGNATURE', 'CALL_SIGNATURE', 'TYPE_LITERAL_CALL_SIGNATURE',
+                  'FUNCTION_TYPE_SIGNATURE', 'CONSTRUCT_SIGNATURE', 'TYPE_LITERAL_CONSTRUCT_SIGNATURE', 'CONSTRUCTOR_TYPE_SIGNATURE'}
+# the one name a front end gives every lambda it declares (Python and C#; Java declares none): a name that says nothing
+# about WHICH lambda, so it is never a target on its own (G.lambda_label, G.lambda_target)
+LAMBDA_NAMES = {'<lambda>'}
+# a reference the parser binds to a VALUE (refs.entity_kind, as each front end spells it): the name there is a variable,
+# a parameter, a member or a function, never a type, so it is not evidence of a type the code uses without declaring
+VALUE_BINDINGS = {'VARIABLE', 'LOCAL_VARIABLE', 'GLOBAL_VARIABLE', 'FREE_VARIABLE', 'NONLOCAL_VARIABLE', 'PARAMETER',
+                  'LAMBDA_PARAMETER', 'PATTERN_BINDING', 'PATTERN_BINDING_VARIABLE', 'COMPREHENSION_VARIABLE', 'EXCEPT_VARIABLE',
+                  'QUERY_RANGE_VARIABLE', 'FIELD', 'PROPERTY', 'EVENT', 'METHOD', 'TYPE_PARAMETER', 'THIS', 'SUPER'}
+# a reference to the name as a MEMBER of something (refs.kind): `a.b.Name` names a property, not a type in scope
+MEMBER_REFS = {'PROPERTY_ACCESS', 'ATTRIBUTE_ACCESS', 'FIELD_ACCESS', 'MEMBER_ACCESS'}
+VALUE_KINDS_SHOWN ={k.lower().replace('_', ' ') for k in VALUE_BINDINGS}
+
+# ONE SPELLING FOR EVERY LANGUAGE. Each front end writes a qualified name its own way: Java and C# `pkg.Owner.m`,
+# Python `pkg.module.f`, TypeScript `src/util#square`, JavaScript `src/util.square`. canon() maps all of them onto the
+# dotted form (`src.util.square`), and the resolvers match it beside the native spellings, so `util.square` or
+# `src.util.square` names the same declaration in every language, and a name one verb prints another accepts.
+_CANON_SEP = re.compile(r'::|[/\\#$]')
+def canon(q):
+    if not q: return q
+    return re.sub(r'\.{2,}', '.', _CANON_SEP.sub('.', q)).strip('.')
+def canon_is(q, name):
+    """1 when `name`, in any spelling (`/`, `#`, `.`), is q or a whole-segment suffix of it. Case-sensitive, unlike LIKE."""
+    c, n = canon(q), canon(name)
+    return int(bool(c) and bool(n) and (c == n or c.endswith('.' + n)))
+
+
+def link_facts(src, dst):
+    """make a fact file visible under another directory. A symlink needs a privilege on Windows that an unelevated user
+    does not hold (WinError 1314), so a hard link is tried next and a copy last: the solver only reads the file."""
+    try: os.symlink(src, dst); return
+    except (OSError, NotImplementedError): pass
+    try: os.link(src, dst); return
+    except OSError: shutil.copyfile(src, dst)
+
+
+def replace_file(tmp, dst):
+    """os.replace, which on Windows is refused while another process has dst open (a solver reading the facts): retried
+    briefly, then written over in place, which is what every write did before"""
+    for i in range(10):
+        try: os.replace(tmp, dst); return
+        except PermissionError:
+            if os.name != 'nt': raise
+            time.sleep(0.2)
+    shutil.copyfile(tmp, dst); os.remove(tmp)
+
+
+class G:
+    def __init__(self, repo):
+        self.repo = os.path.realpath(repo or '.')
+        os.environ.setdefault('AXIOMENGINE_REPO', self.repo)       # which repository's recorded engine dl_program looks in
+        gdir = os.environ.get('AXIOMENGINE_GRAPH') or os.path.join(self.repo, '.axiomengine')
+        # a CORRUPT graph is moved aside and rebuilt, and the last good graph answers meanwhile (ax_contract.usable_graph)
+        gdir = ax_contract.usable_graph(self.repo, gdir)
+        self.db = os.path.join(gdir, 'out', 'graph.sqlite')
+        # ONE door for every verb. impact, changed, context and test-impact all load this file as a
+        # module and construct this class, so a repository with no graph is handled here, once, for
+        # all of them: under the CLI and the MCP server it is BUILT (ax_contract.ensure_graph), and
+        # under the plugin's hooks — short timeouts, no AXIOMENGINE_AUTOBUILD — it still refuses in
+        # words the caller can act on.
+        if not os.path.exists(self.db) and not ax_contract.ensure_graph(self.repo, self.db):
+            die(ax_contract.no_graph(self.repo, self.db))
+        self.connect()
+        ax_contract.on_corrupt(self.repo, self.db)
+        if not self.has('symbols'):
+            # a graph that was built but never indexed: the index is this tool's own, and adding it
+            # is seconds, so asking the caller to run one more command buys nothing.
+            subprocess.run([sys.executable, os.path.join(HERE, 'axiomengine-index'), self.repo], capture_output=True)
+            self.con.close(); self.connect()
+            if not self.has('symbols'): die(f"{self.db} has no index — run `axiomengine index {self.repo}`")
+        # `sym` is the CALLABLE/type layer: it is what an endpoint may resolve to, so a field must stay out of it.
+        # `all_sym` is every declaration the index holds, fields, constants and enum members included. A consumer that
+        # needs to NAME a declaration (a decoration's owner, a row's display) reads all_sym; one that needs a call
+        # graph node reads sym. Conflating the two made a @Value on a field fail its own recorded-owner test.
+        self.all_sym = {r['id']: dict(r) for r in self.q("SELECT * FROM symbols")}
+        self.sym = {i: r for i, r in self.all_sym.items() if r.get('method_id') is not None or r.get('type_id') is not None}
+        for r in self.q("SELECT DISTINCT m.id, m.qualified_name q FROM call_edges e JOIN methods m ON m.id = e.callee_method_id WHERE e.tier = 'boundary_lib' AND m.provenance <> 'client'"):
+            self.sym.setdefault(r['id'], {'id': r['id'], 'display': r['q'], 'file': '<library>', 'line': None, 'end_line': None, 'kind': 'library', 'owner': r['q'].rsplit('.', 1)[0], 'is_test': 0, 'name': r['q'].rsplit('.', 1)[-1], 'method_id': r['id']})
+        self.facts = os.path.join(gdir, 'out', 'dl')
+        self.callers_ids = {r['caller_id'] for r in self.q("SELECT DISTINCT caller_id FROM call_edges")}   # a type whose field initializers call: a node too
+        self.decorations_from_sites()
+
+    def connect(self):
+        """open the graph, and remember WHICH file was opened. graph.sqlite is a pointer the build re-points when a
+        refresh lands (#1305): read again later — its mtime keys the exported facts — it can name the NEW graph while this
+        connection reads the old one, which stamped the old graph's facts as the new one's, or name nothing for an instant,
+        which raised FileNotFoundError mid-answer. So the file is looked at once, around the open, and retried if the
+        pointer moved in between."""
+        for _ in range(5):
+            try: before = os.stat(self.db)
+            except FileNotFoundError:
+                if not ax_contract.ensure_graph(self.repo, self.db): die(ax_contract.no_graph(self.repo, self.db))
+                continue
+            self.con = sqlite3.connect(self.db)
+            try: after = os.stat(self.db)
+            except FileNotFoundError: after = None
+            if after and (after.st_ino, after.st_mtime) == (before.st_ino, before.st_mtime): break
+            self.con.close()
+        self.db_mtime = before.st_mtime
+        self.con.row_factory = sqlite3.Row
+        self.con.create_function('canon_is', 2, canon_is, deterministic=True)
+
+    # ── decorations the front end records as calls, not as decorations ───────────────────────────────────────
+    # A TypeScript or JavaScript graph has a `decorations` table with NOTHING IN IT, and the same decorators sitting
+    # in `call_sites` as DECORATOR_CALL rows — the parser records `@Get(':id')` as a call to `Get`, and no projection
+    # turns it into a decoration. Every consumer here reads `decorations`, so on those graphs `path '@Get' '*'`
+    # answered "no method carries @Get. Decorations in this graph: " — an empty list that reads as "this repository
+    # has no such handler", when what is true is that the language's decorations were never put where the tools look.
+    # Nest, Angular, TypeORM and every other decorator framework were invisible for that reason alone.
+    #
+    # So: when the table is empty and the call sites are there, fill a TEMPORARY table of the same shape (SQLite
+    # resolves a temp name before the schema's, so every existing query sees it and none had to change). The owner is
+    # the NARROWEST declaration whose span contains the decorator's line — the parser puts the decorator line inside
+    # the span of what it decorates, so `@Get` lands on the method and `@Controller`, which the call site charges to
+    # the module, lands on the class. `text` is rebuilt from the string literals on that line, which is what the
+    # config-key queries match against (`text LIKE '%"key"%'`).
+    #
+    # A graph whose decorations table already has rows (Java, Python) is left exactly as it is.
+    def decorations_from_sites(self):
+        if not self.has('call_sites'): return
+        if self.has('decorations') and self.q("SELECT 1 FROM decorations LIMIT 1"): return
+        rows = self.q("SELECT callee_name, file_path, start_line FROM call_sites WHERE kind = 'DECORATOR_CALL' AND callee_name IS NOT NULL AND start_line > 0")
+        if not rows: return
+        spans = collections.defaultdict(list)
+        for r in self.sym.values():
+            if r.get('file') and r.get('line') and r.get('end_line'): spans[r['file']].append((r['line'], r['end_line'], r['id'], r.get('kind')))
+        lits = collections.defaultdict(list)
+        if self.has('literals'):
+            for v, f, l in self.q("SELECT value, file, line FROM literals WHERE line > 0"): lits[(f, l)].append(v)
+        self.con.execute("CREATE TEMP TABLE decorations (owner_id TEXT, name TEXT, text TEXT, file TEXT, line INT)")
+        out = []
+        for name, fp, line in rows:
+            f = self.site_file(fp) if hasattr(self, 'site_file') else fp
+            best = None
+            for a, b, i, k in spans.get(f, ()):
+                if a <= line <= b and (best is None or (b - a) < best[0]): best = (b - a, i)
+            args = ', '.join('"%s"' % v for v in lits.get((f, line), ()))
+            out.append((best[1] if best else None, name, f"@{name}({args})" if args else f"@{name}", f, line))
+        self.con.executemany("INSERT INTO decorations VALUES (?,?,?,?,?)", out)
+        self.decorations_synthesised = len(out)
+    def q(self, s, *p): return self.con.execute(s, p).fetchall()
+    def has(self, t): return bool(self.q("SELECT 1 FROM sqlite_master WHERE name=?", t))
+    def loc(self, i):
+        r = self.sym.get(i) or self.all_sym.get(i)
+        return f"{r['file']}:{r['line']}" if r and r['line'] else (({'<library>': 'library', '<written>': 'as written, unresolved'}.get(r['file'], r['file'])) if r else '?')
+    def disp(self, i):
+        r = self.sym.get(i) or self.all_sym.get(i); return r['display'] if r else i
+
+    # ── a lambda is named by where it is written ─────────────────────────────────────────────────────────────
+    # Every lambda of a language is declared under ONE name (`<lambda>`), so the name alone matches every lambda in the
+    # graph: an edit next to one was handed to impact as `<lambda>`, which answered for hundreds of declarations, and
+    # the lambdas of one class were one symbol `Owner.<lambda>`. A lambda is identified by the member that encloses it
+    # and its line, `Owner.method.<lambda@L42>`, and targeted by `file:line`, which names that one declaration.
+    def is_lambda(self, i):
+        r = self.all_sym.get(i) or self.sym.get(i)
+        return bool(r) and r.get('name') in LAMBDA_NAMES and r.get('method_id') is not None
+    def enclosing(self, i):
+        """the narrowest declaration other than a lambda or a module body whose span holds lambda `i`: a method, a
+        field whose initializer it is, or a type. None at the top level of a file."""
+        r = self.all_sym.get(i) or self.sym.get(i)
+        if not r or not r.get('file') or not r.get('line'): return None
+        a, b = r['line'], r.get('end_line') or r['line']
+        rows = self.q("""SELECT id, rowid, display, kind, name, line, end_line FROM symbols WHERE file = ? AND line <= ? AND COALESCE(end_line, line) >= ?
+                          AND id IS NOT ? AND kind NOT IN ('module', 'library', 'written') AND name NOT IN (%s)
+                          ORDER BY COALESCE(end_line, line) - line, CASE WHEN method_id IS NOT NULL THEN 0 WHEN type_id IS NULL THEN 1 ELSE 2 END""" % ','.join('?' * len(LAMBDA_NAMES)),
+                      r['file'], a, b, i, *sorted(LAMBDA_NAMES))
+        return dict(rows[0]) if rows else None
+    def lambda_label(self, i):
+        """`Owner.method.<lambda@L42>`: the enclosing member's name and the lambda's line"""
+        r = self.all_sym.get(i) or self.sym.get(i)
+        if not r: return str(i)
+        e = self.enclosing(i)
+        if e: pre = e['display']
+        else:
+            q = (r.get('qualified_name') or '').replace('.<locals>', '')
+            pre = q.rsplit('.', 1)[0] if '.' in q and not q.rsplit('.', 1)[0].endswith('>') else (r.get('owner') or os.path.splitext(os.path.basename(r.get('file') or ''))[0])
+        return f"{pre}.{r['name'][:-1]}@L{r.get('line')}>"
+    def decl_at_line(self, f, ln, spanning=None):
+        """('field', row) or ('type', row) when `f:ln` is the declaration line of a field, a constant, a property or a
+        type and no callable of its own is written there; None otherwise. A file:line names "the declaration at that
+        line", and the resolver took callables only, so a field line answered `no callable spans` in every language
+        and a C# class line too (#1426). What a front end synthesises ON such a line is not a callable of its own: a
+        lambda in a field's initializer is part of the field, and an implicit constructor on a type's header line is
+        the type's (a Python class body is a module node and is never a candidate here)."""
+        if spanning is None:
+            spanning = self.q("SELECT id, end_line - line AS span FROM symbols WHERE file = ? AND line <= ? AND end_line >= ? AND method_id IS NOT NULL AND kind <> 'module' ORDER BY span", f, ln, ln)
+        fields = [dict(x) for x in self.q("SELECT rowid, * FROM symbols WHERE file = ? AND line = ? AND method_id IS NULL AND type_id IS NULL AND kind IN ('field','const','enum_member','variable')", f, ln)]
+        types = [dict(x) for x in self.q("SELECT * FROM symbols WHERE file = ? AND line = ? AND type_id IS NOT NULL AND method_id IS NULL", f, ln)]
+        if not fields and not types: return None
+        fend = max([x.get('end_line') or x['line'] for x in fields], default=ln)
+        for x in spanning:
+            s = self.sym.get(x['id']) or self.all_sym.get(x['id']) or {}
+            if fields and self.is_lambda(x['id']) and ln <= (s.get('line') or 0) and (s.get('end_line') or 0) <= fend: continue
+            if types and s.get('kind') == 'constructor' and s.get('line') == ln and (s.get('end_line') or ln) == ln: continue
+            return None                                                   # a callable of its own is written on this line
+        return ('field', fields[0]) if fields else ('type', types[0])
+    def name(self, i):
+        """the name a reader is shown for a declaration: its display, and a lambda's place (lambda_label)"""
+        return self.lambda_label(i) if self.is_lambda(i) else self.disp(i)
+    def lambda_target(self, i):
+        r = self.all_sym.get(i) or self.sym.get(i)
+        return f"{r['file']}:{r['line']}" if r and r.get('file') and r.get('line') else None
+
+    # ── endpoints: exact, or a short list of what is close ───────────────────────────────────────────────────
+    IN = None
+    def under_in(self, f):
+        """is file `f` under --in: by prefix when the scope names a path of the repository, else anywhere (#1584)"""
+        if not self.IN: return True
+        if getattr(self, '_in_spec', (None,))[0] != self.IN: self._in_spec = (self.IN, ax_contract.scope_spec(self.IN, self.repo))
+        return ax_contract.under_scope(f, self._in_spec[1])
+    def resolve(self, sel, fragment=False):
+        """-> (label, [method symbol ids]) or dies with the near misses. Same rules for every language.
+
+        `fragment` is the no-name-yet form: with `'*'` at the other end, a word that names nothing exactly is read as
+        a FRAGMENT and every declaration containing it is the endpoint. That is what this tool tells a reader to do
+        when a name misses — and until now the advice was circular, because the same lookup rejected the fragment too.
+        """
+        label, ids = self._resolve(sel, fragment)
+        if self.IN and not all(self.sym[i]['kind'] in ('library', 'written') for i in ids):        # a library endpoint has no file; --in applies to the other end
+            kept = [i for i in ids if self.under_in(self.sym[i]['file'])]
+            if not kept: die(f"{label}: none of its {len(ids)} declaration(s) is under *{self.IN}*")
+            if len(kept) < len(ids): label += f" [{len(kept)} under *{self.IN}*]"
+            ids = kept
+        return label, ids
+    def separator_collision(self, typed, rows):
+        """two declarations whose names differ only in separators (`a/b#c`, `a.b/c`) are the same dotted name. Neither
+        is the answer: the caller is told both, and the exact spelling of each still resolves to that one alone."""
+        by = collections.defaultdict(set)
+        for r in rows:
+            q = r['qualified_name']
+            if q: by[canon(q)].add(q)
+        clash = {c: sorted(n) for c, n in by.items() if len(n) > 1}
+        if not clash: return
+        where = {r['qualified_name']: f"{r['file']}:{r['line']}" for r in rows if r['qualified_name'] and r['file']}
+        lines = [f"  {n}   {where.get(n, '')}" for names in clash.values() for n in names]
+        die(f"'{typed}' names {sum(len(n) for n in clash.values())} declarations whose names differ only in separators "
+            f"(/ # .):\n" + '\n'.join(lines) + "\n  ask with the exact spelling of the one you mean")
+    def method_kind(self, i):
+        if not hasattr(self, '_mkind'):
+            self._mkind = {r[0]: r[1] for r in self.q("SELECT id, kind FROM methods")} if self.has('methods') else {}
+        return self._mkind.get((self.sym.get(i) or {}).get('method_id') or i)
+    def repo_file(self, f):
+        """-> (the file as the index stores it, whether it lies outside the repository). A file:line is written the way
+        editors, stack traces and test runners print it: `./src/a.js`, or absolute under the repository root. The index
+        stores it relative to that root, so both are read as the relative path; an absolute path elsewhere is kept, with
+        its leading `/` dropped as before, so a root-relative `/src/a.js` still matches — and is named as outside when not."""
+        while f.startswith('./'): f = f[2:]
+        if not os.path.isabs(f): return f, False
+        real = os.path.realpath(f)
+        for root in {self.repo, os.path.abspath(self.repo)}:
+            for p in (real, os.path.abspath(f)):
+                if p == root or p.startswith(root.rstrip('/') + '/'):
+                    return os.path.relpath(p, root).replace(os.sep, '/'), False
+        return f.lstrip('/'), True
+    def file_lines(self, f):
+        """how many lines the indexed file `f` has on disk, or None when it cannot be read there"""
+        try:
+            with open(os.path.join(self.repo, f), 'rb') as h: return len(h.read().splitlines())
+        except OSError: return None
+
+    def line_files(self, f):
+        """-> (the indexed files a file:line's path `f` names, the --in note when the scope chose among them). The file
+        written in full, else every file `f` is a suffix of. --IN CHOOSES AMONG THEM (#1666): it was applied only after
+        the file was settled, so `index.js:2 --in packages/a` was refused with every index.js listed. Under the scope
+        one file is the answer; two or more are the refusal's list; none leaves the list whole, and says so."""
+        files = sorted({x['file'] for x in self.q("SELECT DISTINCT file FROM symbols WHERE file = ? OR file LIKE ?", f, f"%/{f}")
+                        if x['file'] == f or (x['file'] or '').endswith('/' + f)})
+        if f in files: return [f], ''
+        if len(files) < 2 or not self.IN: return files, ''
+        kept = [x for x in files if self.under_in(x)]
+        return (kept, f" under *{self.IN}*") if kept else (files, f", none of them under *{self.IN}*")
+    def _resolve(self, sel, fragment=False):
+        s = sel.strip().strip('`"\'')
+        # file:line, or file:line:col as a stack trace prints it — the column never changes which callable spans the line
+        m = re.match(r'^(.+?):(\d+)(?::\d+)?$', s)
+        if m and ('/' in m.group(1) or '.' in m.group(1)):                            # file:line → the method containing it
+            (f, outside), ln = self.repo_file(m.group(1)), int(m.group(2))
+            # A PARTIAL PATH NAMES ONE FILE OR IS REFUSED (#1599). `order.service.js:2` with the file under both src/ and
+            # lib/ took the smallest span across BOTH files, so the answer was for whichever function at that line was
+            # shorter, labelled with what was typed. The path is settled first: the file written in full, else the one
+            # file it is a suffix of; two or more are listed, each with what spans the line there.
+            files, scoped = self.line_files(f)
+            if len(files) > 1:
+                rows = []
+                for fx in files[:12]:
+                    at = self.q("SELECT id FROM symbols WHERE file = ? AND line <= ? AND end_line >= ? AND method_id IS NOT NULL AND kind <> 'module' ORDER BY end_line - line LIMIT 1", fx, ln, ln)
+                    rows.append(f"  {fx}:{ln}   " + (self.disp(at[0]['id']) if at else '(top-level code)'))
+                if len(files) > 12: rows.append(f"  … +{len(files) - 12} more")
+                die(f"'{m.group(1)}' matches {len(files)} indexed files{scoped} — give enough of the path to name one:\n" + '\n'.join(rows))
+            if files: f = files[0]
+            if scoped: s = f"{f}:{ln}"                                   # the scope chose the file: the label names it
+            # A LINE OUTSIDE THE FILE IS REFUSED (#1601). Line 0, or a line past the end — a number copied before the file
+            # was edited, or from an old stack trace — spans no callable, so it fell through to the module node and was
+            # answered as the file's top-level code, as if that line existed. The file on disk is what the reader sees.
+            if ln < 1: die(f"line {ln} is not in {f}: lines are numbered from 1")
+            n = self.file_lines(f) if files else None
+            if n is not None and ln > n: die(f"{f} has {n} line{'' if n == 1 else 's'}; line {ln} is not in it")
+            # the smallest callable(s) spanning the line — several when they share it (`class Item { run(){} tag(){} }`);
+            # top-level code belongs to the file's module node, which is a caller like any other
+            r = self.q("SELECT id, end_line - line AS span FROM symbols WHERE file = ? AND line <= ? AND end_line >= ? AND method_id IS NOT NULL AND kind <> 'module' ORDER BY span", f, ln, ln)
+            d = self.decl_at_line(f, ln, r)
+            if d and d[0] == 'type':                                      # a type's header line: the type, as its name answers
+                t = d[1]
+                ids = [x['id'] for x in self.q("SELECT id FROM symbols WHERE owner = ? AND file = ? AND method_id IS NOT NULL", t['display'], f)]
+                if t['id'] in self.callers_ids: ids.append(t['id'])
+                if ids: return f"{t['display']} (type at {s}: {len(ids)} methods)", ids
+            if d and d[0] == 'field':                                     # a field's line: what its name answers
+                fr = d[1]; nm = f"{fr['owner']}.{fr['name']}" if fr.get('owner') else fr['name']
+                try:
+                    with contextlib.redirect_stdout(io.StringIO()): label, ids = self._resolve(nm)
+                    return f"{label} (field at {s})", ids
+                except SystemExit: pass
+            if r:
+                ids = [x['id'] for x in r if x['span'] == r[0]['span']]
+                # a field initializer and what it holds on its one line (`static cfg = make({ run() {…} });`) share the
+                # span; the line names the innermost, the callable written inside the initializer (#1663)
+                sy = lambda i: (self.sym.get(i, {}).get('display'), self.sym.get(i, {}).get('qualified_name'))
+                ids = [j for j in ids if not any(ax_edges.init_holds(*sy(j), *sy(i)) for i in ids if i != j)] or ids
+                # AN ANNOTATION IS NOT THE FUNCTION. `export const f: (a: A) => B = (a) => …` puts a one-line call
+                # signature and the arrow on the same line, and the signature, being shortest, won: `impact file:171`
+                # answered for `<function-type>`. Where every pick is a bodiless signature, the callable that starts
+                # on the same line is the declaration the line names, so it joins them: both are the change.
+                if self.has('methods') and all(self.method_kind(i) in BODILESS_KINDS for i in ids):
+                    start = {self.sym[i].get('line') for i in ids if i in self.sym}
+                    ids += [x['id'] for x in r if x['id'] not in ids and self.sym.get(x['id'], {}).get('line') in start and self.method_kind(x['id']) not in BODILESS_KINDS]
+                return (f"{self.name(ids[0])} (at {s})" if len(ids) == 1 else f"{len(ids)} callables at {s}"), ids
+            # top-level code: the module body that holds the line. A Python file has two (the file's and each class
+            # body's), and the first row came back whatever the line, so a module-level constant below a class was
+            # answered as that class's body
+            r = self.q("SELECT id FROM symbols WHERE file = ? AND kind = 'module' AND method_id IS NOT NULL ORDER BY (line <= ? AND COALESCE(end_line, line) >= ?) DESC, COALESCE(end_line, line) - line LIMIT 1", f, ln, ln)
+            if r: return f"{self.disp(r[0]['id'])} (top-level code at {s})", [r[0]['id']]
+            if outside: die(f"{m.group(1)} is outside the indexed repository {self.repo}: give the file relative to that root, or ask the graph of the repository it belongs to")
+            die(f"no callable spans {s}")
+        if s.startswith('@') and self.has('decorations'):                                # @GetMapping / @*Mapping / @Test → every method carrying it
+            pat = s[1:].replace('*', '%')
+            ids = [x['id'] for x in self.q("SELECT DISTINCT d.owner_id AS id FROM decorations d JOIN symbols x ON x.id = d.owner_id WHERE x.method_id IS NOT NULL AND (d.name LIKE ? OR d.name LIKE ?)", pat, f"%.{pat}")]
+            # a decoration on the TYPE — @RestController, @Controller, @Injectable, @Component, @Entity — is carried by
+            # every method the type declares: that is what "from any method with this decoration" has to mean, or the
+            # class-level form of every framework answers nothing at all. Methods are taken by span, not by owner name,
+            # so a nested type's methods belong to the nested type and two classes of one name do not merge.
+            for t in self.q("SELECT DISTINCT d.owner_id AS id FROM decorations d JOIN symbols x ON x.id = d.owner_id WHERE x.type_id IS NOT NULL AND (d.name LIKE ? OR d.name LIKE ?)", pat, f"%.{pat}"):
+                ty = self.sym.get(t['id']) or {}
+                if not (ty.get('file') and ty.get('line') and ty.get('end_line')): continue
+                ids += [m['id'] for m in self.q("SELECT id FROM symbols WHERE file = ? AND line >= ? AND end_line <= ? AND method_id IS NOT NULL AND kind <> 'module'", ty['file'], ty['line'], ty['end_line'])]
+            ids = list(dict.fromkeys(ids))
+            if ids: return f"{s} ({len(ids)} methods)", ids
+            near = self.q("SELECT name, count(*) n FROM decorations GROUP BY name ORDER BY n DESC LIMIT 8")
+            if not near: die(f"no method carries {s}, and this graph records NO decoration at all — not that the code has none."
+                             " A front end that does not project decorations cannot answer a decoration endpoint; ask by name instead.")
+            die(f"no method carries {s}. Decorations in this graph: " + ', '.join(f"@{x['name']} ({x['n']})" for x in near))
+        if re.search(r'\.(ts|tsx|js|mjs|cjs|py|java)$', s):                             # a file → every method in it
+            r = self.q("SELECT id FROM symbols WHERE (file = ? OR file LIKE ?) AND method_id IS NOT NULL AND kind <> 'module'", s.lstrip('/'), f"%/{s.lstrip('/')}")
+            if r: return f"{s} ({len(r)} methods)", [x['id'] for x in r]
+            die(f"no methods in a file named {s}")
+        # the name as the agent writes it, normalised: Outer$Inner.m, Outer.Inner#m, m(int,String), pkg.Outer.Inner.m are all
+        # Outer.Inner.m. Java's parser names a nested type without its outer (#667) and the index recovers most of them, so the
+        # same name is tried with leading segments dropped — Outer.Inner.m, then Inner.m — against display AND qualified name,
+        # exact first, then as a dotted suffix. The label says which form matched when it was not the one written.
+        # `#` is Java's member separator (Outer.Inner#m) and TypeScript's PRIVATE marker (`Router.#handleError`), and the
+        # rewrite below turned the second into `Router..handleError` — a name the graph does not hold. The tool then
+        # printed the near miss `Router.#handleError`, which is what had just been asked for: a private method could not
+        # be asked about at all, in the language where private methods are written that way. So the spelling as
+        # written is tried against the index BEFORE any separator is rewritten.
+        # `Owner.method.<lambda@L42>`, the name changed and test-impact print for a lambda: the lambda at that line
+        # whose enclosing member is the prefix written
+        ml = re.match(r'^(?:(.*)\.)?<(\w+)@L(\d+)>$', s)
+        if ml:
+            want = canon(ml.group(1) or '')
+            ids = [x['id'] for x in self.q("SELECT id FROM symbols WHERE name = ? AND line = ? AND method_id IS NOT NULL", f"<{ml.group(2)}>", int(ml.group(3)))
+                   if not want or canon_is(self.lambda_label(x['id']).rsplit('.<', 1)[0], want)]
+            if ids: return (s if len(ids) == 1 else f"{s} ({len(ids)} declarations)"), ids
+            die(f"no <{ml.group(2)}> starts on line {ml.group(3)}" + (f" inside {ml.group(1)}" if ml.group(1) else '') + ": ask by file:line")
+        verbatim = re.sub(r'\(.*\)$', '', s).strip()
+        if '#' in verbatim:
+            hit = self.q("SELECT id FROM symbols WHERE (display = ? OR qualified_name = ?) AND method_id IS NOT NULL", verbatim, verbatim)
+            if hit:
+                ids = [x['id'] for x in hit]
+                return (verbatim if len(ids) == 1 else f"{verbatim} ({len(ids)} declarations)"), ids
+        s = re.sub(r'\(.*\)$', '', s).replace('#', '.').strip('.')
+        # EXACT SPELLING WINS. Two shapes were unreachable because a heuristic ran before the literal lookup:
+        #   $Pkg$Types.method — a type whose NAME contains $ (a common generated / internal idiom) was split as
+        #     Outer$Inner, giving outer=Pkg inner=Types, and the nested branch died instead of falling through.
+        #   Owner.Owner — a constructor spelled like its class resolved to the TYPE, which is a different question
+        #     (delete the whole class, not this constructor).
+        # A declaration whose display is exactly what was written is unambiguous intent, so it answers first.
+        exact = self.q("SELECT id FROM symbols WHERE display = ? AND method_id IS NOT NULL", s)
+        if exact:
+            ids = [x['id'] for x in exact]
+            return (s if len(ids) == 1 else f"{s} ({len(ids)} declarations)"), ids
+        # Outer$Inner.m and Outer$1.m: the type is looked up STRUCTURALLY through the nesting table — Inner declared (at any
+        # depth) inside Outer, or the 1st/2nd… anonymous class inside Outer in source order, as javac numbers them
+        mn = re.match(r'^(.*?)([\w.]+)\$([\w$]+)\.(\w+)$', s)
+        if mn and self.has('nesting'):
+            outer, inner, mem = mn.group(2).split('.')[-1], mn.group(3), mn.group(4)
+            ids = self.nested_methods(outer, inner, mem)
+            if ids: return f"{s} (nested in {outer}: {len(ids)} declaration(s))", ids
+            die(self.nested_miss(outer, inner, mem, s))
+        # Outer$Inner / Outer$1 with no member: the nested type itself, which is every method it declares
+        tn = re.match(r'^(.*?)([\w.]+)\$([\w$]+)$', s)
+        if tn and self.has('nesting'):
+            outer, inner = tn.group(2).split('.')[-1], tn.group(3)
+            ids = self.nested_methods(outer, inner, None)
+            if ids: return f"{s} (nested in {outer}: {len(ids)} method(s))", ids
+            die(self.nested_miss(outer, inner, '*', s))
+        s = s.replace('$', '.')
+        parts = s.split('.'); rows = []; used = s
+        # an owner the agent WROTE is never dropped: Owner.m that does not exist is a miss, not a search for any `m`
+        for k in range(max(1, len(parts) - 1)):
+            cand = '.'.join(parts[k:])
+            rows = self.q("SELECT id, kind, display, type_id, method_id FROM symbols WHERE display = ? OR qualified_name = ? OR qualified_name LIKE ?", cand, cand, f"%.{cand}")
+            if not rows: rows = self.q("SELECT id, kind, display, type_id, method_id FROM symbols WHERE display LIKE ? OR display LIKE ?", f"%.{cand}", f"%#{cand}")
+            # the name as written matched nothing: only then is it compared in the one dotted spelling, so a name that
+            # resolved before resolves to the same declaration now, whatever a dotted lookalike elsewhere is called
+            if not rows:
+                # LIKE on the last segment first: C-speed, and a superset (it folds case, `_` is a wildcard), so the Python
+                # comparison sees a handful of rows instead of every symbol (2.3 s → 0.06 s on a million)
+                rows = self.q("SELECT id, kind, display, type_id, method_id, qualified_name, file, line FROM symbols WHERE qualified_name LIKE ? AND canon_is(qualified_name, ?)", '%' + cand.rsplit('.', 1)[-1], cand)
+                self.separator_collision(sel, rows)
+            if rows: used = cand; break
+        exact = [r for r in rows if r['display'] == used or (r['display'] or '').endswith('.' + used) and r['display'].count('.') == used.count('.') + 1] or rows
+        methods = [r['id'] for r in exact if r['method_id'] and r['kind'] != 'module']
+        types = [r for r in exact if r['type_id'] and not r['method_id']]
+        via = '' if used == s else f" (matched as {used})"
+        if methods and not types: return (s if len(methods) == 1 else f"{s} ({len(methods)} declarations)") + via, methods
+        if types:                                                                        # a type → the methods it declares (+ its initializer node if it has one)
+            ids = []
+            for t in types:
+                ids += [r['id'] for r in self.q("SELECT id FROM symbols WHERE owner = ? AND method_id IS NOT NULL", t['display'])]
+                if t['id'] in self.callers_ids: ids.append(t['id'])
+            if ids: return f"{s} (type: {len(ids)} methods){via}", ids
+            die(f"{s} is a type with no methods in the graph")
+        if '.' not in s:                                                                 # a bare name → that method under any owner, or a free function
+            r = self.q("SELECT id FROM symbols WHERE name = ? AND method_id IS NOT NULL AND kind <> 'module'", s)
+            if r: return (s if len(r) == 1 else f"{s} ({len(r)} declarations, any owner)"), [x['id'] for x in r]
+        # not declared in the client code: a JDK / dependency method the code calls into (staged with --library), or the same
+        # call as the parser wrote it down at an unresolved site (no staging needed) — a client declaration always wins over both
+        lib = self.library(s)
+        if lib: return lib
+        w = self.written(s)
+        if w: return w
+        t = self.type_use(s)                                                              # a type the code USES but does not declare: File, Path, Socket
+        if t: return t
+        # THE NO-NAME-YET FORM. `path decrypt '*'` — every declaration whose name CONTAINS the word, which is how a
+        # reader gets from a word in an issue to the exact names this tool otherwise insists on. Only with `'*'` at
+        # the other end (a chain between two fragments would be a guess about both ends), only for a word long enough
+        # to mean something, and the count is printed so a wide word is visibly wide rather than silently capped.
+        if fragment and len(s) >= 3 and re.fullmatch(r'[A-Za-z_][\w]*', s):
+            hits = self.q("""SELECT id, display FROM symbols WHERE method_id IS NOT NULL AND kind NOT IN ('library', 'written', 'module')
+                              AND lower(name) LIKE lower(?) ORDER BY length(display), display LIMIT 200""", f"%{s}%")
+            if hits:
+                ids = [r['id'] for r in hits]
+                shown = ', '.join(r['display'] for r in hits[:4]) + (' …' if len(hits) > 4 else '')
+                return f"{len(ids)} declaration(s) containing '{s}' ({shown})", ids
+        near = self.q("SELECT DISTINCT display FROM symbols WHERE (method_id IS NOT NULL OR type_id IS NOT NULL) AND (lower(display) = lower(?) OR lower(name) = lower(?) OR display LIKE ?) LIMIT 6", s, s.split('.')[-1], f"%{s.split('.')[-1]}%")
+        UNRESOLVED.append(s)                        # each refusal below: the [text] block searches for it (ax_text.py)
+        # with candidates the advice is "pick one"; with none it has to be something else, or the line reads
+        # "use one of them" pointing at an empty list
+        # a word the code WRITES but nothing declares (a local, a parameter, a property) is not a target: the methods that
+        # write it are named as leads, so the reader is not left at "nothing" when the word is right there in the code
+        leads = self.mentions(s)
+        if near:
+            die(f"nothing named '{s}' is declared in this graph. Exact names that are close: "
+                + ', '.join(r['display'] for r in near) + "\n  use one of them as written, or file:line" + leads)
+        # the advice has to differ once the fragment form has ALREADY been tried, or it names the command just run
+        if fragment:
+            die(f"no declaration in the graph contains '{s}'." + leads + "\n"
+                f"  a SHORTER fragment is the way in — `path {s[:max(3, len(s) - 2)]} '*'` — or a file:line from a\n"
+                f"  stack trace or an issue; and `axiomengine index` prints how many declarations the graph has at all.\n"
+                )
+        die(f"nothing named '{s}' is declared in this graph, and nothing close to it." + leads + "\n"
+            f"  a SHORTER fragment is the way in — `path {s.split('.')[-1][:6] or 'name'} '*'` matches every\n"
+            f"  declaration containing it — or a file:line from a stack trace or an issue.")
+
+    def nested_methods(self, outer, inner, mem):
+        """methods named mem on the type(s) `inner` nested inside a type named `outer` — inner = a name (Inner, or Inner$Deeper
+        as a chain) or an ordinal (1, 2 …: the n-th anonymous class in the outer, by source line)"""
+        outers = [r['type_id'] for r in self.q("SELECT type_id FROM symbols WHERE type_id IS NOT NULL AND (display = ? OR display LIKE ? OR name = ?)", outer, f"%.{outer}", outer)]
+        if inner.isdigit() and self.q("SELECT 1 FROM symbols WHERE type_id IN (%s) AND kind = 'enum'" % ','.join('?' * len(outers)), *outers):
+            # an enum: javac's Enum$N is the N-th constant that declares a body, in declaration order; the parser keeps each
+            # body's methods under the owner Enum.CONSTANT (no type row), so the constants are read off the methods
+            ed = self.q("SELECT display FROM symbols WHERE type_id IN (%s) AND kind = 'enum'" % ','.join('?' * len(outers)), *outers)[0]['display']
+            consts = self.q("SELECT owner, min(line) l FROM symbols WHERE owner LIKE ? AND method_id IS NOT NULL AND owner <> ? GROUP BY owner ORDER BY l", f"{ed}.%", ed)
+            consts = [c['owner'] for c in consts if c['owner'].count('.') == ed.count('.') + 1]
+            if len(consts) >= int(inner):
+                return [r['id'] for r in self.q("SELECT id FROM symbols WHERE owner = ? AND name = ? AND method_id IS NOT NULL", consts[int(inner) - 1], mem)]
+            return []
+        for part in inner.split('$'):
+            nxt = []
+            for o in outers:
+                kids = self.q("SELECT s.type_id, s.display, s.name, s.line FROM nesting n JOIN symbols s ON s.type_id = n.type_id WHERE n.outer_type_id = ? ORDER BY s.line", o)
+                if part.isdigit():
+                    anon = [k for k in kids if '<anon' in (k['display'] or '')]
+                    if len(anon) >= int(part): nxt.append(anon[int(part) - 1]['type_id'])
+                else: nxt += [k['type_id'] for k in kids if k['name'] == part or (k['display'] or '').endswith('.' + part)]
+            outers = nxt
+            if not outers: return []
+        ids = []
+        for t in outers:
+            row = self.q("SELECT display FROM symbols WHERE type_id = ? LIMIT 1", t)
+            if not row: continue
+            disp = row[0]['display']
+            # mem is None when the type itself is the endpoint: every method it declares
+            ids += [r['id'] for r in (self.q("SELECT id FROM symbols WHERE owner = ? AND method_id IS NOT NULL", disp) if mem is None
+                                      else self.q("SELECT id FROM symbols WHERE owner = ? AND name = ? AND method_id IS NOT NULL", disp, mem))]
+        return ids
+
+    def library(self, s):
+        """a library method as an endpoint — `java.nio.file.Files.readAllBytes`, `Files.readAllBytes`, `new ArrayList` /
+        `ArrayList.ArrayList`, `Files.*` — resolved against the methods the client code actually calls into
+        (boundary_lib edges), never against a library's whole surface. Its id is a node with in-edges only."""
+        m = re.match(r'^new\s+([\w.]+)$', s)
+        if m: s = m.group(1) + '.' + m.group(1).split('.')[-1]
+        star = s.endswith('.*'); base = s[:-2] if star else s
+        rows = self.q("""SELECT DISTINCT m.id, m.qualified_name q FROM call_edges e JOIN methods m ON m.id = e.callee_method_id
+                         WHERE e.tier = 'boundary_lib' AND m.provenance <> 'client' AND (m.qualified_name = ? OR m.qualified_name LIKE ? OR m.qualified_name LIKE ? OR m.qualified_name LIKE ?)""",
+                      base, f"%.{base}", f"{base}.%" if star else base, f"%.{base}.%" if star else base)
+        if not rows: return None
+        if not star:                                                                          # exact tail only: Files.readAllBytes, not Files.readAllBytesX
+            rows = [r for r in rows if r['q'] == base or r['q'].endswith('.' + base)]
+            if not rows: return None
+        for r in rows: self.sym.setdefault(r['id'], {'id': r['id'], 'display': r['q'], 'file': '<library>', 'line': None, 'end_line': None, 'kind': 'library', 'owner': r['q'].rsplit('.', 1)[0], 'is_test': 0, 'name': r['q'].rsplit('.', 1)[-1], 'method_id': r['id']})
+        return (f"{s} (library" + (f": {len(rows)} methods" if len(rows) > 1 else '') + ")"), [r['id'] for r in rows]
+    EXTRA = []                                                                            # per-query edges into written nodes
+    def written(self, s):
+        """the call as written at UNRESOLVED sites: `new ArrayList` (kind new), `readAllBytes` (any receiver),
+        `Files.readAllBytes` (a receiver named Files referenced on the same line), `Files.*`. Every such site's caller gets an
+        edge into a node named by the written form, tier 'written' — the receiver was not typed, so this is by name."""
+        m = re.match(r'^new\s+([\w.]+)$', s)
+        kind, recv, name, star = ('new', None, m.group(1).split('.')[-1], False) if m else (None, None, None, False)
+        if not m:
+            parts = s.split('.'); name = parts[-1]; recv = parts[-2] if len(parts) > 1 else None; star = name == '*'
+        if star and not recv: return None
+        CTOR = ('new', 'anon_new', 'CONSTRUCTOR_CALL')                                    # the parsers' constructor-call kinds; Python has none (a class call is a call)
+        has_ctor = bool(self.q("SELECT 1 FROM call_sites WHERE kind IN (%s) LIMIT 1" % ','.join('?' * len(CTOR)), *CTOR))
+        ph = ','.join(f"'{k}'" for k in CTOR)
+        sql = """SELECT cs.id, cs.caller_id, cs.kind, cs.callee_name, cs.file_path, cs.start_line FROM call_sites cs JOIN unresolved_sites u ON u.call_site_id = cs.id
+                 WHERE 1=1""" + ((f" AND cs.kind IN ({ph})" if kind == 'new' else f" AND cs.kind NOT IN ({ph})") if has_ctor and not star else '') + ("" if star else " AND cs.callee_name = ?")
+        rows = self.q(sql, *([] if star else [name]))
+        if recv:                                                                          # Files.readAllBytes: the receiver is written before the name on that line
+            keep = []; cache = {}
+            for r in rows:
+                f = self.site_file(r['file_path']); hit = self.has('refs') and self.q("SELECT 1 FROM refs WHERE name = ? AND line = ? AND (file = ? OR file LIKE ?) LIMIT 1", recv, r['start_line'], f, f"%/{f}")
+                if not hit:                                                               # the parser may not record the receiver as a reference (a module in Python): read the line
+                    try:
+                        if f not in cache: cache[f] = open(os.path.join(self.repo, f), errors='replace').read().split('\n')
+                        L = cache[f]; hit = r['start_line'] <= len(L) and re.search(rf'\b{re.escape(recv)}\s*\.\s*{re.escape(name if not star else "")}', L[r['start_line'] - 1]) is not None
+                    except OSError: hit = False
+                if hit: keep.append(r)
+            rows = keep
+        if not rows: return None
+        node = f"w:{s}"; callers = {r['caller_id'] for r in rows}
+        self.sym[node] = {'id': node, 'display': s, 'file': '<written>', 'line': None, 'end_line': None, 'kind': 'written', 'owner': recv or '', 'is_test': 0, 'name': name, 'method_id': node}
+        self.EXTRA += [(c, node, 'written') for c in callers]
+        self.SITES = getattr(self, 'SITES', {}); self.SITES[node] = rows
+        return f"`{s}` as written at {len(rows)} unresolved call site(s) in {len(callers)} method(s) — receiver not typed, matched by name", [node]
+    def type_use(self, s):
+        """a type the code uses without declaring it (java.io.File, pathlib.Path): every place it is touched, as one endpoint —
+        constructor calls written `new T` (unresolved sites), the library methods of T when staged, and the methods whose body
+        references T where the parser gives a line (type references / identifier references). Java type references carry no
+        line, so there the constructor calls and identifier uses are what is found; the answer says which kinds were matched."""
+        name = s.split('.')[-1]; ids = []; parts = []
+        # a qualified name whose last segment the client itself declares is a declaration asked for under a wrong
+        # prefix, not a type from outside: answering for every reference to that short name is a different question
+        if '.' in s and self.q("SELECT 1 FROM symbols WHERE name = ? AND (method_id IS NOT NULL OR type_id IS NOT NULL) AND kind NOT IN ('library', 'written') LIMIT 1", name):
+            return None
+        w = self.written('new ' + name)
+        if w: ids += w[1]; parts.append(f"new {name} at {len(self.SITES[w[1][0]])} site(s)")
+        lib = self.library(s + '.*') if '.' in s else self.library(name + '.*')
+        if lib: ids += lib[1]; parts.append(f"{len(lib[1])} library method(s) of {s}")
+        callers = set(); typed = bool(ids)
+        if self.has('type_refs'):
+            for r in self.q("SELECT file, line FROM type_refs WHERE name = ? AND line > 0", name):
+                e = self.enclosing_at(r['file'], r['line'])
+                if e: callers.add(e); typed = True
+        # A NAME IS NOT A TYPE BECAUSE IT IS WRITTEN. An identifier reference says only that the word occurs: a local
+        # `const labelOf = new Map()`, a parameter, a field. Those uses were each counted as "a use of type labelOf",
+        # so a name no declaration carries came back as a type with exact callers and a passing `verified:` line. A
+        # reference whose binding the parser names as a value is dropped. What is left makes a type only when it is bound
+        # to one, or when the parser could not say what it is bound to and the name is spelt as every one of these
+        # languages spells a type (`Path.Combine(…)` in C#, where a library class is an unbound name): a member
+        # (`process.env.Path`) or a lower-case word (`jsx`) is not. Without that evidence (no `new X`, no library
+        # method, no type position either) the resolver goes on and says nothing is declared, listing the mentions as
+        # leads (`mentions`).
+        if self.has('refs'):
+            for r in self.q("SELECT file, line, kind, entity_kind FROM refs WHERE name = ? AND line > 0", name):
+                if (r['entity_kind'] or '') in VALUE_BINDINGS: continue
+                e = self.enclosing_at(r['file'], r['line'])
+                if not e: continue
+                callers.add(e)
+                typed = typed or r['entity_kind'] == 'TYPE' or (name[:1].isupper() and (r['kind'] or '') not in MEMBER_REFS
+                                                                 and self.unqualified_on(r['file'], r['line'], name))
+        if not typed: return None
+        if callers:
+            node = f"t:{s}"
+            self.sym[node] = {'id': node, 'display': f"uses of type {s}", 'file': '<written>', 'line': None, 'end_line': None, 'kind': 'written', 'owner': '', 'is_test': 0, 'name': name, 'method_id': node}
+            self.EXTRA += [(c, node, 'written') for c in callers]; self.SITES = getattr(self, 'SITES', {}); self.SITES[node] = [{'caller_id': c, 'file_path': self.sym[c]['file'], 'start_line': self.sym[c]['line']} for c in callers]
+            ids.append(node); parts.append(f"referenced by name in {len(callers)} method(s)")
+        if not ids: return None
+        return f"type {s} (not declared here; matched: " + ', '.join(parts) + ")", ids
+    def enclosing_at(self, f, ln):
+        """the narrowest callable whose span holds file:line (not `enclosing`, which is a lambda's: two methods of one
+        name in one class, the later silently replaced the earlier and every lambda lookup died in a TypeError)"""
+        e = self.q("SELECT id FROM symbols WHERE file = ? AND line <= ? AND end_line >= ? AND method_id IS NOT NULL AND kind <> 'module' ORDER BY (end_line - line) LIMIT 1", f, ln, ln)
+        return e[0]['id'] if e else None
+    def unqualified_on(self, f, ln, name):
+        """the name is written on that line NOT as a member: `Path.join(…)`, not `HttpStatus.OK` / `process.env.PORT`
+        after a dot, nor `{ Bucket: … }` as an object key (a front end that records every identifier the same way does
+        not say which one is a member)"""
+        cache = self.__dict__.setdefault('_lines', {}); f = self.site_file(f)
+        if f not in cache:
+            try: cache[f] = open(os.path.join(self.repo, f), errors='replace').read().split('\n')
+            except OSError: cache[f] = None
+        L = cache[f]
+        if L is None or not 0 < ln <= len(L): return True                                   # no source to read: as before
+        return re.search(rf'(?<![.\w$]){re.escape(name)}\b(?!\s*\??:(?!:))', L[ln - 1]) is not None
+    def mentions(self, s, cap=6):
+        """the methods whose body writes the name, for a name nothing declares: leads, printed `[by name]`, never an endpoint"""
+        if not self.has('refs'): return ''
+        name = s.split('.')[-1]; seen = {}
+        for r in self.q("SELECT file, line, entity_kind FROM refs WHERE name = ? AND line > 0 ORDER BY file, line", name):
+            e = self.enclosing_at(r['file'], r['line'])
+            if e and e not in seen: seen[e] = (r['entity_kind'] or '').lower().replace('_', ' ')
+        if not seen: return ''
+        rows = [f"    [by name] {self.disp(e)}   {self.loc(e)}" + (f"   — a {k} named {name}" if k in VALUE_KINDS_SHOWN else '') for e, k in list(seen.items())[:cap]]
+        return (f"\n  the word is written in {len(seen)} method(s) — leads, not calls (no edge reaches a declaration of it):\n"
+                + '\n'.join(rows) + (f"\n    … +{len(seen) - cap}" if len(seen) > cap else ''))
+    def nested_miss(self, outer, inner, mem, s):
+        """why Outer$Inner.m did not resolve: which of the three parts is wrong, with the exact alternatives"""
+        outers = self.q("SELECT type_id, display FROM symbols WHERE type_id IS NOT NULL AND (display = ? OR display LIKE ? OR name = ?)", outer, f"%.{outer}", outer)
+        if not outers: return f"no type named {outer} in the graph"
+        kids = [k for o in outers for k in self.q("SELECT s.display, s.line FROM nesting n JOIN symbols s ON s.type_id = n.type_id WHERE n.outer_type_id = ? ORDER BY s.line", o['type_id'])]
+        first = inner.split('$')[0]
+        if first.isdigit():
+            anon = [k for k in kids if '<anon' in (k['display'] or '')]
+            if len(anon) < int(first): return f"{outer} has {len(anon)} anonymous class(es)" + (": " + ', '.join(f"{k['display']} (L{k['line']})" for k in anon) if anon else '') + f" — no ${first}"
+        elif not any(k['display'].endswith('.' + first) for k in kids):
+            return f"{outer} declares no nested type {first}" + (f"; it nests: " + ', '.join(k['display'].split('.')[-1] for k in kids[:8]) if kids else " and nests nothing")
+        tdisp = [k['display'] for k in kids if k['display'].endswith('.' + first) or (first.isdigit() and '<anon' in k['display'])]
+        ms = [r['name'] for d in tdisp for r in self.q("SELECT name FROM symbols WHERE owner = ? AND method_id IS NOT NULL", d)]
+        if mem == '*': return f"{'.'.join(tdisp[:1]) or outer + '.' + inner} declares no method in the graph"
+        return f"{'.'.join(tdisp[:1]) or outer + '.' + inner} has no method {mem}; it declares: " + ', '.join(sorted(set(ms))[:12])
+    # where the client graph ENDS is named differently by every front end. Java, Python and C# resolve a
+    # call into a dependency and mark it `boundary_lib`, so the callee has a qualified name. TypeScript
+    # and JavaScript mark it `ambient_terminal` (`dynamic_terminal` when the callee is computed) and
+    # carry NO callee at all: on one JavaScript project 15,630 such edges have neither a callee_method_id
+    # nor a callee_label. So this listed nothing on two of the five languages, and `path X '*'` there
+    # simply did not say what the code calls out to — not because the graph does not know, but because
+    # the name is on the CALL SITE (`push`, `Error`, `JSON.stringify`) rather than on the edge.
+    TERMINAL_TIERS = ('boundary_lib', 'boundary_generated', 'ambient_terminal', 'dynamic_terminal')
+
+    def library_calls(self, ids, cap=10):
+        """the library / platform methods these methods call — the ends of the client graph, listed, never traversed"""
+        ids = list(ids)
+        if not ids: return [], []
+        t = ','.join('?' * len(self.TERMINAL_TIERS))
+        # in slices: a closure handed in whole can hold more ids than SQLite takes as parameters
+        tot = collections.Counter()
+        for i in range(0, len(ids), 900):
+            part = ids[i:i + 900]; q = ','.join('?' * len(part))
+            for r in self.q(f"""SELECT COALESCE(m.qualified_name, e.callee_label, s.callee_name) AS lib, count(*) n,
+                                       (m.qualified_name IS NULL AND e.callee_label IS NULL) AS from_site
+                               FROM call_edges e LEFT JOIN methods m ON m.id = e.callee_method_id
+                                                 LEFT JOIN call_sites s ON s.id = e.call_site_id
+                               WHERE e.caller_id IN ({q}) AND e.tier IN ({t})
+                                 AND COALESCE(m.qualified_name, e.callee_label, s.callee_name) IS NOT NULL
+                               GROUP BY lib""", *part, *self.TERMINAL_TIERS):
+                tot[(r['lib'], r['from_site'])] += r['n']
+        rows = [{'lib': l, 'from_site': f, 'n': n} for (l, f), n in sorted(tot.items(), key=lambda x: (-x[1], x[0][0]))]
+        # TWO LISTS, because they are two different facts and only one of them is "a library".
+        # A named callee IS the dependency: the engine resolved the call to a declaration outside the
+        # client and stopped there on purpose. A site-named one is only the word written at the call —
+        # no receiver is recorded anywhere in the graph — and on JavaScript that word is as often a
+        # client method whose receiver was never typed (`unshiftChunk`) as a platform one (`push`).
+        # Printing the second set under "calls into libraries" would assert a resolution that was
+        # never made, about methods that are frequently in the project itself.
+        named  = [(r['lib'], r['n']) for r in rows if not r['from_site']][:cap]
+        unfoll = [(r['lib'], r['n']) for r in rows if r['from_site']][:cap]
+        return named, unfoll
+    def site_file(self, raw):
+        """a call site's file as the repo sees it: Java bundles store absolute paths; the index's paths table maps them"""
+        if self.has('paths'):
+            r = self.q("SELECT rel FROM paths WHERE raw = ?", raw)
+            if r: return r[0]['rel']
+        return os.path.relpath(raw, self.repo).replace(os.sep, '/') if os.path.isabs(raw) and raw.startswith(self.repo) else raw
+
+    # ── facts: exported once per graph, reused while graph.sqlite is unchanged ───────────────────────────────
+    # EXPORT_VERSION is in the stamp beside the graph's mtime: bump it whenever the edges this writes change, or an
+    # upgraded plugin keeps answering from the edges the old code exported (the graph is unchanged, so `index` says it
+    # is up to date and nothing rebuilds). 4: both 3s below, which landed on two branches under one number;
+    # 3 (0.1.5): on one line a JavaScript anonymous callable nests only where its name does (#1598);
+    # 3 (0.1.6): a call written inside a mock's stub or verification is not an edge (ax_edges.stub_sites);
+    # 2: defines needs a written, strictly wider span (#1402, #1399); 1 was the bare mtime.
+    EXPORT_VERSION = '4'
+    def export(self):
+        stamp = os.path.join(self.facts, 'stamp'); want = f"{self.db_mtime}:{self.EXPORT_VERSION}"
+        if os.path.exists(stamp) and open(stamp).read() == want: return
+        os.makedirs(self.facts, exist_ok=True)
+        # `generated` is a client declaration too: a Lombok accessor, a record member, a C# auto-property. The engine
+        # synthesises it and RESOLVES the call sites that name it, so filtering the edge out lost every call into a
+        # generated member — which, on a project whose models are all @Data, is most of what touches the models.
+        # …except a call written inside a mocking library's stub or verification (`when(repo.find(1))`,
+        # `mock.Setup(r => r.Find(1))`): the receiver is a mock, so the real body never runs there, and walked as a call
+        # it made every test that stubs a method a `sound` route to it. impact lists those sites as "stubs it".
+        stubs = ax_edges.stub_sites(lambda s, p: self.q(s, *p)) if self.has('call_sites') else set()
+        edges = [(r['caller_id'], r['callee_method_id'], r['tier']) for r in self.q("SELECT call_site_id, caller_id, callee_method_id, tier FROM call_edges WHERE callee_method_id IS NOT NULL AND callee_provenance IN ('client', 'generated')")
+                 if r['call_site_id'] not in stubs]
+        # calls into libraries: an edge to a terminal node (a library method has no out-edges here — nothing is inferred about its
+        # body), so `path '*' java.nio.file.Files.readAllBytes` can ask who reaches that library call
+        edges += [(r['caller_id'], r['callee_method_id'], 'library') for r in self.q("SELECT DISTINCT caller_id, callee_method_id FROM call_edges WHERE tier = 'boundary_lib' AND callee_method_id IS NOT NULL")]
+        # a callable defined inside another one's body: nobody calls it by name, but it runs only after its definer did.
+        # One builder for this and the fast path (graph_sql._edges), so the two cannot disagree on what contains what.
+        edges += ax_edges.defines_edges(((r['file'], r['line'], r['end_line'], r['id'], r.get('display'), r['method_id'], r.get('qualified_name'))
+                                         for r in self.sym.values() if r['method_id'] and r['kind'] != 'module'),
+                                        ax_edges.sites_of(lambda s, p: self.q(s, *p)) if self.has('call_sites') else None)
+        # a call resolved to a base may run any instantiated override: the engine's own dispatch table
+        if self.has('dispatch_candidates'):
+            disp = {(r[0], r[1]) for r in self.q("""SELECT DISTINCT dc.base_method_id, dc.candidate_method_id FROM dispatch_candidates dc JOIN methods m ON m.id = dc.candidate_method_id
+                WHERE m.provenance = 'client' AND dc.base_method_id <> dc.candidate_method_id
+                AND (dc.basis = 'value' OR m.owner_type_id IS NULL OR m.owner_type_id IN (SELECT type_id FROM type_instantiated) OR NOT EXISTS (SELECT 1 FROM type_instantiated))""")}
+            # `value` (#1206) is exempt from the instantiation narrowing: the candidate is a function STORED in a holder, and it
+            # runs whether or not its owner type is ever constructed (a method group in a static class's delegate field)
+            # a hop from a base method to one of its overrides is a dispatch choice whatever tier the engine stored on it (over the
+            # fan cap it emits base → candidate rows, #664): label it so, then add the candidates the edge rows do not carry
+            have = {(a, b) for a, b, _ in edges}
+            edges = [(a, b, 'dispatch' if (a, b) in disp else t) for a, b, t in edges] + [(a, b, 'dispatch') for a, b in disp if (a, b) not in have]
+        # A CALL THROUGH A HOLDER, where the engine could name the holder (#1206): `ext_fn_value_call(caller, fn)` says the
+        # caller calls through a field / parameter / local that holds fn. Java's base for such a call is the functional
+        # interface's method, shared by every holder of that type, so its `value` pairs are an envelope, not a route —
+        # walking them would make every `.apply` caller a caller of every stored method reference. This is the route.
+        if self.has('ext_fn_value_call'):
+            have = {(a, b) for a, b, _ in edges}
+            edges += [(r[0], r[1], 'dispatch') for r in self.q("SELECT DISTINCT c0, c1 FROM ext_fn_value_call") if (r[0], r[1]) not in have]
+        self.write('edge', edges)
+        self.write('byname', sorted({(r[1], r[2]) for r in self.q("SELECT s.id, s.caller_id, s.callee_name FROM call_sites s JOIN unresolved_sites u ON u.call_site_id = s.id WHERE s.callee_name IS NOT NULL AND s.callee_name <> ''") if r[0] not in stubs}))
+        self.write('named', [(r['name'], r['id']) for r in self.sym.values() if r['method_id'] and r['kind'] != 'module' and r['name']])
+        t = f'{stamp}.{os.getpid()}.tmp'; open(t, 'w').write(want); replace_file(t, stamp)
+    def write(self, name, rows, d=None):
+        # written aside and renamed into place: a query reading the facts while another process (the build's warm-up,
+        # a second query) re-exports them saw a truncated file, and answered from part of the graph
+        p = os.path.join(d or self.facts, name + '.facts'); tmp = f"{p}.{os.getpid()}.tmp"
+        with open(tmp, 'w') as f:
+            for r in rows: f.write('\t'.join(str(x) for x in r) + '\n')
+        replace_file(tmp, p)
+    def edges(self):
+        return [tuple(l.rstrip('\n').split('\t')) for l in open(os.path.join(self.facts, 'edge.facts'))] + list(self.EXTRA)
+
+# ── the same answers in SQL: no .facts written, no Soufflé process ──────────────────────────────────────────────
+def _facts_rows(g, programs):
+    """the input relations the rules read, as lists. `edge` carries g.EXTRA exactly as run_dl appends it."""
+    rows = {'edge': g.edges()}
+    if 'path-opt.dl' in programs:
+        for n in ('byname', 'named'):
+            f = os.path.join(g.facts, n + '.facts')
+            rows[n] = [tuple(l.rstrip('\n').split('\t')) for l in open(f)] if os.path.exists(f) else []
+    return rows
+
+
+def run_sql(g, queries, programs=('path.dl',)):
+    """AXIOMENGINE_SQL: answer the path relations from an indexed in-memory table instead of Soufflé.
+    Same return shape as run_dl, so read_back and every caller below are unchanged."""
+    return graph_sql.solve_path(_facts_rows(g, programs), queries,
+                                every='path-every.dl' in programs, opt='path-opt.dl' in programs)
+
+
+def run(g, queries, programs=('path.dl',)):
+    """one door: SQL, and Soufflé only when asked for.
+
+    Measured over 121 sampled pairs on three bundles — A->B, '*'->B, A->'*' and --every, the four shapes that
+    reach different rules — the two answers are identical and SQL is faster everywhere: 1.0x on the smallest
+    graph, 1.3x in the middle and 3.7x on the largest (33.0s of Soufflé against 8.8s). The closure is a level
+    walk over one indexed in-memory table, so there is no per-query setup to pay for, which is exactly what the
+    impact side does have. AXIOMENGINE_DATALOG=1 puts the rules back.
+    """
+    if os.environ.get('AXIOMENGINE_DATALOG'):
+        return run_dl(g, queries, programs)
+    return run_sql(g, queries, programs)
+
+
+# ── run Soufflé for a set of queries: {q: (src_ids, dst_ids)} ───────────────────────────────────────────────────
+def run_dl(g, queries, programs=('path.dl',)):
+    """the sound program always; path-every.dl only for --every; path-opt.dl only when nothing resolved connects the endpoints —
+    on a large graph the by-name closure is the expensive part, so it is never computed unasked"""
+    # each program as a cached native binary when there is one (dl_program, warmed by `axiomengine index`); soufflé itself
+    # is only needed for the ones that fall back to the interpreter.
+    progs = {p: dl_program.program(p) for p in programs}
+    if any(v[0] == 'souffle' for v in progs.values()) and not shutil.which('souffle'):
+        die(dl_program.rules_unavailable('path'))
+    F = tempfile.mkdtemp(prefix='axpath-'); O = tempfile.mkdtemp(prefix='axpath-out-')
+    for n in ('byname', 'named'): link_facts(os.path.join(g.facts, n + '.facts'), os.path.join(F, n + '.facts'))
+    if g.EXTRA:
+        shutil.copy(os.path.join(g.facts, 'edge.facts'), os.path.join(F, 'edge.facts'))
+        with open(os.path.join(F, 'edge.facts'), 'a') as f:
+            for a, b, t in g.EXTRA: f.write(f"{a}\t{b}\t{t}\n")
+    else: link_facts(os.path.join(g.facts, 'edge.facts'), os.path.join(F, 'edge.facts'))
+    g.write('src', [(q, m) for q, (s, _) in queries.items() for m in s], F)
+    g.write('dst', [(q, m) for q, (_, d) in queries.items() for m in d], F)
+    out = {n: collections.defaultdict(list) for n in ('hit', 'parent', 'hit_opt', 'parent_opt', 'between_edge', 'dist_up', 'dist')}
+    for prog in programs:
+        r = subprocess.run(progs[prog] + ['-F', F, '-D', O], capture_output=True, text=True)
+        if r.returncode: die(f"souffle failed on {prog}:\n" + r.stderr[-800:])
+        for n in out:
+            f = os.path.join(O, n + '.csv')
+            if not os.path.exists(f): continue
+            for l in open(f):
+                p = l.rstrip('\n').split('\t'); out[n][p[0]].append(p[1:])
+            os.remove(f)
+    shutil.rmtree(F, ignore_errors=True); shutil.rmtree(O, ignore_errors=True)
+    return out
+
+def read_back(parent, q, end, srcs):
+    """one chain src → … → end from the parent relation, preferring the most certain tier at every hop;
+    each element is (node, tier of the hop INTO it), the source's tier None"""
+    par = collections.defaultdict(list)
+    for b, a, t in parent[q]: par[b].append((ax_edges.rank(t), a, t))
+    out = []; cur = end; seen = {end}
+    while cur not in srcs:
+        opts = sorted(x for x in par.get(cur, []) if x[1] not in seen)
+        if not opts: return None
+        _, a, t = opts[0]; out.append((cur, t)); cur = a; seen.add(a)
+    out.append((cur, None))
+    return out[::-1]
+
+# ── verification: the printed hops against graph.sqlite, and the length against a second implementation ────────
+def verify(g, chain, srcs, dst, adj):
+    hops = [(chain[i][0], chain[i + 1][0], chain[i + 1][1]) for i in range(len(chain) - 1)]
+    # A SET OF TRIPLES, not a map keyed on the pair. Two call sites in one body can reach the same
+    # callee under DIFFERENT tiers — an ordinary call at one line, a callback_registered hand-off at
+    # another — and a {(a,b): t} map keeps whichever row the export wrote last. The solver sees every
+    # row, so the chain could legitimately be read back through the tier the map had discarded, and
+    # every such hop was then reported "NOT in the graph" against a fact file that does contain it.
+    edge_set = getattr(g, '_edge_triples', None)
+    if edge_set is None: edge_set = g._edge_triples = {(a, b, t) for a, b, t in g.edges()}
+    bad = [h for h in hops if h not in edge_set]
+    for a, b, t in hops:                                                     # a resolved hop must exist as an engine edge, not only as a fact we wrote
+        if t in ('known_edge', 'multi_inferred') and not g.q("SELECT 1 FROM call_edges WHERE caller_id = ? AND callee_method_id = ? AND tier = ? LIMIT 1", a, b, t): bad.append((a, b, t))
+        if t == 'library' and not g.q("SELECT 1 FROM call_edges WHERE caller_id = ? AND callee_method_id = ? AND tier = 'boundary_lib' LIMIT 1", a, b): bad.append((a, b, t))
+        if t == 'written' and not any(r['caller_id'] == a for r in getattr(g, 'SITES', {}).get(b, [])): bad.append((a, b, t))
+    # plain BFS over the same facts: the second implementation must agree on the shortest length
+    seen = {s: 0 for s in srcs}; fr = list(srcs); d = 0; found = None
+    while fr and found is None:
+        d += 1; nxt = []
+        for x in fr:
+            for y in adj.get(x, ()):
+                if y not in seen: seen[y] = d; nxt.append(y)
+                if y == dst: found = d
+        fr = nxt
+    if dst in srcs: found = 0
+    return bad, found
+
+ROUTE_CAP = 1000   # past this many routes --every says "1000+" and asks for a narrower endpoint
+
+def k_shortest_routes(E, starts, ends, k):
+    """the k shortest simple routes from any start to any end, shortest first, and whether more exist (Yen's algorithm).
+
+    Each route costs a bounded number of breadth-first searches over the subgraph, so the work grows with k, not with
+    the number of routes the subgraph holds. Enumerating partial paths best-first instead kept every one of them
+    alive: through a cycle they multiply with every hop, and a query with fewer than k short routes ran out of
+    memory (#1341). A route stops at the first end it reaches, and a start is never a route by itself."""
+    import heapq
+    SRC, DST = '\0src', '\0dst'                                      # never equal to a method id
+    adj = {n: [b for b, _ in bs] for n, bs in E.items()}
+    for n in ends: adj[n] = [DST]                                      # a route ends at the first end it reaches
+    adj[SRC] = list(starts)
+    def bfs(a, banned_nodes, banned_edges):
+        prev = {a: None}; frontier = [a]
+        while frontier:
+            nxt = []
+            for u in frontier:
+                for v in adj.get(u, ()):
+                    if v in prev or v in banned_nodes or (u, v) in banned_edges: continue
+                    prev[v] = u
+                    if v == DST:
+                        path = [v]
+                        while prev[path[-1]] is not None: path.append(prev[path[-1]])
+                        return path[::-1]
+                    nxt.append(v)
+            frontier = nxt
+        return None
+    first = bfs(SRC, set(), set())
+    if not first: return [], False
+    A, B, seen = [first], [], {tuple(first)}
+    real = lambda p: p[1:-1]
+    found = [real(first)] if len(real(first)) > 1 else []
+    while len(found) <= k:
+        last = A[-1]
+        for i in range(len(last) - 2):
+            spur, root = last[i], last[:i + 1]
+            banned_edges = {(p[i], p[i + 1]) for p in A if len(p) > i + 1 and p[:i + 1] == root}
+            tail = bfs(spur, set(root[:-1]), banned_edges)
+            if tail:
+                cand = root[:-1] + tail
+                if tuple(cand) not in seen: seen.add(tuple(cand)); heapq.heappush(B, (len(cand), cand))
+        if not B: break
+        _, nxt = heapq.heappop(B); A.append(nxt)
+        if len(real(nxt)) > 1: found.append(real(nxt))
+    return found[:k], len(found) > k
+
+def every_route(g, res, q, srcs, dsts, max_paths, adj):
+    """the subgraph of every method on ANY chain from a source to a target, and the simple paths through it (bounded)"""
+    E = collections.defaultdict(list); nodes = set()
+    for a, b, t in res['between_edge'][q]: E[a].append((b, t)); nodes.add(a); nodes.add(b)
+    # the enumeration below pushes successors in adjacency order and breaks heap ties on the push counter, so the
+    # order between_edge rows arrived in decides which equal-length routes are printed. Sort each adjacency list so
+    # the route list is a property of the graph, not of the engine that produced the rows.
+    for a in E: E[a].sort()
+    if not nodes: return
+    print(f"  every route: {len(nodes)} methods and {sum(len(v) for v in E.values())} calls lie on some chain from a source to a target")
+    byfile = collections.Counter(g.sym[n]['file'] for n in nodes if n in g.sym)
+    top10 = sorted(byfile.items(), key=lambda kv: (-kv[1], kv[0]))[:10]     # tie by name, not by arrival order
+    print("    files: " + ', '.join(f"{f} ({n})" for f, n in top10) + (f" … +{len(byfile) - 10}" if len(byfile) > 10 else ''))
+    # enumerate simple paths, shortest first, up to max_paths — each one re-checked against the edge set like the nearest chain
+    out = []; edge_set = {(a, b): t for a, b, t in g.edges()}
+    starts = sorted(n for n in nodes if n in srcs); ends = {n for n in nodes if n in dsts}
+    # count the routes up to ROUTE_CAP so the reader knows how many there are, and print the first max_paths of them
+    cap = max(ROUTE_CAP, max_paths)
+    found, more = k_shortest_routes(E, starts, ends, cap)
+    out = found[:max_paths]
+    if more:
+        print(f"  {cap}+ simple paths — too many to list; narrow an endpoint (Owner.method, file:line or --in <path>) for a"
+              f" complete list. The {len(out)} shortest follow (--paths N for more):")
+    else:
+        print(f"  {len(found)} simple path(s)" + (f", the {len(out)} shortest follow (--paths N for more)" if len(out) < len(found) else '') + ", shortest first:")
+    for pth in out:
+        hops = [(pth[i], pth[i + 1]) for i in range(len(pth) - 1)]
+        bad = [h for h in hops if h not in edge_set]
+        print(f"    {len(hops)} hop(s): " + ' → '.join((f"[{edge_set[(pth[i-1], n)]}] " if i and edge_set.get((pth[i-1], n)) not in ('known_edge', None) else '') + g.disp(n) for i, n in enumerate(pth)) + ("   ✗ hop not in graph" if bad else ''))
+
+def hop_detail(g, a, b, t):
+    """What this hop IS and WHERE IT IS WRITTEN: the engine's kind in one cross-language word, and the
+    line of the CALL SITE.
+
+    The chain used to carry one line per hop — the callee's DECLARATION — which is the one line a reader
+    does not need: they have the callee's name. What they cannot get any other way is the line inside the
+    caller that makes the call, which is where the hop is checked, and what kind of call it is. The kind
+    was dropped on export (`SELECT caller_id, callee_method_id, tier`), so `new Foo()`, `super(...)`,
+    `@app.route(...)` and an ordinary invocation all printed identically in every language."""
+    if t in ax_edges.NOT_A_CALL: return '', None
+    rows = g.q("SELECT e.kind k, s.file_path f, s.start_line ln FROM call_edges e LEFT JOIN call_sites s ON s.id = e.call_site_id "
+               "WHERE e.caller_id = ? AND e.callee_method_id = ? ORDER BY (s.start_line IS NULL), s.start_line LIMIT 1", a, b)
+    if not rows: return '', None
+    k, f, ln = rows[0]['k'], rows[0]['f'], rows[0]['ln']
+    # THE CALLEE IS ALSO EVIDENCE OF WHAT THE HOP IS, and on two languages it is the only evidence.
+    # Java, TypeScript and JavaScript emit a construction as its own kind (`new`, CONSTRUCTOR_CALL);
+    # Python and C# emit `Store("main")` as an ordinary SIMPLE_CALL and say it by resolving it to the
+    # class's constructor. Reading the callee's own kind back is a restatement of the engine's facts,
+    # not a guess about them, and it is what makes the word `new` mean the same thing in all five.
+    word = ax_edges.kind_word(k)
+    if word == 'call' and (g.sym.get(b) or g.all_sym.get(b) or {}).get('kind') == 'constructor': word = 'new'
+    return word, (f"{g.site_file(f)}:{ln}" if f and ln else None)
+
+
+def hop_label(g, a, b, t):
+    """[tier · kind @ where the call is written] — everything needed to check the hop by hand."""
+    kind, at = hop_detail(g, a, b, t)
+    bits = [t] + ([kind] if kind else []) + (["not a call"] if t in ax_edges.NOT_A_CALL else [])
+    return f"[{' · '.join(bits)}" + (f" @ {at}]" if at else "]")
+
+
+def print_boundary(g, ids, into, makes):
+    """where the graph stops, in the two ways it stops: a resolved call into a dependency, and a call
+    the engine could not follow at all. Both are printed; neither is traversed. The two lead-ins are
+    passed whole rather than assembled from a subject — "it" and "the target(s)" do not take the
+    same verb."""
+    named, unfollowed = g.library_calls(ids)
+    if named:
+        print(f"  {into} (not traversed — where the client graph ends): " +
+              ', '.join(f"{l} ×{n}" if n > 1 else l for l, n in named))
+    if unfollowed:
+        print(f"  {makes} {sum(n for _, n in unfollowed)} call(s) the graph does not follow — the callee is "
+              "ambient, or its receiver is not typed. These are the words at the call sites, not resolutions: " +
+              ', '.join(f"{l} ×{n}" if n > 1 else l for l, n in unfollowed))
+
+
+def print_chain(g, chain):
+    lines = [f"    {g.disp(chain[0][0])}   {g.loc(chain[0][0])}"]
+    prev = chain[0][0]
+    for n, t in chain[1:]:
+        lines.append(f"      → {hop_label(g, prev, n, t)} {g.disp(n)}   {g.loc(n)}")
+        prev = n
+    return '\n'.join(lines)
+
+
+def chain_size(chain):
+    """how many of a chain's hops are calls, and how many are not. `A reaches B in 11 calls` is false
+    when five of the eleven are containment."""
+    tiers = [t for _, t in chain[1:]]
+    c = ax_edges.calls_in(tiers)
+    return c, len(tiers) - c
+
+# ── one endpoint: everything upstream of X (who can reach it) or downstream (what it can reach) ──────────────────
+def framework_note(g, ids, writers=()):
+    """Why nothing calls it: something outside the graph does, and here is the line that says so.
+
+    `path` answers in chains of resolved calls and does not traverse a framework hop — a chain means control can
+    reach B from A through THESE CALLS, and a registration is not a call. But "0 methods reach it" is the most
+    misleading sentence this command can print about a live route handler, so when the closure is empty the
+    registration is named: the decoration or the call that hands the declaration over, with its file and line.
+    `impact` is the verb that follows the hop, and the note says so rather than leaving the reader at a dead end.
+
+    With `writers`, the callables the query started from, it also reports when one of them WRITES the key the
+    target is registered under — a test asking for the URL its handler is mounted at — including the two spellings
+    of one path (`/orders/o-1/price` against `/orders/{order_id}/price`).
+    """
+    try:
+        import ax_registration
+    except Exception:
+        return []
+    out = []
+    try:
+        every = ax_registration.all_registrations(g.q, g.site_file)
+    except Exception:
+        return []
+    regs = [r for r in every if r[0] in ids]
+    registered = {r[4] for r in every if r[4]}                 # a key registered verbatim elsewhere wins over a pattern
+    keys = {}
+    for decl, f, l, kind, key, why in regs[:4]:
+        out.append(f"  {g.disp(decl)} is {why} ({f}:{l})")
+        if key: keys.setdefault(key, decl)
+    if keys and writers and g.has('literals'):
+        # which callable a line belongs to: the narrowest declaration whose span contains it, built once here
+        # because this tool has no `at()` of its own — it asks about declarations, not about lines
+        spans = sorted((sy['file'], sy['line'], sy['end_line'] or sy['line'], i) for i, sy in g.sym.items()
+                       if sy.get('method_id') and sy.get('file') and sy.get('line'))
+        def at(f, l):
+            best = None
+            for ff, a, b, i in spans:
+                if ff == f and a <= l <= b and (best is None or (b - a) < best[0]): best = (b - a, i)
+            return best[1] if best else None
+        hit = []
+        for v, f, l in g.q("SELECT value, file, line FROM literals WHERE line > 0 AND value IS NOT NULL"):
+            if not isinstance(v, str): continue
+            for key in ax_registration.route_candidates(v, registered):
+                if key not in keys: continue
+                c = at(f, l)
+                if c in writers: hit.append((g.disp(c), v, key, g.site_file(f) if f else f, l))
+        for c, v, key, f, l in sorted(set(hit))[:3]:
+            out.append(f"  {c} writes \"{v}\" at {f}:{l}, which is the key it is registered under" + (f' ("{key}")' if v != key else '')
+                       + " — the framework connects them, no call does")
+    if out:
+        out.append("  `impact " + g.disp(ids[0] if isinstance(ids, list) else sorted(ids)[0]) + " --tests` follows that hop; this command does not, by construction")
+    return out
+
+
+def why_no_caller(g, ids, shown=2, decls=3):
+    """`  why nothing in the graph calls X: <reason>; <reason>` for up to `decls` of the methods in `ids`: the first
+    `shown` reasons graph_sql.no_caller_reasons gives, with the line that says so. A method with no reason prints nothing."""
+    allsym = g.all_sym if hasattr(g, 'all_sym') else g.sym
+    mids = [i for i in ids if (allsym.get(i) or {}).get('method_id')]
+    src = {}
+    def lines(f):
+        if f not in src:
+            try: src[f] = open(os.path.join(g.repo, f), errors='replace').read().split('\n')
+            except OSError: src[f] = []
+        return src[f]
+    try:
+        via = graph_sql.callers_via_base(g.q, mids[:decls], lines) if mids else {}
+        why = graph_sql.no_caller_reasons(g.q, [m for m in mids[:decls] if not via.get(m)])
+    except Exception: return []
+    out = []
+    for i in mids[:decls]:
+        rs = why.get(i) or []
+        if via.get(i):
+            # a caller through an interface or base method the engine narrowed to one implementation: `impact` lists it
+            # as `calls it (via the interface)`, and the closure, which walks call edges, has no edge to start from
+            cs = sorted(via[i], key=lambda c: (allsym.get(c) or {}).get('display') or c)
+            out.append(f"  {g.disp(i)} has {len(cs)} caller(s) through the interface or base method it is declared on, which the "
+                       "closure does not walk: " + ', '.join(f"{g.disp(c)} {g.loc(c)}" for c in cs[:4]) + (' …' if len(cs) > 4 else '')
+                       + f"; `impact {g.disp(i)}` lists them")
+        elif rs:
+            out.append(f"  why nothing in the graph calls {g.disp(i)}: " + '; '.join(
+                graph_sql.no_caller_phrase(k, l) + (f" ({at})" if at else '') for k, l, at in rs[:shown])
+                + (f" (+{len(rs) - shown} more: `impact {g.disp(i)}`)" if len(rs) > shown else ''))
+    return out
+
+
+def closure(g, sel, upstream, limit=40, depth=40):
+    g.export(); label, ids = g.resolve(sel, fragment=True)
+    res = run(g, {'c': (ids if not upstream else [], ids if upstream else [])})
+    rows = [(m, int(d)) for m, d in (res['dist_up'] if upstream else res['dist'])['c'] if 0 < int(d) <= depth and m in g.sym]
+    if g.IN: rows = [(m, d) for m, d in rows if g.under_in(g.sym[m]['file'])]        # --in: only the part of the closure under that path
+    if not upstream: rows = [(m, d) for m, d in rows if g.sym[m]['kind'] not in ('library', 'written')]    # downstream: library ends are listed separately, not counted as reached methods
+    # second implementation: a plain BFS over the same facts, in the same direction, must give the same set and depths
+    adj = collections.defaultdict(set)
+    for a, b, _ in g.edges(): (adj[b].add(a) if upstream else adj[a].add(b))
+    seen = {i: 0 for i in ids}; fr = list(ids); d = 0
+    while fr:
+        d += 1; nxt = []
+        for x in fr:
+            for y in adj.get(x, ()):
+                if y not in seen: seen[y] = d; nxt.append(y)
+        fr = nxt
+    bfs = {m: dd for m, dd in seen.items() if 0 < dd <= depth and m in g.sym and g.under_in(g.sym[m]['file']) and (upstream or g.sym[m]['kind'] not in ('library', 'written'))}
+    agree = bfs == dict(rows)
+    word = 'can reach' if upstream else 'is reached from'
+    print(f"{'everything that ' + word + ' ' if upstream else 'everything reached from '}{label}: {len(rows)} method(s) in {len({g.sym[m]['file'] for m, _ in rows})} file(s)" + (f" within {depth} hop(s)" if depth < 40 else ''))
+    # HOW MUCH OF IT IS CERTAIN. The closure follows every edge the graph holds, and most of a large one arrives through a
+    # dispatch choice: a call to an interface method "reaches" every implementation's callers, so one repository interface
+    # turned 3 exact callers into 342 methods. Both numbers are true -- the first is what must run it, the second what may --
+    # and a count that does not say which it is reads as the first. Walk the same direction again over exact calls only.
+    if rows:
+        # A REQUEST OR EVENT SENT TO ITS HANDLER (`event_dispatch`) is not a dispatch choice: the framework runs the
+        # handler for what is sent, so what reaches the sender reaches the handler. It is walked as its own layer on top
+        # of the exact calls and counted apart, rather than filed with the interface fan-out as "MAY run it".
+        def _walk(ok):
+            adj_ = collections.defaultdict(set)
+            for a, b, t in g.edges():
+                if ok(t): (adj_[b].add(a) if upstream else adj_[a].add(b))
+            ex_, fr_ = set(ids), list(ids)
+            for _ in range(depth):
+                nxt = []
+                for x in fr_:
+                    for y in adj_.get(x, ()):
+                        if y not in ex_: ex_.add(y); nxt.append(y)
+                fr_ = nxt
+                if not fr_: break
+            return ex_
+        _exact_t = lambda t: t != 'dispatch' and ax_edges.direct_cert(t) == 'resolved'
+        ex = _walk(_exact_t)
+        in_rows = {m for m, _ in rows}
+        exact = (ex - set(ids)) & in_rows
+        sent = ((_walk(lambda t: _exact_t(t) or t in ax_edges.TIER_WHY) - set(ids)) & in_rows) - exact
+        prod = lambda ms: sum(1 for m in ms if not g.sym[m]['is_test'])
+        n_prod, n_test = prod(in_rows), len(in_rows) - prod(in_rows)
+        e_prod, e_test = prod(exact), len(exact) - prod(exact)
+        print(f"  {n_prod} production, {n_test} test. Through exact calls only: {e_prod} production, {e_test} test"
+              + (f"; {len(sent)} more through a request or event sent to a handler, which the framework runs for what is sent" if sent else '')
+              + f"; the other {len(in_rows) - len(exact) - len(sent)} only through a dispatch choice (an interface or override with several implementations, "
+              "a call with several candidates) — they MAY run it, not must")
+    if not upstream:
+        print_boundary(g, ids, "it calls into libraries directly", "it also makes")
+    if not rows:
+        u = g.q(f"SELECT count(*) n FROM unresolved_sites WHERE caller_id IN ({','.join('?' * len(ids))})", *ids)[0]['n'] if not upstream else 0
+        print("  none — " + ("its body has %d unresolved call(s), so what it reaches is unknown, not nothing" % u if not upstream and u else "no resolved call " + ("into it; " if upstream else "out of it; ") + "an unresolved site elsewhere may still " + ("call it" if upstream else "be it")))
+        # AN EMPTY UPSTREAM CLOSURE IS THE MOST MISLEADING LINE THIS COMMAND CAN PRINT. For a live route handler,
+        # a signal receiver or a CLI command the answer "0 methods reach it" is true of calls and false of the
+        # program: the framework reaches it. Name the registration rather than leave the reader at a dead end.
+        for line in (framework_note(g, ids) if upstream else []): print(line)
+        # and WHY, from the reader the hooks' `← ?` label and impact's `next:` read (graph_sql.no_caller_reasons): the
+        # first two reasons of each declaration, so `path '*' X` never says less than a Read of X does
+        if upstream:
+            for line in why_no_caller(g, ids): print(line)
+        # A word that resolves to a TYPE has no outbound calls by construction — a type declares members, it does
+        # not call anything — so `path <type> '*'` is empty for every type, declared or not. That is the form the
+        # guide gives someone who has no name yet, and a large share of the words they will try are type-valued
+        # (a component, a class, a symbol lifted from an error message), so ending the answer here sends them away
+        # with nothing while the inbound direction holds what they asked for. Counted, not guessed, and only said
+        # when there is something to find.
+        if not upstream:
+            radj = collections.defaultdict(set)
+            for x, y, _ in g.edges(): radj[y].add(x)
+            seen_r, fr = set(ids), list(ids)
+            while fr:
+                nxt = []
+                for x in fr:
+                    for y in radj.get(x, ()):
+                        if y not in seen_r: seen_r.add(y); nxt.append(y)
+                fr = nxt
+            up = len(seen_r - set(ids))
+            if up:
+                # the resolver words a declared type "X (type: n methods)" and an undeclared one "type X (…)"
+                is_type = label.startswith('type ') or '(type:' in label
+                why = " — a type calls nothing itself; who uses it is the question" if is_type else ""
+                print(f"  → the other direction has it: `path '*' {sel}` reaches {up} method(s){why}")
+        return 1
+    # THE NEAREST CALLER IS THE ANSWER AND IT WAS PRINTED AS A DIGIT. `by hop: 1:1, 2:1, 3:4` reduces the one
+    # row a reader most needs -- who calls this, and where -- to a count, and the entry-point list below does not
+    # recover it: an entry point is a method NOTHING resolved calls, so a direct caller that is itself called
+    # appears nowhere in this answer by name. A reader then opens the file to learn what the digit 1 was, which
+    # is the work this command exists to save. Name the first two hops before any summary; production first,
+    # because a test that reaches the target is a consequence of the change and not a place to edit.
+    if upstream:
+        near = [(m, d) for m, d in rows if d <= 2]
+        np_, nt = [x for x in near if not g.sym[x[0]]['is_test']], [x for x in near if g.sym[x[0]]['is_test']]
+        np_.sort(key=lambda x: (x[1], g.sym[x[0]]['display'], x[0])); nt.sort(key=lambda x: (x[1], g.sym[x[0]]['display'], x[0]))
+        if np_ or nt:
+            print(f"  nearest callers ({len(np_)} production, {len(nt)} test), the ones that call it directly first:")
+            # WHERE THE CALL IS WRITTEN, not just who wrote it. g.loc() gives the caller's DECLARATION line,
+            # which is not the line that makes the call, and a reader checking the hop wants the second. For a
+            # direct caller that line is knowable exactly, so print it; beyond one hop there is no single site.
+            qmark = ','.join('?' * len(ids))
+            # a chained route link (`router.get('/a', h1).post('/b', h2)`) is written on its own line, not its receiver's
+            link_line = {}
+            if any(d == 1 for _, d in np_[:limit]):
+                try:
+                    import ax_registration
+                    link_line = ax_registration.route_site_lines(g.q, g.site_file)
+                except Exception:
+                    pass
+            for m, d in np_[:limit]:
+                at = ''
+                if d == 1:
+                    r = g.q("SELECT s.id sid, s.file_path f, s.start_line ln FROM call_edges e JOIN call_sites s ON s.id = e.call_site_id "
+                            f"WHERE e.caller_id = ? AND e.callee_method_id IN ({qmark}) AND s.start_line IS NOT NULL", m, *ids)
+                    if r:
+                        ln, f = min((link_line.get(x['sid'], x['ln']), x['f'] or '') for x in r)
+                        sf = g.site_file(f)
+                        # the call is nearly always written in the caller's own file, and repeating a 90-character
+                        # path to say so pushes the name off the line. Same file, just the line.
+                        at = f"   — calls it at {':' if sf == (g.sym[m]['file'] or '') else sf + ':'}{ln}".replace('at ::', 'at :')
+                print(f"    {d:2} hop(s)  {g.disp(m)}   {g.loc(m)}{at}")
+            if len(np_) > limit: print(f"    … +{len(np_) - limit} production (--limit N)")
+            if nt: print(f"    +{len(nt)} test caller(s) within 2 hop(s) — `axiomengine test-impact` names them and the command that runs them")
+    byhop = collections.Counter(d for _, d in rows); print("  by hop: " + ', '.join(f"{d}:{n}" for d, n in sorted(byhop.items())))
+    # most_common breaks a tie by insertion order, which is the order the closure rows arrived in: two files with the
+    # same count then swap depending on which engine answered. Sort the tie by name so the line is stable either way.
+    # PRODUCTION FILES FIRST, for the same reason. A well-tested tree has more test methods reaching a target
+    # than production ones, so a single ranked list of files is all tests at the top and the file that has to
+    # change is off the end of it.
+    byfile = collections.Counter(g.sym[m]['file'] for m, _ in rows if not g.sym[m]['is_test'])
+    tfile = collections.Counter(g.sym[m]['file'] for m, _ in rows if g.sym[m]['is_test'])
+    top = sorted(byfile.items(), key=lambda kv: (-kv[1], kv[0]))[:12]
+    if top: print("  files: " + ', '.join(f"{f} ({n})" for f, n in top) + (f" … +{len(byfile) - 12}" if len(byfile) > 12 else ''))
+    if tfile: print(f"  test files: {len(tfile)}, {sum(tfile.values())} method(s) — not listed; `axiomengine test-impact` is the verb for them")
+    if upstream and ids and g.sym[ids[0]]['kind'] == 'written':
+        sites = g.SITES[ids[0]]
+        print("  the sites, as written: " + ', '.join(f"{g.site_file(r['file_path'])}:{r['start_line']}" for r in sites[:8]) + (f" … +{len(sites) - 8}" if len(sites) > 8 else ''))
+    if upstream:
+        # the ends of the chains: tests, main, request handlers and other entry points among the callers — where a change
+        # is observed from. A decoration (@GetMapping, @Test…) is read from the index when it has one
+        # the ends of the chains: methods NOTHING resolved calls (the framework, a test runner, main, a reflective caller — whatever
+        # it is, it is outside the graph) and tests. One criterion in every language; a decoration is shown as information only
+        decs = {}
+        if g.has('decorations'):
+            for r in g.q("SELECT owner_id, name FROM decorations WHERE owner_id IN (%s)" % ','.join('?' * len(rows)), *[m for m, _ in rows]): decs.setdefault(r['owner_id'], []).append(r['name'].split('.')[-1])
+        ent = [(m, d) for m, d in rows if not adj.get(m) or g.sym[m]['is_test']]
+        # two overloads share a display name, so (depth, display) is not a total order and a stable sort then keeps
+        # whichever came first: add the id, which is unique, so the list does not depend on the row order.
+        ent.sort(key=lambda x: (x[1], g.sym[x[0]]['display'], x[0]))
+        print(f"  entry points among them ({len(ent)}: nothing resolved calls them — the caller is outside the graph — or a test), nearest first:")
+        for m, d in ent[:limit]:
+            tag = (' [test]' if g.sym[m]['is_test'] else '') + (' @' + ','.join(decs[m][:3]) if m in decs else '')
+            print(f"    {d:2} hop(s)  {g.disp(m)}{tag}   {g.loc(m)}")
+        if len(ent) > limit: print(f"    … +{len(ent) - limit} (--limit N)")
+    else:
+        print(f"  nearest first:")
+        for m, d in sorted(rows, key=lambda x: (x[1], g.sym[x[0]]['display'], x[0]))[:limit]: print(f"    {d:2} hop(s)  {g.disp(m)}   {g.loc(m)}")
+        if len(rows) > limit: print(f"    … +{len(rows) - limit} (--limit N)")
+    # bound: unresolved sites on the way
+    u = g.q(f"SELECT count(*) n FROM unresolved_sites WHERE caller_id IN ({','.join('?' * (len(rows) + len(ids)))})", *[m for m, _ in rows], *ids)[0]['n']
+    RESULT['reached'] = [{'name': g.disp(m), 'at': g.loc(m), 'hops': int(d)} for m, d in sorted(rows, key=lambda x: (int(x[1]), g.sym[x[0]]['display'], x[0]))]
+    RESULT['verified'] = bool(agree)
+    print(f"  verified: a second, independent traversal over the same facts gives the same {len(rows)} methods at the same depths" if agree else f"  ✗ the second traversal disagrees with Datalog ({len(bfs)} vs {len(rows)}) — report this")
+    # A BOUND NOBODY CAN ACT ON IS NOT A BOUND. Counted over every method in the closure this reached four
+    # figures on a large tree, which reads as "unknown" and is skipped. The reader can only check the rows
+    # actually in front of them, so the actionable number is the unresolved calls inside THOSE; the closure-wide
+    # figure stays, in parentheses, as the honest total.
+    if u:
+        shown_ids = [m for m, _ in (np_ if upstream else sorted(rows, key=lambda x: (x[1], g.sym[x[0]]['display'], x[0])))[:limit]]
+        un = g.q("SELECT count(*) n FROM unresolved_sites WHERE caller_id IN (%s)" % ','.join('?' * (len(shown_ids) + len(ids))),
+                 *shown_ids, *ids)[0]['n'] if shown_ids or ids else 0
+        print(f"  bound: {un} unresolved call(s) inside the {len(shown_ids)} method(s) printed above"
+              + (f" ({u} across the whole closure)" if u != un else '')
+              + f" — the set is a lower bound; `path <one of them> {sel}` for the chain")
+    print(f"  (chain from any one of them: path <that method> {sel}" + (")" if upstream else " — or the reverse)"))
+    return 0
+
+# entry-point reasons whose caller is a request, a runner, a timer, a process start or the container building its beans
+# at startup: nothing the client calls INTO a library lands there, so they do not make a no-chain pair "not shown to be
+# independent" (#1385). Every other reason does. The container kinds were measured, not assumed: counted as reachable,
+# a @Bean factory upstream of almost any method flipped 12 of 64 independent pairs on two real projects, every one
+# of them through a chain from a configuration class, none through a listener or a callback.
+NOT_FROM_A_LIBRARY_CALL = {'test', 'fixture', 'http', 'url', 'grpc_service', 'hub', 'cli', 'main', 'web_filter', 'web_listener',
+                           'scheduled', 'factory', 'bean_ctor', 'di_provider', 'lifecycle',
+                           'exported_from_entry_module', 'unimported_module'}
+
+def entered_in_process(g, ids):
+    """the methods among `ids` that code outside the graph enters in-process: an entry point of a kind a library call can
+    trigger, or an override of a method the graph does not contain. [(symbol id, why)], nearest to the endpoint first."""
+    mid = {g.sym[i]['method_id']: i for i in ids if i in g.sym and g.sym[i].get('method_id')}
+    out = {}
+    keys = list(mid)
+    for k in range(0, len(keys), 900):
+        part = keys[k:k + 900]; q = ','.join('?' * len(part))
+        if g.has('entry_points'):
+            for r in g.q(f"SELECT method_id, reason FROM entry_points WHERE method_id IN ({q})", *part):
+                if r['reason'] not in NOT_FROM_A_LIBRARY_CALL: out.setdefault(mid[r['method_id']], f"{r['reason']} entry point" if ax_edges.entry_outside(r['reason'])
+                                                                         else ax_edges.entry_phrase(r['reason']))
+        if g.has('overrides'):
+            for r in g.q(f"""SELECT o.overriding_method_id m, b.qualified_name b FROM overrides o JOIN methods b ON b.id = o.method_id
+                             WHERE o.overriding_method_id IN ({q}) AND b.provenance <> 'client'""", *part):
+                out.setdefault(mid[r['m']], f"overrides {r['b']}")
+    order = {i: n for n, i in enumerate(ids)}
+    return sorted(out.items(), key=lambda x: order.get(x[0], 0))
+
+# AN UNMODELLED ENTRY: A SIGNAL THAT SOMETHING OUTSIDE THE CODE CALLS A DECLARATION, WHICH THE ENGINE DID NOT TURN INTO AN
+# EDGE OR AN ENTRY POINT. A decoration the rules do not know (a listener, a hook, a validator, a registration), or a
+# base type the graph does not contain (a library class the declaration's owner extends, which the parser could not
+# resolve). "No caller" is then a gap in the model, not a fact about the code, and every verdict that turns "no caller"
+# into "local", "tests: 0" or "independent" was false on exactly these declarations. The rule is one rule, with no
+# framework's names in it: every decoration counts except the short list below, which change nothing about who calls
+# the declaration (a compiler check, a nullness mark, a generated accessor, a wrapper around the same call).
+INERT_DECORATIONS = graph_sql.INERT_DECORATIONS          # one list, read by the hooks and impact too
+BASE_CONTEXTS = graph_sql.BASE_CONTEXTS
+_dec_name = graph_sql.decoration_name
+
+def _library_bases(g, tid):
+    """the base types written on type symbol `tid` that are not declared in the graph (graph_sql.library_bases)"""
+    return graph_sql.library_bases(g.q, g.all_sym.get(tid) if hasattr(g, 'all_sym') else g.sym.get(tid))
+
+def unmodelled_entry(g, ids):
+    """[(symbol id, signal)]: for each declaration in `ids` (a method, a field or a type) that is not a test, what says
+    something outside the code may call it with no edge in this graph -- a decoration a framework reads on it or on its
+    owner type, or a base type of its owner (of itself, for a type) the graph does not contain. For a method the signals
+    are graph_sql.no_caller_reasons, the reader the hooks' `← ?` label and path's empty-upstream note read, so the three
+    name the same thing; a wrapper (a cache, a permission check, a decorator the repository declares) is not one. A
+    private or static member is never entered through its owner's decoration or base, so only its own decorations count."""
+    allsym = g.all_sym if hasattr(g, 'all_sym') else g.sym
+    decs = lambda i: [n for n in dict.fromkeys(_dec_name(r[0]) for r in g.q("SELECT name FROM decorations WHERE owner_id = ?", i))
+                      if n and n not in INERT_DECORATIONS] if g.has('decorations') else []
+    out = []
+    mids = [i for i in ids if (allsym.get(i) or {}).get('method_id') and not allsym[i].get('is_test')]
+    why = graph_sql.no_caller_reasons(g.q, mids) if mids else {}
+    for i in ids:
+        s = allsym.get(i)
+        if not s or s.get('is_test'): continue
+        if i in why:
+            own = s.get('owner') or ''
+            for kind, label, _at in why[i]:
+                # the decoration by its simple name here, as this signal always said it (`@on_boot`, not `@hooks.on_boot`)
+                if kind in ('registered', 'framework'): out.append((i, f"@{_dec_name(label.split(' ')[0])} on {s['display']}"))
+                elif kind == 'type decoration': out.append((i, f"@{_dec_name(label.rsplit(' on ', 1)[0])} on its type {own}"))
+                elif kind == 'base': out.append((i, f"{own} extends {label}, which the graph does not contain"))
+            continue
+        for n in decs(i): out.append((i, f"@{n} on {s['display']}"))
+        is_type = s.get('type_id') and not s.get('method_id')
+        if is_type:
+            for b in _library_bases(g, i): out.append((i, f"{s['display']} extends {b}, which the graph does not contain"))
+            continue
+        own = s.get('owner')
+        if not own: continue
+        for r in g.q("SELECT id FROM symbols WHERE display = ? AND method_id IS NULL AND type_id IS NOT NULL", own):
+            for n in decs(r[0]): out.append((i, f"@{n} on its type {own}"))
+    return list(dict.fromkeys(out))
+
+def grep_roots(g):
+    """the directories a by-hand check should search: the top-level directories holding the graph's declarations,
+    or '.' when there are more than three of them or a declaration sits at the root"""
+    tops = {(f.split('/', 1)[0] if '/' in f else '.') for (f,) in g.q("SELECT DISTINCT file FROM symbols WHERE file IS NOT NULL AND file <> ''")}
+    return '.' if not tops or '.' in tops or len(tops) > 3 else ' '.join(sorted(tops))
+
+def grep_for(g, name):
+    """the exact search that finds what the graph could not: the name as a whole word in the source roots"""
+    return f'grep -rnw "{name}" {grep_roots(g)}'
+
+# ── the query────────────────────────────────────────────────────────────────────────────────────────────────────
+def path(g, a, b, show_all=False, limit=10, every=False, max_paths=20):
+    g.export()
+    la, A = g.resolve(a); lb, B = g.resolve(b)
+    res = run(g, {'fwd': (A, B), 'rev': (B, A)}, ('path.dl', 'path-every.dl') if every else ('path.dl',))
+    if not res['hit']['fwd'] and not res['hit']['rev']:                      # nothing resolved connects them: now, and only now, the by-name closure
+        res_opt = run(g, {'fwd': (A, B), 'rev': (B, A)}, ('path-opt.dl',)); res['hit_opt'] = res_opt['hit_opt']; res['parent_opt'] = res_opt['parent_opt']
+    adj = collections.defaultdict(set)
+    for x, y, _ in g.edges(): adj[x].add(y)
+    A_, B_ = set(A), set(B)
+    for q, srcs, dsts, word in (('fwd', A_, B_, f"{la} → {lb}"), ('rev', B_, A_, f"{lb} → {la}  (the reverse direction)")):
+        hits = sorted(res['hit'][q], key=lambda h: (int(h[1]), h[0]))
+        if not hits: continue
+        print(f"{word}: {len(hits)} of {len(dsts)} target(s) reached through resolved calls; nearest at {hits[0][1]} hop(s)")
+        if len(hits) > limit and not show_all:
+            # a name declared under many owners (close · toString · run): say WHICH owners' declarations are reached and how far,
+            # then print the nearest chains only; the rest is one more call away
+            own = collections.OrderedDict()
+            for m, d in hits: own.setdefault(g.sym[m]['owner'] or os.path.basename(g.sym[m]['file'] or '?'), []).append(int(d))
+            print(f"  reached under {len(own)} owner(s), nearest first: " + ', '.join(f"{o} ({min(ds)} hop{'s' if min(ds) != 1 else ''})" for o, ds in list(own.items())[:12]) + (f" … +{len(own) - 12}" if len(own) > 12 else ''))
+            print(f"  the {limit} nearest chains follow; --all for every one, or narrow the target: Owner.{g.sym[hits[0][0]]['name']} · --in <path>")
+        shown = 0; vbad = 0; vlen = 0; seen_tiers = set()
+        for m, d in hits:
+            d = int(d)
+            if d == 0: print(f"    {g.disp(m)} is itself an endpoint of both"); continue
+            chain = read_back(res['parent'], q, m, srcs)
+            if not chain: print(f"    {g.disp(m)} at {d} hops (chain could not be read back)"); continue
+            bad, bfs = verify(g, chain, srcs, m, adj); vbad += len(bad); vlen += (bfs != d)
+            ncall, nother = chain_size(chain); seen_tiers.update(t for _, t in chain[1:])
+            print(f"  {ncall} call(s)" + (f" + {nother} containment hop(s)" if nother else '') +
+                  ":" + (f"   ✗ {len(bad)} hop(s) NOT in the graph" if bad else '') + (f"   ✗ the second traversal says {bfs}" if bfs != d else ''))
+            print(print_chain(g, chain)); shown += 1
+            RESULT['answers'].append(dict(chain_json(g, chain), direction=q, unverified_hops=len(bad)))
+            if shown >= limit and not show_all: print(f"  … +{len(hits) - shown} more targets (--all)"); break
+        blind = {n for n, _ in (read_back(res['parent'], q, hits[0][0], srcs) or [])}
+        u = g.q(f"SELECT count(*) n FROM unresolved_sites WHERE caller_id IN ({','.join('?' * len(blind))})", *blind)[0]['n'] if blind else 0
+        print(f"  verified: every printed hop is an edge in the graph and a second, independent traversal finds the same length" if not (vbad or vlen) else f"  ✗ verification failed on {vbad} hop(s) / {vlen} length(s) — report this")
+        if seen_tiers:
+            print("  what the hops are:"); [print(l) for l in ax_edges.legend(seen_tiers)]
+        print_boundary(g, [m for m, _ in hits[:limit]], "the target(s) call into libraries", "the target(s) also make")
+        if every: every_route(g, res, q, srcs, dsts, max_paths, adj)
+        else: print(f"  (one shortest chain per reached target; --every for all the routes and every method on any of them)")
+        if u: print(f"  bound: the methods on the nearest chain contain {u} unresolved call(s) — other chains may exist that the graph cannot see")
+        return 0
+    # nothing resolved either way: say so, then whether unresolved sites would connect them
+    print(f"no chain of resolved calls connects {la} and {lb} in either direction (searched {len(g.edges())} edges, depth ≤ 40)")
+    # A CROSS-PROCESS HOP IS A CONNECTION, AND THIS SAID THERE WAS NONE (#1108). A gRPC client and the
+    # handler it calls, or a producer and its consumer, are joined by an edge no call site expresses, so
+    # the BFS above cannot reach it and the honest-sounding "the two are independent in this graph" was
+    # false. Reported separately rather than woven into the chain: it crosses a process, it may be
+    # asynchronous, and a reader has to be able to tell that from an invocation.
+    remote_found = False
+    if g.has('ext_remote_edge'):
+        rows = g.q("SELECT c0, c1, c2, c3, c4 FROM ext_remote_edge WHERE (c0 IN (%s) AND c1 IN (%s)) OR (c0 IN (%s) AND c1 IN (%s))"
+                   % (','.join('?' * len(A_)), ','.join('?' * len(B_)), ','.join('?' * len(B_)), ','.join('?' * len(A_))),
+                   *(list(A_) + list(B_) + list(B_) + list(A_))) if A_ and B_ else []
+        for fr, to, tr, dest, conf in [(r[0], r[1], r[2], r[3], r[4]) for r in rows]:
+            print(f"  BUT they are connected across a process: {g.disp(fr)} → {g.disp(to)}"
+                  f"   [{tr}] at {dest} ({conf})")
+            print(f"    no call site expresses this hop, so no chain of calls can contain it;"
+                  f" `impact {g.disp(to)}` lists it as a [remote] dependent.")
+            remote_found = True
+    # A FRAMEWORK HOP INSIDE ONE PROCESS WAS THE SAME FALSE "INDEPENDENT" (#1509). `order_placed.send()` and its
+    # @receiver, `send_report.delay()` and the task body: the engine writes framework_edge for the pair and no call
+    # site expresses it. Reported beside the cross-process hop and for the same reason not woven into a chain: it
+    # is framework-mediated, and a reader has to be able to tell that from an invocation.
+    if g.has('ext_framework_edge') and A_ and B_:
+        rows = g.q("SELECT c0, c1, c2, c3, c4 FROM ext_framework_edge WHERE (c0 IN (%s) AND c1 IN (%s)) OR (c0 IN (%s) AND c1 IN (%s))"
+                   % (','.join('?' * len(A_)), ','.join('?' * len(B_)), ','.join('?' * len(B_)), ','.join('?' * len(A_))),
+                   *(list(A_) + list(B_) + list(B_) + list(A_)))
+        for fr, to, mech, detail, conf in sorted({(r[0], r[1], r[2], r[3], r[4]) for r in rows if r[0] != r[1]}):
+            print(f"  BUT a framework connects them: {g.disp(fr)} {g.loc(fr)} → {g.disp(to)} {g.loc(to)}   [framework: {mech} via {detail}] ({conf})")
+            print(f"    framework-mediated, not a call: no call site expresses this hop, so no chain of calls can contain it;"
+                  f" `impact {g.disp(to)}` lists {g.disp(fr)} as a [framework] dependent.")
+            remote_found = True
+    for q, srcs, word in (('fwd', A_, f"{la} → {lb}"), ('rev', B_, f"{lb} → {la}")):
+        hits = sorted(res['hit_opt'][q], key=lambda h: (int(h[1]), h[0]))
+        if not hits: continue
+        m, d = hits[0]; chain = read_back(res['parent_opt'], q, m, srcs)
+        if not chain: continue
+        bridges = [(chain[i][0], chain[i + 1][0]) for i in range(len(chain) - 1) if chain[i + 1][1] == 'by-name']
+        print(f"  {word} WOULD connect in {d} hop(s) if {len(bridges)} unresolved call(s) resolve the way their name suggests — look at:")
+        for c, m2 in bridges:
+            sites = g.q("SELECT s.file_path f, s.start_line ln FROM call_sites s JOIN unresolved_sites u ON u.call_site_id = s.id WHERE s.caller_id = ? AND s.callee_name = ?", c, g.sym[m2]['name'])
+            print(f"    `{g.sym[m2]['name']}` called in {g.disp(c)} at " + ', '.join(f"{g.site_file(s['f'])}:{s['ln']}" for s in sites[:4]) + f" — receiver not typed; if it is {g.disp(m2)}, the chain is real")
+        return 1
+    # A LIBRARY CALL IS WHERE THE GRAPH STOPS, NOT WHERE THE CODE DOES (#1385). A start that publishes an event
+    # through a framework's publisher reaches the listener at run time, and the call that does it is a resolved
+    # `boundary_lib` edge -- not an unresolved site, so the by-name search above never sees it. "Independent" was
+    # printed for it word for word as for a start that calls nothing.
+    #
+    # Two facts together withhold the word, and neither alone does. One side (or what it reaches) calls into a
+    # library; and the OTHER side (or something that reaches it) is entered by code outside the graph running in the
+    # same process -- a listener, a lifecycle or ORM hook, a factory, a task, an override of a library method. A
+    # library call can land only on such a method. A route, a test or a main is entered by a request, a runner or
+    # a process start, never by a call the client makes into a library, so a controller that calls String.substring
+    # stays independent of another controller. With the library call alone deciding, 73 of 116 sampled independent
+    # pairs on three real Spring projects stopped being independent; with both facts, 2 did. A reason not in this
+    # list counts as reachable, so a new kind of entry point errs toward "not shown", never toward a false
+    # "independent".
+    lib_side = False
+    if not remote_found:
+        radj = collections.defaultdict(set)
+        for x, ys in adj.items():
+            for y in ys: radj[y].add(x)
+        def closure_of(ids, nbr):
+            own = [i for i in ids if i in g.sym and g.sym[i]['kind'] not in ('library', 'written')]
+            seen = set(own); fr = list(own)
+            while fr:
+                fr = list(dict.fromkeys(y for x in fr for y in nbr.get(x, ())
+                                        if y not in seen and y in g.sym and g.sym[y]['kind'] not in ('library', 'written')))
+                seen.update(fr)
+            return own, sorted(seen - set(own))
+        for (xs, lx), (ys, ly) in (((A_, la), (B_, lb)), ((B_, lb), (A_, la))):
+            own, rest = closure_of(xs, adj)
+            n0, u0 = g.library_calls(own); n1, u1 = g.library_calls(rest)
+            if not (n0 or u0 or n1 or u1): continue
+            entered = entered_in_process(g, sum(closure_of(ys, radj), []))
+            if not entered: continue
+            lib_side = True
+            print_boundary(g, own, f"{lx} calls into libraries", f"{lx} makes")
+            print_boundary(g, rest, f"the {len(rest)} method(s) {lx} reaches call into libraries", "they make")
+            print(f"  {ly} is entered from outside the graph in the same process, as such a call can do: "
+                  + ', '.join(f"{g.disp(m)} ({why}) {g.loc(m)}" for m, why in entered[:3])
+                  + (f" … +{len(entered) - 3}" if len(entered) > 3 else ''))
+    # A CALL WHOSE CALLEE IS A VALUE CAN LAND ANYWHERE (#1649). `cb()` on a parameter, `f()` on a loop variable,
+    # `table[k]()`: nothing about the name narrows the target, so the by-name search above finds no lead and
+    # "independent" was printed for a start that hands control to whatever it was given. The engine marks such a
+    # site (`unresolved_value_callee`); one in either side's closure makes the connection unknown, not absent.
+    opaque = []
+    if not (remote_found or lib_side) and g.has('ext_unresolved_value_callee'):
+        for xs, lx in ((A_, la), (B_, lb)):
+            seen = {i for i in xs if i in g.sym and g.sym[i]['kind'] not in ('library', 'written')}; fr = list(seen)
+            while fr:
+                fr = [y for y in dict.fromkeys(y for x in fr for y in adj.get(x, ())) if y not in seen and y in g.sym
+                      and g.sym[y]['kind'] not in ('library', 'written')]
+                seen.update(fr)
+            ids = sorted(seen); rows = []
+            for i in range(0, len(ids), 900):
+                part = ids[i:i + 900]
+                rows += g.q("SELECT s.caller_id c, s.callee_name n, s.file_path f, s.start_line ln, v.c1 why FROM ext_unresolved_value_callee v"
+                            " JOIN call_sites s ON s.id = v.c0 WHERE s.caller_id IN (%s)" % ','.join('?' * len(part)), *part)
+            if rows: opaque.append((lx, sorted(rows, key=lambda r: (g.site_file(r['f']), r['ln'] or 0))))
+    # …but a framework may still connect them, and the graph holds the evidence for it: the target is registered
+    # under a key, and the source writes that key. That is not a chain of calls, so it is reported and not walked.
+    # Computed BEFORE the verdict line, which used to say "independent" one line above the note that joined them.
+    fw = framework_note(g, B_, set(A_)) + framework_note(g, A_, set(B_))
+    keyed = any('which is the key it is registered under' in l for l in fw)
+    # AN ENDPOINT NOTHING IN THE GRAPH CALLS, CARRYING A SIGNAL THAT SOMETHING OUTSIDE THE CODE DOES (a decoration the
+    # rules do not model, a library base), is entered by a mechanism the graph does not contain, so "independent" is
+    # a claim about the model and not the code. An endpoint the engine already made an entry point is modelled, and
+    # the library-call rule above decides it.
+    unmod = []
+    if not (remote_found or keyed or lib_side or opaque):
+        called = {y for ys in adj.values() for y in ys}
+        eps = set()
+        ends = [i for i in list(B_) + list(A_) if i in g.sym and g.sym[i]['kind'] not in ('library', 'written') and i not in called]
+        mids = [g.sym[i]['method_id'] for i in ends if g.sym[i].get('method_id')]
+        if mids and g.has('entry_points'):
+            eps = {r[0] for r in g.q("SELECT method_id FROM entry_points WHERE method_id IN (%s)" % ','.join('?' * len(mids)), *mids)}
+        unmod = unmodelled_entry(g, [i for i in ends if g.sym[i].get('method_id') not in eps])
+    # "independent" would contradict the cross-process hop printed above, so say the narrower true thing
+    print("  and no unresolved site would connect them by name either"
+          + (": no CALL connects them — the hop above is the only connection" if remote_found
+             else ": no CALL connects them, but one writes the key the other is registered under (below), so a framework"
+                  " does: NOT independent" if keyed
+             else " — but a library called above can reach the other at run time (an event, a callback, a hook) with no"
+                  " call edge to record it: NOT shown to be independent" if lib_side
+             else f" — but {' and '.join(lx for lx, _ in opaque)} make{'s' if len(opaque) == 1 else ''} a call whose callee is a"
+                  f" value, not a name (below): any function passed, stored or exported may be what it calls, so the"
+                  f" connection is UNKNOWN, not absent" if opaque
+             else f" — but NOT CHECKED: {'; '.join(s_ for _i, s_ in unmod[:3])} — a framework calls it and the graph does not"
+                  f" model how, so the other may reach it through that framework. Before treating them as independent run: "
+                  f"{grep_for(g, g.sym[unmod[0][0]]['name'])}" if unmod
+             else ": the two are independent in this graph"))
+    WHY = {'parameter': 'a parameter', 'loop_variable': 'a loop variable', 'local': 'a local', 'computed': 'a computed member',
+           'dynamic_code': 'code built at run time', 'module_variable': 'a module-level variable',
+           'field': 'a function stored in a field',
+           'instance_member': 'a function stored on the instance from outside the class',
+           'parameter_member': 'a member of a parameter', 'expression': 'computed by an expression',
+           'getattr': 'an attribute looked up by a name computed at run time',
+           'imported_variable': "another module's exported variable, which that module reassigns"}
+    for lx, rows in opaque:
+        # the sites that make the answer unknown, in --json too: a consumer reading only `answers` saw "no chain"
+        RESULT['value_calls'] = RESULT.get('value_calls', []) + [
+            {'side': lx, 'caller': g.disp(r['c']), 'callee': r['n'] or '', 'at': f"{g.site_file(r['f'])}:{r['ln']}",
+             'callee_is': WHY.get(r['why'], r['why'])} for r in rows[:50]]
+        print(f"  {lx} reaches {len(rows)} call(s) through a value:")
+        for r in rows[:4]:
+            print(f"    `{r['n'] or '[…]'}()` in {g.disp(r['c'])} at {g.site_file(r['f'])}:{r['ln']} — the callee is {WHY.get(r['why'], r['why'])}")
+        if len(rows) > 4: print(f"    … +{len(rows) - 4} more")
+    for line in fw: print(line)
+    return 1
+
+# ── self-test: the engine's expected edges, through the whole tool ───────────────────────────────────────────────
+def selftest(lang):
+    root = os.path.abspath(os.path.join(HERE, '..', '..', '..', 'graph', 'test', lang)); work = os.path.join(root, '.work-skill')
+    cases = sorted(d for d in glob.glob(os.path.join(work, '*')) if os.path.exists(os.path.join(d, '.axiomengine', 'out', 'graph.sqlite')))
+    if not cases: die(f"no built cases under {work} — build one with: axiomengine index {root}/cases/<case> --lang {lang} --src src (copy it under .work-skill first)")
+    def sel(n):   # `Owner#member(sig)` / `pkg.Owner.member` / `mod.f.<locals>.g` → the display this tool resolves
+        if '#' in n:
+            owner, _, mem = n.partition('#'); mem = re.sub(r'^static ', '', mem).split('(')[0]
+            if mem.startswith('<') or '$anon' in owner: return None
+            return f"{owner.split('.')[-1]}.{mem}" if owner and not owner.islower() and '/' not in owner else mem   # a lowercase or path-like owner is a module
+        parts = n.split('.'); mem = parts[-1]
+        if mem.startswith('<') or '<locals>' in parts or '$anon' in n: return None
+        return f"{parts[-2]}.{mem}" if len(parts) > 1 and parts[-2][:1].isupper() else mem
+    tot = ok = engine_gaps = 0; misses = []; tool_bugs = []
+    for case in cases:
+        exp = os.path.join(root, 'expected', os.path.basename(case) + '.edges')
+        if not os.path.exists(exp): continue
+        g = G(case); g.export(); qs = {}; want = {}
+        for line in open(exp):
+            line = line.rstrip('\n')
+            m = re.match(r'^(known_edge|multi_inferred)\t\S+\t(.+?)(?: @L\d+)? -> (.+)$', line)
+            if m: a, b = sel(m.group(2)), sel(m.group(3))
+            else:                                                       # JavaScript: `file:line:col kind name -> file:line:col name  tier`
+                mj = re.match(r'^(\S+?):(\d+):\d+\s+\S+\s+\S+\s+->\s+(known_edge|multi_inferred)\s+(\S+?):(\d+):\d+\s+(\S+)$', line)
+                if not mj: continue
+                a, b = f"{mj.group(1)}:{mj.group(2)}", f"{mj.group(4)}:{mj.group(5)}"; m = mj
+            if not m: continue
+            if not a or not b or '<' in a or '<' in b: continue
+            try: la, A = g.resolve(a); lb, B = g.resolve(b)
+            except SystemExit: misses.append(f"{os.path.basename(case)}: cannot resolve {a} or {b}"); tot += 1; continue
+            q = f"{a}->{b}"; qs[q] = (A, B); want[q] = (m.group(1) if m.re.groups < 6 else m.group(3), a, b)
+        if not qs: continue
+        res = run(g, qs)
+        for q, (tier, a, b) in want.items():
+            tot += 1; hits = res['hit'][q]
+            if any(int(d) == 1 for _, d in hits) or any(int(d) == 0 for _, d in hits): ok += 1
+            elif hits: ok += 1; misses.append(f"{os.path.basename(case)}: {a} -> {b} found at {min(int(d) for _, d in hits)} hops, expected 1 ({tier})")
+            else:
+                # not found: is the edge in the engine's output at all? absent = the ENGINE did not resolve it (a graph gap,
+                # tracked by the engine's own suite); present = THIS TOOL lost it between graph.sqlite and the answer
+                A, B = qs[q]; ph = lambda xs: ','.join('?' * len(xs))
+                present = g.q(f"SELECT 1 FROM call_edges WHERE caller_id IN ({ph(A)}) AND callee_method_id IN ({ph(B)}) LIMIT 1", *A, *B)
+                if present: tool_bugs.append(f"{os.path.basename(case)}: {a} -> {b} is in call_edges but this tool found no chain")
+                else: engine_gaps += 1
+    for m in misses[:12]: print("  " + m)
+    for m in tool_bugs: print("  TOOL BUG " + m)
+    print(f"{lang}: {ok}/{tot} expected resolved edges found as chains ({len(cases)} cases); {engine_gaps} not in the engine's output (its suite tracks those), {len(tool_bugs)} lost by this tool")
+    return 0 if not tool_bugs else 1
+
+if __name__ == '__main__':
+    import ax_pages; ax_pages.install('path')         # pages and a next step (#1202)
+    args = sys.argv[1:]
+    if not args or args[0] in ('-h', '--help'): print(__doc__); sys.exit(0)
+    if args[0] == '--selftest': sys.exit(selftest(args[1] if len(args) > 1 else 'typescript'))
+    as_json = '--json' in args; args = [a for a in args if a != '--json']
+    show_all = '--all' in args; args = [a for a in args if a != '--all']
+    depth = 40
+    if '--depth' in args: i = args.index('--depth'); depth = int(args[i + 1]); del args[i:i + 2]
+    limit = 10; IN = None; every = '--every' in args; args = [a for a in args if a != '--every']; max_paths = 20
+    if '--paths' in args: i = args.index('--paths'); max_paths = int(args[i + 1]); every = True; del args[i:i + 2]
+    if '--limit' in args: i = args.index('--limit'); limit = int(args[i + 1]); del args[i:i + 2]
+    if '--in' in args: i = args.index('--in'); IN = args[i + 1].replace('\\', '/'); del args[i:i + 2]
+    if len(args) < 2: die("usage: axiomengine path <from> <to> [<repo>] [--all] [--limit N] [--in <path fragment>]")
+    if args[0] == '*' and args[1] == '*': die("one endpoint must be named: path '*' X (everything that reaches X) or path X '*' (everything X reaches)")
+
+    def answer():
+        global IN
+        repo = args[2] if len(args) > 2 else '.'
+        # an --in no graph holds is answered at the root, and says so (the same rule as impact's)
+        if IN and not ax_text.held(repo, IN):
+            print(f"{ax_text.SCOPE_GONE}'{IN}' in its path — answering at the repository root instead")
+            IN = None
+        g = G(repo); g.IN = IN
+        RESULT['query'] = {'from': args[0], 'to': args[1], 'repo': g.repo}
+        try:
+            if args[0] == '*': return closure(g, args[1], upstream=True, limit=limit if limit != 10 else 40, depth=depth)
+            if args[1] == '*': return closure(g, args[0], upstream=False, limit=limit if limit != 10 else 40, depth=depth)
+            return path(g, args[0], args[1], show_all, limit, every, max_paths)
+        except SystemExit as e:
+            # an endpoint nothing in the graph declares: what a search by hand would find, labelled [text] (ax_text.py)
+            if e.code and UNRESOLVED and not as_json: sys.stdout.flush(); ax_text.emit(repo, UNRESOLVED, IN)
+            raise
+
+    if not as_json: sys.exit(answer())
+    # the prose goes to a buffer, not to the caller: one code path produces both, and `prose` is
+    # carried in the document so a machine answer is never LESS than the human one.
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf): code = answer()
+    RESULT['prose'] = buf.getvalue().rstrip('\n').split('\n')
+    print(json.dumps(RESULT, indent=2))
+    sys.exit(code)

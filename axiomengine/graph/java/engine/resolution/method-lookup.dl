@@ -1,0 +1,186 @@
+// ============================================================================
+// Resolution · METHOD LOOKUP  (name in type, with ancestors, overload-aware)
+//
+// Given a type, the methods callable on it — declared directly or inherited. Spans
+// client (java_method) and library (lib_method).
+//
+// SCOPED to keep it from materializing over the whole library: methods are looked
+// up only in `lookup_type` = all client types + the lib types the client actually
+// references (type_ref_resolves) + their ancestors. Everything else in the JDK is
+// never touched.
+//
+// java_method / lib_method (22): 0 name  7 typeRegistryLinkHash (owner)  21 hash
+// java_type (14): 13 hash
+// ============================================================================
+
+// ── lookup_type(TypeHash) — the types we search methods in ──────────────────
+lookup_type(t) :- java_type(_, _, _, _, _, _, _, _, _, _, _, _, _, t).
+lookup_type(t) :- type_ref_resolves(_, _, t).
+lookup_type(t) :- lookup_type(sub), type_ancestor(sub, t).
+
+// ── method_declared_in(Name, TypeHash, MethodHash) — declared directly ──────
+method_declared_in(name, t, m) :- lookup_type(t),
+    java_method(name, _, _, _, _, _, _, t, _, _, _, _, _, _, _, _, _, _, _, _, _, m).
+method_declared_in(name, t, m) :- lookup_type(t),
+    lib_method(name, _, _, _, _, _, _, t, _, _, _, _, _, _, _, _, _, _, _, _, _, m).
+
+// ── method_name_in_type(Name, TypeHash, MethodHash) — declared or inherited ──
+method_name_in_type(name, t, m) :- method_declared_in(name, t, m).
+// OVERRIDE-SHADOWING: an inherited abstract/interface `base` is hidden for `t` when `t`, or an
+// ancestor of `t`, declares a concrete override of it. Without it a concrete type that overrides an
+// interface/abstract method ALSO inherits the abstract decl, which becomes a CHA dispatch base and
+// fans to sibling implementers (over-expansion / false-positive sinks) — even after a chained
+// receiver is narrowed to the concrete type. Mirrors engine-ii's lib_shadowed.
+// SIGNATURE-SAFE via method_override (name+arity, ABSTRACT/interface base ONLY) — a concrete-class
+// method (e.g. OBase.read) is NEVER an override target, so an inherited method is not wrongly hidden
+// when a subtype merely declares an OVERLOAD (different signature). method_override is below the
+// method_name_in_type SCC (built from java_method + type_ancestor), so !shadowed_in_type stratifies.
+// java_method (22): owner=7 hash=21.
+shadowed_in_type(t, base) :- method_override(concrete, base),
+    java_method(_, _, _, _, _, _, _, t, _, _, _, _, _, _, _, _, _, _, _, _, _, concrete).
+shadowed_in_type(t, base) :- method_override(concrete, base),
+    java_method(_, _, _, _, _, _, _, ct, _, _, _, _, _, _, _, _, _, _, _, _, _, concrete),
+    type_ancestor(t, ct).
+// ── FIX-16: two more shadowing laws, both from JLS dispatch ─────────────────
+// Expressed over BASE facts (java_method / lib_method / java_type / type_ancestor) only —
+// deliberately NOT method_declared_in, which sits inside the expr_type fixpoint (lookup_type is
+// seeded from expr_type), so reading it here would make the !shadowed_in_type negation cyclic.
+// java_method / lib_method (22): 1 name  8 owner  17 methodKind  18 parameterCount  22 hash
+sig_declared_in(t, name, pc, m) :- java_method(name, _, _, _, _, _, _, t, _, _, _, _, _, _, _, _, _, pc, _, _, _, m), name != "".
+sig_declared_in(t, name, pc, m) :- lib_method(name, _, _, _, _, _, _, t, _, _, _, _, _, _, _, _, _, pc, _, _, _, m), name != "".
+sig_concrete_in(t, name, pc) :- java_method(name, _, _, _, _, _, _, t, _, _, _, _, _, _, _, _, "INSTANCE_METHOD", pc, _, _, _, _), name != "".
+sig_concrete_in(t, name, pc) :- lib_method(name, _, _, _, _, _, _, t, _, _, _, _, _, _, _, _, "INSTANCE_METHOD", pc, _, _, _, _), name != "".
+
+// (a) DECLARED-WINS. If t declares a method of this name+arity, an INHERITED method of the same
+// name+arity can never be the target for a t-typed receiver: Java binds t's own declaration.
+// Without this, `new SBox().set("w")` emitted both SBox.set(String) and the inherited, erased
+// Box.set(Object) (same name, same arity), and an unqualified `sound()` inside a class that
+// overrides sound() emitted the override AND the inherited Base.sound.
+// AN OVERLOAD IS NOT AN OVERRIDE. Keyed on (name, arity) alone this also hid an inherited
+// method when the subtype merely declared a SIBLING of the same arity and an incompatible type:
+// `class BufferedSink extends Sink` declaring write(int) removed the inherited write(String)
+// from the candidate set, so `bufferedSink.write("x")` resolved to write(int) — a target the
+// compiler never dispatches to, and the correct one was gone before overload resolution ran.
+//
+// The test cannot be plain type equality. The case this law exists for is an ERASED override:
+// `SBox extends Box<String>` declares set(String) against Box's set(T), whose declared type is
+// the type VARIABLE T. Those differ textually and are a genuine override, reconciled by a
+// synthetic bridge that the source — and so the IR — does not contain. Requiring equality would
+// stop shadowing there and re-emit both, which is exactly the over-expansion FIX-16 removed.
+//
+// So: incompatible means the two declare DIFFERENT types at some position AND the base's is not
+// a type variable. Anything else still shadows, which keeps the erased-override case intact.
+//
+// COST. The seed is the join this rule already performed, keeping the derived method instead of
+// dropping it — an equi-join on (name, arity), not a new product. The signature comparison ranges
+// only over seeded pairs, per the discipline used by sat_pair_seed (typescript) and reached_lib
+// (java): a comparison keyed only on library facts is a cross product at platform scale.
+// param_decl / type_param / method_type_param are projections over BASE relations only, so this
+// stays below the expr_type fixpoint and the !shadowed_in_type negation remains stratified.
+type_declares_sig(t, name, pc) :- sig_declared_in(t, name, pc, _).
+
+declared_wins_cand(t, anc, base, derived) :- type_ancestor(t, anc),
+    sig_declared_in(anc, name, pc, base),
+    sig_declared_in(t, name, pc, derived).
+
+// the base's parameter at this position names a type variable — of the method itself...
+base_param_mtvar(base, pos) :- param_decl(_, _, pos, tn, base, _),
+    method_type_param(_, tn, _, base, _).
+// ...or of a type that declares one by that name (checked against the DECLARING type below)
+base_param_ttvar(base, owner, pos) :- param_decl(_, _, pos, tn, base, _),
+    type_param(_, tn, _, owner, _).
+
+declared_wins_incompat(t, base, derived) :- declared_wins_cand(t, anc, base, derived),
+    param_decl(_, _, pos, tb, base, _),
+    param_decl(_, _, pos, td, derived, _),
+    tb != td,
+    !base_param_mtvar(base, pos),
+    !base_param_ttvar(base, anc, pos).
+
+shadowed_in_type(t, base) :- declared_wins_cand(t, _, base, derived),
+    !declared_wins_incompat(t, base, derived).
+
+// (b) CONCRETE-WINS-OVER-ABSTRACT, across unrelated hierarchies. If t reaches a CONCRETE instance
+// method of this name+arity, an ABSTRACT (or interface-declared) method of the same signature
+// reachable in t cannot be the dispatch target. This is `class Impl extends Base implements Handler`
+// where Base is NOT a Handler subtype: method_override never relates Base.handle to Handler.handle,
+// so the abstract Handler.handle survived for an Impl-typed receiver.
+type_reaches_concrete_sig(t, name, pc) :- sig_concrete_in(t, name, pc).
+type_reaches_concrete_sig(t, name, pc) :- type_ancestor(t, anc), sig_concrete_in(anc, name, pc).
+abstract_sig(base, name, pc) :- java_method(name, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, "ABSTRACT_METHOD", pc, _, _, _, base).
+abstract_sig(base, name, pc) :- lib_method(name, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, "ABSTRACT_METHOD", pc, _, _, _, base).
+abstract_sig(base, name, pc) :- java_type(_, _, _, "INTERFACE_TYPE", _, _, _, _, _, _, _, _, _, iface),
+    sig_declared_in(iface, name, pc, base).
+abstract_sig(base, name, pc) :- lib_type(_, _, _, "INTERFACE_TYPE", _, _, _, _, _, _, _, _, _, iface),
+    sig_declared_in(iface, name, pc, base).
+shadowed_in_type(t, base) :- type_ancestor(t, anc),
+    sig_declared_in(anc, name, pc, base),
+    abstract_sig(base, name, pc),
+    type_reaches_concrete_sig(t, name, pc).
+
+method_name_in_type(name, t, m) :- type_ancestor(t, anc),
+    method_declared_in(name, anc, m),
+    !shadowed_in_type(t, m).
+
+// ── java.lang.Object is every reference type's implicit superclass ──────────
+// `class Plain {}` has no extends clause, so it has no SUPER_TYPE reference, so type_parent
+// derives nothing and type_ancestor never reaches java.lang.Object — and a call to a member
+// only Object declares (getClass, hashCode, equals, toString, notifyAll, clone, wait) resolved
+// to NOTHING on any receiver whose own hierarchy does not happen to name Object. Measured on
+// three large open-source projects: 171 of 294 ground-truth calls to an Object member were
+// unresolved, 28.5% of every unresolved boundary row, and the loss compounds — `getClass()`
+// unresolved leaves the receiver of the `.getName()` chained onto it untyped as well.
+//
+// Written as a FALLBACK rather than as `type_parent(t, Object)` for two reasons, both of which
+// bound the blast radius to exactly the sites that resolve to nothing today:
+//
+//   * it cannot change an answer that already exists. The negation means the clause fires only
+//     where the receiver's own hierarchy declares no method of that name and arity, so a client
+//     `toString()` override still wins and the site stays a single known target.
+//   * it cannot fan. Making Object a real ancestor puts every type under one root, and the
+//     rules that enumerate descendants of a base (virtual_override, override_in_closure) would
+//     then enumerate the whole program from any Object-typed receiver — the classic CHA blow-up
+//     that virtual-dispatch.dl already refuses by name for exactly this type.
+//
+// Name+arity is the suppression key, matching DECLARED-WINS above. A type declaring an OVERLOAD
+// of an Object member with the same arity (`boolean equals(Foo)`) therefore also suppresses the
+// Object method — the same imprecision DECLARED-WINS already carries, kept identical rather than
+// given a second, differently-wrong rule.
+// ACCESS MATTERS, and it is the reason this is two clauses. JLS 9.2: an interface implicitly
+// declares the PUBLIC members of Object, and only those. `clone()` and `finalize()` are protected,
+// so they are members of a class type and not of an interface type — and `wait0` is private, so it
+// is a member of neither. Adding all thirteen to every type made `super.clone()` in a subclass whose
+// superclass declares clone() answer with Object#clone() as well, through the Cloneable the class
+// implements: a second, wrong target on a site that had exactly one right one.
+// lib_type (14): 1 qualifiedName 13 hash ; lib_method (22): 0 name 7 owner 10 access 16 kind 17 pc 21 hash
+object_sig(name, pc, access, m) :- lib_type(_, "java.lang.Object", _, _, _, _, _, _, _, _, _, _, _, ot),
+    lib_method(name, _, _, _, _, _, _, ot, _, _, access, _, _, _, _, _, "INSTANCE_METHOD", pc, _, _, _, m),
+    name != "".
+
+// java_type / lib_type (14): 3 typeKind 13 hash
+type_is_interface(t) :- java_type(_, _, _, "INTERFACE_TYPE", _, _, _, _, _, _, _, _, _, t).
+type_is_interface(t) :- lib_type(_, _, _, "INTERFACE_TYPE", _, _, _, _, _, _, _, _, _, t).
+
+// name+arity declared anywhere in t's own hierarchy. Over BASE facts only (sig_declared_in +
+// type_ancestor), like the two shadowing laws above, so the negation below stratifies under
+// method_name_in_type instead of reading it.
+sig_in_hierarchy(t, name, pc) :- sig_declared_in(t, name, pc, _).
+sig_in_hierarchy(t, name, pc) :- type_ancestor(t, anc), sig_declared_in(anc, name, pc, _).
+
+method_name_in_type(name, t, m) :- lookup_type(t),
+    object_sig(name, pc, "PUBLIC", m),
+    !sig_in_hierarchy(t, name, pc).
+method_name_in_type(name, t, m) :- lookup_type(t),
+    object_sig(name, pc, "PROTECTED", m),
+    !type_is_interface(t),
+    !sig_in_hierarchy(t, name, pc).
+
+// ── dispatch-precision helpers ──────────────────────────────────────────────
+// Does a method of this name exist in the type (or an ancestor)?
+method_name_exists_in_type(name, t) :- method_name_in_type(name, t, _).
+
+// More than one method of the same name (overloads) — resolution must pick or
+// fall back to candidates.
+method_name_ambiguous_in_type(name, t) :- method_name_in_type(name, t, m1),
+    method_name_in_type(name, t, m2),
+    m1 != m2.

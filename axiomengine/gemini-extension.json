@@ -1,0 +1,15 @@
+{
+  "name": "axiomengine",
+  "version": "0.1.8",
+  "description": "Ask your repository how its code connects: who calls this, what breaks if I change it, which tests an edit reaches, how A reaches B. Answers come from a resolved call graph and are verified against it; nothing is guessed.",
+  "contextFileName": "plugins/axiomengine/AGENTS.md",
+  "mcpServers": {
+    "axiomengine": {
+      "command": "node",
+      "args": ["${extensionPath}${/}plugins${/}axiomengine${/}mcp${/}launch.js"],
+      "env": {
+        "AXIOMENGINE_PLUGIN_ROOT": "${extensionPath}${/}plugins${/}axiomengine"
+      }
+    }
+  }
+}
