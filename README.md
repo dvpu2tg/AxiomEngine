@@ -29,8 +29,11 @@ Defects4J bugs (80 development, 748 held-out) for the engine, the four
 baseline builders, and the reference selectors, together with the scoring
 code. `release/` holds the run manifest, provenance, aggregate results, and
 validation logs. The full per-bug run archives (roughly 50 GB of compressed
-working trees, split per project) are published as release assets of this
-repository rather than tracked files, because of their size.
+working trees, split per project) are published as release assets rather than
+tracked files, because of their size:
+<https://github.com/dvpu2tg/AxiomEngine/releases/tag/d4j-run-archives>.
+The release also carries the run manifest, provenance, results, checksums, and
+logs under their original names.
 
 ## Environment
 
