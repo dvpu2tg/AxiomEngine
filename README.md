@@ -4,6 +4,8 @@ Anonymous artifact accompanying the paper *AxiomEngine: A Semantic Code
 Intelligence Graph for Coding Agents* (double-blind review). It contains three
 components, one per folder.
 
+**Repo url:** https://github.com/dvpu2tg/AxiomEngine
+
 ## `axiomengine/`
 
 Source code of the engine. Per-file fact extraction (a tree-sitter front end
