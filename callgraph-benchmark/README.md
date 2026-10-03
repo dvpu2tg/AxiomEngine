@@ -68,7 +68,7 @@ The tools disagree about what a call edge even is:
 
 ```
 java.lang.classfile / CodeQL   torture.Shape#area(int)     owner + name + erased params
-axiom-code-graph               torture.Shape#area(int)     owner + name + params
+axiomengine               torture.Shape#area(int)     owner + name + params
 tree-sitter indexers           Shape.area                  owner + name, no params
 some graph exporters           area                        a bare symbol name
 ```
@@ -138,7 +138,7 @@ a separate tier with variance, never averaged into these tables.
 
 | tool | tier | `needs` | what it is |
 |---|---|---|---|
-| `axiom-code-graph` | A | source only (`AxiomEngine`, both languages; Java id `axiom-nolib`) · source + platform IR (`AxiomEngine + libraries`, Java id `axiom`, not ranked) | the tool this benchmark was written to measure; parser and engine `2163292b` (one repository since #469; `origin/main` at run time), recorded per row |
+| `axiomengine` | A | source only (`AxiomEngine`, both languages; Java id `axiom-nolib`) · source + platform IR (`AxiomEngine + libraries`, Java id `axiom`, not ranked) | the tool this benchmark was written to measure; parser and engine `2163292b` (one repository since #469; `origin/main` at run time), recorded per row |
 | CodeQL | A | compiled build (`torture`) · build-mode=none (the five Maven subjects: the sources jar, no build, dependencies absent) · source only (TS) | two rows in Java: `codeql` = `getCallee()`, `codeql-dispatch` = `viableCallable()`; TS rows carry its `imprecision` grade |
 | WALA 1.6.7 | — | bytecode | `java/adapters/wala` exists (CHA / RTA / 0-CFA rows, issue #6/#25) but is **not in the comparison**: Java-only, and withdrawn at the user's request |
 | `colbymchenry/codegraph` | A | source only | SQLite index; the one tree-sitter tool here that records a parameter list; carries `resolvedBy:confidence` |
@@ -572,7 +572,7 @@ farm), so every Java solve re-staged it into `seconds` — the roots are stable 
   CodeQL on the five Maven subjects is `build-mode=none` — the sources jar, dependencies absent — and
   is ranked. `needs` is a capability, not a score.
 
-### Where axiom-code-graph lands
+### Where axiomengine lands
 
 Every number in this list is generated from `*/results/*/scores.json` by
 `bench/readme_tables.py --write`, like the tables above. Hand-written figures here drifted from

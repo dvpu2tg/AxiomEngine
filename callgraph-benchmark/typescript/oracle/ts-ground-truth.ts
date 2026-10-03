@@ -10,7 +10,7 @@
 //
 // THE CONFLICT OF INTEREST, STATED UP FRONT
 // -----------------------------------------
-// One tool under test — axiom-code-graph — parses TypeScript with the `typescript` package. That
+// One tool under test — axiomengine — parses TypeScript with the `typescript` package. That
 // sounds fatal and is not, but the distinction has to be checked rather than assumed:
 //
 //   * it uses the compiler's PARSER (`ts.createSourceFile`, the AST) to read syntax;

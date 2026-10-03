@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# axiom-code-graph — Python engine regression suite  (client -> client ONLY)
+# axiomengine — Python engine regression suite  (client -> client ONLY)
 #
 # For every case in test/python/cases/<name>/src:
 #   1. parse the source to IR           (external parser, $AXIOM_PARSER)

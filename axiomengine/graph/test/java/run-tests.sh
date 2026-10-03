@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# axiom-code-graph — Java engine regression suite
+# axiomengine — Java engine regression suite
 #
 # For every case in test/java/cases/<name>/src:
 #   1. parse the source to IR            (external parser, $AXIOM_PARSER)

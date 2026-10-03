@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# axiom-code-graph - C# engine regression suite
+# axiomengine - C# engine regression suite
 #
 #   ./run-tests.sh                     every case
 #   ./run-tests.sh --only 03-target-typed-new

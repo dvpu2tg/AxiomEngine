@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Adapter: axiom-code-graph (TypeScript front end) -> the canonical edge schema.
+"""Adapter: axiomengine (TypeScript front end) -> the canonical edge schema.
 
 WHAT THE TOOL EMITS
 -------------------

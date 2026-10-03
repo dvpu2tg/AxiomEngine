@@ -7,7 +7,7 @@ THE PROBLEM THIS MODULE EXISTS TO SOLVE
 The tools under test do not agree on what a call edge IS.
 
     java.lang.classfile / CodeQL  →  torture.Shape#area(int)      owner + name + erased params
-    axiom-code-graph              →  torture.Shape#area(int)      owner + name + params
+    axiomengine              →  torture.Shape#area(int)      owner + name + params
     tree-sitter indexers          →  Shape.area                   owner + name, no params
     some graph exporters          →  area                         a bare symbol name
 

@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BEGIN = "<!-- results:begin -->"
 END = "<!-- results:end -->"
-# the standings under "Where axiom-code-graph lands": every number in that paragraph is generated,
+# the standings under "Where axiomengine lands": every number in that paragraph is generated,
 # because hand-written ones drifted from the tables beside them (#34, #94)
 SBEGIN = "<!-- standings:begin -->"
 SEND = "<!-- standings:end -->"

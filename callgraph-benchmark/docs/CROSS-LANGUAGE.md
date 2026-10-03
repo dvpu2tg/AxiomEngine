@@ -114,7 +114,7 @@ This is why the TypeScript result is reported as a **diagnostic** and the Java r
 
 ### A conflict of interest, stated
 
-One tool under test — `axiom-code-graph` — parses TypeScript with the `typescript` package, and its
+One tool under test — `axiomengine` — parses TypeScript with the `typescript` package, and its
 own test suite uses `getResolvedSignature` as a correctness adjudicator (`test/typescript/
 ground-truth/tsc-oracle.mjs` in that repo).
 

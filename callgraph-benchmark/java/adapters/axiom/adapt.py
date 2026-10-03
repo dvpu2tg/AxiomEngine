@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Adapter: axiom-code-graph (the type-directed Datalog engine) -> the canonical edge schema.
+"""Adapter: axiomengine (the type-directed Datalog engine) -> the canonical edge schema.
 
 WHAT THE TOOL EMITS
 -------------------

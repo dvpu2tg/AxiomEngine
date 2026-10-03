@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# axiom-code-graph — TypeScript engine regression suite
+# axiomengine — TypeScript engine regression suite
 #
 # For every case in test/typescript/cases/<name>:
 #   1. parse cases/<name>/src   to IR      (external parser, $AXIOM_PARSER)

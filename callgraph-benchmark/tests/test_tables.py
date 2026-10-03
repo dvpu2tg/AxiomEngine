@@ -107,7 +107,7 @@ class LibraryFreeHeadline(unittest.TestCase):
 
 
 class Standings(unittest.TestCase):
-    """#94: the claims under "Where axiom-code-graph lands" are computed, and a rank never hides an
+    """#94: the claims under "Where axiomengine lands" are computed, and a rank never hides an
     exclusion — an envelope-class row ranked above AxiomEngine is named."""
 
     def test_rank_names_the_envelope_row_above(self):

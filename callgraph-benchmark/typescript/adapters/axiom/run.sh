@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# axiom-code-graph, TypeScript front end.
+# axiomengine, TypeScript front end.
 #
 # ONE CONFIGURATION, not two. The Java runs are split into `axiom` and `axiom-nolib` because the
 # platform IR is a type oracle the source-reading tools do not get. TypeScript has no equivalent

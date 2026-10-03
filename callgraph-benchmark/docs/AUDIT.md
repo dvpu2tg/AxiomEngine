@@ -520,7 +520,7 @@ includes staging says so (a part, not the row's note: verify.sh's re-run always 
 row must stay byte-identical). Checked: torture (stub + platform) misses
 once and hits on the next run; maven-core's `axiom` hits on its first timed run, from the
 warm-up's key; exact counts unchanged. The reporter's engine-side suggestion — key the cache on
-module contents, not the root path — is the durable fix; raised as axiom-code-graph#588.
+module contents, not the root path — is the durable fix; raised as axiomengine#588.
 
 **Verified after the #36 reopening** (2026-09-14, same toolchain): 84 unit tests; every subject in
 both languages re-scored from the kept edge files with the code-review-graph rows re-adapted;

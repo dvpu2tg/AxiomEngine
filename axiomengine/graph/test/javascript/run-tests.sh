@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# axiom-code-graph — JavaScript engine regression suite
+# axiomengine — JavaScript engine regression suite
 #
 # For every case in test/javascript/cases/<name>:
 #   1. parse cases/<name>/src to IR                 (external parser, $AXIOM_PARSER)

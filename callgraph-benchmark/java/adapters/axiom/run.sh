@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# axiom-code-graph: parse the subject into the relational IR, solve, adapt.
+# axiomengine: parse the subject into the relational IR, solve, adapt.
 #
 # THE PLATFORM IR IS A CONFIGURATION, NOT A FREEBIE. This engine takes the platform library as a
 # typed IR and uses it as a TYPE ORACLE: without it a receiver typed through java.util cannot be
