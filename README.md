@@ -33,7 +33,7 @@ code. `release/` holds the run manifest, provenance, aggregate results, and
 validation logs. The full per-bug run archives (roughly 50 GB of compressed
 working trees, split per project) are published as release assets rather than
 tracked files, because of their size:
-<https://github.com/dvpu2tg/AxiomEngine/releases/tag/d4j-run-archives>.
+<https://github.com/dvpu2tg/AxiomEngine/releases/tag/defects4j-run-archives>.
 The release also carries the run manifest, provenance, results, checksums, and
 logs under their original names.
 
