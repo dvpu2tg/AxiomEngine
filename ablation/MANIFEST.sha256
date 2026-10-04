@@ -92,6 +92,7 @@ d1ec97de3a947ccd652cbc76de889b73b90bfbe05f2d19628e9a26bb21a00ca7  tasks/keycloak
 2f8b123faa7145cd25784c502a5d2540b3a24bc2d73973fac55b6f4ae219187f  tasks/keycloak-51735/d19v2-two/model.patch
 54fb20fed7b395d7e4051d9f0f5c7a5c875e1a0d52f25ba4f2230ec4b425ca17  tasks/keycloak-51735/d19v2-two/stream.jsonl
 ed4e9dbd9ab48af77639b41108ea22753aea493ccd787ca659f96c466830ccc2  tasks/keycloak-51735/d19v2-two/summary.json
+80fc4b9f15c4c1f03856f950d999e8ba8d6961a8da7d759408cd1116b8abfab5  tasks/keycloak-51735/gold.txt
 570290e18291821b965dd90155de5c7570830da57c9b0c028c8204438ace5e27  tasks/keycloak-52502/d19-raw/model.patch
 a6130249128b30b8c0ed46a81cb9a7359b9d66d92d730d98598f573eff6154d1  tasks/keycloak-52502/d19-raw/score.json
 ddcee4a8fd7728025a07c8c8781ae8719fa41d6c13a8cc55c8ccbbc5a6890500  tasks/keycloak-52502/d19-raw/stream.jsonl
@@ -183,6 +184,7 @@ c557fd01cf5477d4d5a9f5ba273fe204a430fb6f1df0edbbde7de0501d822417  tasks/quarkus-
 1838e7f0e22e80c1240f385d87464fc4756ffa7b8fd9dd2ff02d54592257d5b4  tasks/quarkus-33346/d19v2-two/model.patch
 4cc6b6653b4974035cea2d46809d056cd193777e11b5eaae7e99c9a5789a6a81  tasks/quarkus-33346/d19v2-two/stream.jsonl
 2d19a9726d3614c45b0e334f11ef92dd37f273538e0cd7eb67bfff10fc74b728  tasks/quarkus-33346/d19v2-two/summary.json
+30fec31369d843d6a2767cb5689f593a0c0e496b5714a141b2df3adf14c4fb78  tasks/quarkus-33346/gold.txt
 c668228513e941ba62eebf50aed9ef65db4377bbbd6f63d73a6c34cff13c54af  tasks/quarkus-51130/d19-raw/model.patch
 7b4bd0b6a7efdc77d746bab65dea2f0d0f20d9ee3da80751d9f119f72f082a3a  tasks/quarkus-51130/d19-raw/stream.jsonl
 d16d43685e6db8cfaba14a13857356c18504c540d6470347579e5b181a5dd8e2  tasks/quarkus-51130/d19-raw/summary.json
@@ -192,6 +194,7 @@ e3845abb388e0aaf02c5c300d7dd07318ec5961c14c667c65fb1c6eddce66d1f  tasks/quarkus-
 d1fac216994efb3c5171a2cfd0d0c2c2b08f9e6e9010a832853238bd6586318e  tasks/quarkus-51130/d19v2-two/model.patch
 39b558ed54b9ed716e14a4cd86f4cf62a61213bdd7b1d08fd8a2d8bd07fa70a5  tasks/quarkus-51130/d19v2-two/stream.jsonl
 5275eb5b56faba551fc9f2815ae1dc736041329e209d5f47bf01f74c40d73a15  tasks/quarkus-51130/d19v2-two/summary.json
+e5b5994664722dfad60b39f98d334cbbec617e748c4ca1f854eba72f2fe2ebea  tasks/quarkus-51130/gold.txt
 2f35cfd5f9313399d9c806b2a6958aa404c20fce0fec69edc8bb6b898d495f3a  tasks/quarkus-53785/d19-raw/model.patch
 9ce80ac5c2969f505b2b33d45a4ce4cf8033dce1ffe1947667e8cbbf8aa7a5c0  tasks/quarkus-53785/d19-raw/stream.jsonl
 b3ccafb2303305cd801aa5974ea88761d073cb59df8f158a6d08f03f1c79c3b7  tasks/quarkus-53785/d19-raw/summary.json
@@ -201,3 +204,4 @@ af507c22d54c536be52538688da7da85371461271bf109d8456d4580ff5900c8  tasks/quarkus-
 4dedde36ae2f04b2485ca603c25a19aed9ac526e9635e7baff4b280f24200538  tasks/quarkus-53785/d19v2-two/model.patch
 3bbfe7b63ca0719fb42aacb0bbee929892473dba3963c87a69b281d1ade9ea54  tasks/quarkus-53785/d19v2-two/stream.jsonl
 f819f5143e09109bdd2b351c9a9bc865723d5d8cbb9fc5ac65e6da30fad72adf  tasks/quarkus-53785/d19v2-two/summary.json
+e4dc1fc3bc494ad8e42bd6ef8dcb37a88a46fb6ccd6de8422527bcef6adbeb9f  tasks/quarkus-53785/gold.txt

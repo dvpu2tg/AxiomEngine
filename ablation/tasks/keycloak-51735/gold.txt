@@ -1,0 +1,2 @@
+tests/custom-providers/src/main/java/org/keycloak/tests/providers/federation/UserMapStorage.java
+tests/custom-providers/src/main/java/org/keycloak/tests/providers/federation/UserMapStorageFactory.java

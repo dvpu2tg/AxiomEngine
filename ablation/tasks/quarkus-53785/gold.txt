@@ -1,0 +1,3 @@
+independent-projects/bootstrap/app-model/src/main/java/io/quarkus/paths/ArchivePathTree.java
+independent-projects/bootstrap/app-model/src/main/java/io/quarkus/paths/OpenContainerPathTree.java
+independent-projects/bootstrap/app-model/src/main/java/io/quarkus/paths/SharedArchivePathTree.java
