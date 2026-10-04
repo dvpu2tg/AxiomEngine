@@ -14,6 +14,18 @@ Left: the turn at which the agent first touches a file the real fix changed;
 a colored x marks runs that never reached one. Right: total turns to finish.
 Regenerates from `results.jsonl`.
 
+## Tasks
+
+| Paper ID | Upstream issue |
+|---|---|
+| KC-51735 | https://github.com/keycloak/keycloak/issues/51735 |
+| KC-52502 | https://github.com/keycloak/keycloak/issues/52502 |
+| KC-52568 | https://github.com/keycloak/keycloak/issues/52568 |
+| KC-52670 | https://github.com/keycloak/keycloak/issues/52670 |
+| QU-33346 | https://github.com/quarkusio/quarkus/issues/33346 |
+| QU-51130 | https://github.com/quarkusio/quarkus/issues/51130 |
+| QU-53785 | https://github.com/quarkusio/quarkus/issues/53785 |
+
 ## Layout
 
 - `TASKS.txt` — every task directory mapped to its upstream public issue URL.
