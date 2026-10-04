@@ -1,0 +1,38 @@
+{
+ "instance": "quarkus-33346",
+ "arm": "brief",
+ "exit": 0,
+ "wall_s": 38,
+ "turns": 12,
+ "cost_usd": 0.1783352,
+ "tokens_in": 14,
+ "tokens_out": 2334,
+ "cache_read": 201496,
+ "cache_create": 28667,
+ "ctx_ingested": 37399,
+ "first_edit_turn": null,
+ "ctx_before_first_edit": null,
+ "explore_calls": 5,
+ "graph_calls": 0,
+ "edit_calls": 1,
+ "run_calls": 0,
+ "files_read": 0,
+ "gold_files": 1,
+ "gold_files_read": 0,
+ "wasted_reads": 0,
+ "files_read_list": [],
+ "patch_files": [
+  "independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/impl/InputStreamReadStream.java"
+ ],
+ "patch_bytes": 2558,
+ "gold_hit": 0,
+ "denials": {},
+ "tools": {
+  "Bash": 6
+ },
+ "old_cli_calls": 0,
+ "is_error": false,
+ "subtype": "success",
+ "build_seconds": null,
+ "resolved": null
+}

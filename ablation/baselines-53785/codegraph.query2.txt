@@ -1,0 +1,36 @@
+== (a3b) closure members matching PathTree (full) ==
+method|io.quarkus.paths::ArchivePathTree::toString
+method|io.quarkus.paths::PathTreeUtils::asString
+class|io.quarkus.paths::PathTreeVisit
+method|io.quarkus.paths::PathTreeVisit::consume
+method|io.quarkus.paths::PathTreeVisit::setCurrent
+method|io.quarkus.paths::PathTreeVisit::relativize
+
+== (a3c) is OpenContainerPathTree/SharedArchivePathTree/ArchivePathTree::walk in closure? ==
+
+== how did closure reach ArchivePathTree::toString? incoming within closure ==
+io.quarkus.paths::ArchivePathTree::toString|calls
+io.quarkus.paths::ArchivePathTree::OpenArchivePathTree::toString|calls
+io.quarkus.paths::PathTreeUtils::asString|calls
+io.quarkus.deployment.builditem.nativeimage::ServiceProviderBuildItem::ofSpiPath|calls
+io.quarkus.deployment.index::IndexingUtil::indexTree|calls
+io.quarkus.deployment.mutability::ReaugmentTask::main::<Consumer$anon@45>::accept|calls
+io.quarkus.deployment.pkg.jar::AbstractFastJarBuilder::packageClasses::<SimpleFileVisitor$anon@549>::visitFile|calls
+io.quarkus.deployment.pkg.jar::AbstractLegacyThinJarBuilder::copyLibraryJars::<SimpleFileVisitor$anon@165>::visitFile|calls
+io.quarkus.deployment.pkg.jar::NativeImageSourceJarBuilder::IsJsonFilePredicate::test|calls
+io.quarkus.deployment.pkg.steps::NativeImageBuildStep::copySourcesToSourceCache|calls
+io.quarkus.deployment.steps::ConfigGenerationBuildStep::getPathWithoutExtension|calls
+io.quarkus.deployment.util::ArtifactInfoUtil::groupIdAndArtifactId|calls
+io.quarkus.runtime.logging::DecorateStackUtil::findAffectedPath|calls
+io.quarkus.runtime.logging::DecorateStackUtil::findAffectedPath|calls
+io.quarkus.runtime.util::ClassPathUtils::toResourceName|calls
+io.quarkus.runtime.util::ClassPathUtils::toResourceName|calls
+io.quarkus.paths::ArchivePathTree|contains
+
+== (b) edges into OpenContainerPathTree nodes from other files ==
+app-model/io/quarkus/paths/ArchivePathTree.java|io.quarkus.paths::ArchivePathTree::OpenArchivePathTree|extends|io.quarkus.paths::OpenContainerPathTree
+app-model/io/quarkus/paths/DirectoryPathTree.java|io.quarkus.paths::DirectoryPathTree|extends|io.quarkus.paths::OpenContainerPathTree
+app-model/io/quarkus/paths/PathTreeUtils.java|io.quarkus.paths::PathTreeUtils::containsCaseSensitivePath|calls|io.quarkus.paths::OpenContainerPathTree::getRoots
+app-model/io/quarkus/paths/PathTreeWithManifest.java|io.quarkus.paths::PathTreeWithManifest::apply|calls|io.quarkus.paths::OpenContainerPathTree::apply
+app-model/io/quarkus/paths/OpenPathTree.java|io.quarkus.paths::OpenPathTree::getPath|calls|io.quarkus.paths::OpenContainerPathTree::getPath
+app-model/io/quarkus/paths/PathTreeWithManifest.java|io.quarkus.paths::PathTreeWithManifest::apply|calls|io.quarkus.paths::OpenContainerPathTree::apply

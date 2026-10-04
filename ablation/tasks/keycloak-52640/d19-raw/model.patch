@@ -1,0 +1,32 @@
+diff --git a/scim/model/src/main/java/org/keycloak/scim/model/group/GroupResourceTypeProvider.java b/scim/model/src/main/java/org/keycloak/scim/model/group/GroupResourceTypeProvider.java
+index 8688cc2f..90b9bb11 100644
+--- a/scim/model/src/main/java/org/keycloak/scim/model/group/GroupResourceTypeProvider.java
++++ b/scim/model/src/main/java/org/keycloak/scim/model/group/GroupResourceTypeProvider.java
+@@ -40,6 +40,7 @@ import org.keycloak.models.jpa.entities.UserGroupMembershipEntity;
+ import org.keycloak.scim.filter.ScimFilterParser;
+ import org.keycloak.scim.model.filter.ScimAttributeJpaExpressionResolver;
+ import org.keycloak.scim.model.filter.ScimJPAPredicateEvaluator;
++import org.keycloak.scim.protocol.ForbiddenException;
+ import org.keycloak.scim.protocol.request.SearchRequest;
+ import org.keycloak.scim.resource.group.Group;
+ import org.keycloak.scim.resource.group.Member;
+@@ -165,10 +166,19 @@ public class GroupResourceTypeProvider extends AbstractScimResourceTypeProvider<
+ 
+     @Override
+     public boolean onDelete(GroupModel model) {
++        if (hasAdminDescendant(model)) {
++            // deleting a group cascades to its subgroups, so protected admin subgroups must block the delete
++            throw new ForbiddenException();
++        }
+         RealmModel realm = session.getContext().getRealm();
+         return session.groups().removeGroup(realm, model);
+     }
+ 
++    private boolean hasAdminDescendant(GroupModel group) {
++        Permissions permissions = session.getContext().getPermissions();
++        return group.getSubGroupsStream().anyMatch(child -> permissions.isAdminGroup(child) || hasAdminDescendant(child));
++    }
++
+     @Override
+     public Class<Group> getResourceType() {
+         return Group.class;

@@ -1,0 +1,43 @@
+== START nodes matching ['BruteForceTest.java:BruteForceTest.testExceedMaxTemporaryLockouts']: 1
+   Method:tests-base-test/org/keycloak/testsuite/forms/BruteForceTest.java:BruteForceTest.testExceedMaxTemporaryLockouts#0
+== CLOSURE over ['CALLS'] from starts: 67 nodes
+  target 'WaitUtils' in closure: 5
+     Method:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java:WaitUtils.pause#1
+     Method:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java:WaitUtils.waitForBruteForceExecutors#1
+     Method:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java:WaitUtils.waitForPageToLoad#0
+     Method:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java:WaitUtils.waitUntilElement#1~By
+     Method:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java:WaitUtils.waitUntilElement#1~WebElement
+== PAIR edges 'BruteForceTest.java' -> 'WaitUtils': 16
+   CALLS Method:tests-base-test/org/keycloak/testsuite/forms/BruteForceTest.java:BruteForceTest.testGrantInvalidPassword#0 -> Method:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java:WaitUtils.waitForBruteForceExecutors#1 import-resolved
+   CALLS Method:tests-base-test/org/keycloak/testsuite/forms/BruteForceTest.java:BruteForceTest.testGrantInvalidOtp#0 -> Method:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java:WaitUtils.waitForBruteForceExecutors#1 import-resolved
+   CALLS Method:tests-base-test/org/keycloak/testsuite/forms/BruteForceTest.java:BruteForceTest.testGrantMissingOtp#0 -> Method:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java:WaitUtils.waitForBruteForceExecutors#1 import-resolved
+   CALLS Method:tests-base-test/org/keycloak/testsuite/forms/BruteForceTest.java:BruteForceTest.testGrantPermamentOtpAbsolut#0 -> Method:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java:WaitUtils.waitForBruteForceExecutors#1 import-resolved
+   CALLS Method:tests-base-test/org/keycloak/testsuite/forms/BruteForceTest.java:BruteForceTest.testNoFailureResetForPermanentLockout#0 -> Method:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java:WaitUtils.waitForBruteForceExecutors#1 import-resolved
+   CALLS Method:tests-base-test/org/keycloak/testsuite/forms/BruteForceTest.java:BruteForceTest.testFailureCountResetWithPasswordGrantType#0 -> Method:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java:WaitUtils.waitForBruteForceExecutors#1 import-resolved
+   CALLS Method:tests-base-test/org/keycloak/testsuite/forms/BruteForceTest.java:BruteForceTest.testCookieSsoReauthenticationDoesNotResetLockout#0 -> Method:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java:WaitUtils.waitForBruteForceExecutors#1 import-resolved
+   CALLS Method:tests-base-test/org/keycloak/testsuite/forms/BruteForceTest.java:BruteForceTest.loginSuccess#1 -> Method:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java:WaitUtils.waitForBruteForceExecutors#1 import-resolved
+   CALLS Method:tests-base-test/org/keycloak/testsuite/forms/BruteForceTest.java:BruteForceTest.loginWithTotpFailure#0 -> Method:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java:WaitUtils.waitForBruteForceExecutors#1 import-resolved
+   CALLS Method:tests-base-test/org/keycloak/testsuite/forms/BruteForceTest.java:BruteForceTest.continueLoginWithInvalidTotp#0 -> Method:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java:WaitUtils.waitForBruteForceExecutors#1 import-resolved
+   CALLS Method:tests-base-test/org/keycloak/testsuite/forms/BruteForceTest.java:BruteForceTest.continueLoginWithMissingTotp#0 -> Method:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java:WaitUtils.waitForBruteForceExecutors#1 import-resolved
+   CALLS Method:tests-base-test/org/keycloak/testsuite/forms/BruteForceTest.java:BruteForceTest.loginWithMissingTotp#0 -> Method:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java:WaitUtils.waitForBruteForceExecutors#1 import-resolved
+== PAIR edges 'BruteForceTest.java:BruteForceTest.testExceedMaxTemporaryLockouts' -> 'loginInvalidPassword': 1
+   CALLS Method:tests-base-test/org/keycloak/testsuite/forms/BruteForceTest.java:BruteForceTest.testExceedMaxTemporaryLockouts#0 -> Method:tests-base-test/org/keycloak/testsuite/forms/BruteForceTest.java:BruteForceTest.loginInvalidPassword#0 local-call
+== PAIR edges 'BruteForceTest.java:BruteForceTest.loginInvalidPassword' -> 'waitForBruteForceExecutors': 1
+   CALLS Method:tests-base-test/org/keycloak/testsuite/forms/BruteForceTest.java:BruteForceTest.loginInvalidPassword#2 -> Method:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java:WaitUtils.waitForBruteForceExecutors#1 import-resolved
+== GOLD cross-file edges into nodes of file '*testsuite/util/WaitUtils.java*' (18 nodes): 267
+   by kind: {'IMPORTS': 70, 'CALLS': 194, 'ACCESSES': 2, 'CONTAINS': 1}
+   IMPORTS File:tests-base-main/org/keycloak/testsuite/adapter/page/EmployeeRoleMappingServlet.java [tests-base-main/org/keycloak/testsuite/adapter/page/EmployeeRoleMappingServlet.java] -> File:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java java-scope: import
+   IMPORTS File:tests-base-main/org/keycloak/testsuite/adapter/page/MultiTenant1Saml.java [tests-base-main/org/keycloak/testsuite/adapter/page/MultiTenant1Saml.java] -> File:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java java-scope: import
+   IMPORTS File:tests-base-main/org/keycloak/testsuite/adapter/page/MultiTenant2Saml.java [tests-base-main/org/keycloak/testsuite/adapter/page/MultiTenant2Saml.java] -> File:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java java-scope: import
+   IMPORTS File:tests-base-main/org/keycloak/testsuite/adapter/page/SAMLServlet.java [tests-base-main/org/keycloak/testsuite/adapter/page/SAMLServlet.java] -> File:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java java-scope: import
+   IMPORTS File:tests-base-main/org/keycloak/testsuite/arquillian/containers/KeycloakQuarkusServerDeployableContainer.java [tests-base-main/org/keycloak/testsuite/arquillian/containers/KeycloakQuarkusServerDeployableContainer.java] -> File:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java java-scope: import
+   IMPORTS File:tests-base-main/org/keycloak/testsuite/auth/page/login/LoginBase.java [tests-base-main/org/keycloak/testsuite/auth/page/login/LoginBase.java] -> File:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java java-scope: import
+   IMPORTS File:tests-base-main/org/keycloak/testsuite/drone/KeycloakDronePostSetup.java [tests-base-main/org/keycloak/testsuite/drone/KeycloakDronePostSetup.java] -> File:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java java-scope: import
+   IMPORTS File:tests-base-main/org/keycloak/testsuite/page/AbstractPatternFlyAlert.java [tests-base-main/org/keycloak/testsuite/page/AbstractPatternFlyAlert.java] -> File:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java java-scope: import
+   IMPORTS File:tests-base-main/org/keycloak/testsuite/pages/LanguageComboboxAwarePage.java [tests-base-main/org/keycloak/testsuite/pages/LanguageComboboxAwarePage.java] -> File:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java java-scope: import
+   IMPORTS File:tests-base-main/org/keycloak/testsuite/pages/LoginPage.java [tests-base-main/org/keycloak/testsuite/pages/LoginPage.java] -> File:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java java-scope: import
+   IMPORTS File:tests-base-main/org/keycloak/testsuite/pages/LoginUpdateProfilePage.java [tests-base-main/org/keycloak/testsuite/pages/LoginUpdateProfilePage.java] -> File:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java java-scope: import
+   IMPORTS File:tests-base-main/org/keycloak/testsuite/pages/social/BitbucketLoginPage.java [tests-base-main/org/keycloak/testsuite/pages/social/BitbucketLoginPage.java] -> File:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java java-scope: import
+   IMPORTS File:tests-base-main/org/keycloak/testsuite/pages/social/GoogleLoginPage.java [tests-base-main/org/keycloak/testsuite/pages/social/GoogleLoginPage.java] -> File:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java java-scope: import
+   IMPORTS File:tests-base-main/org/keycloak/testsuite/pages/social/InstagramLoginPage.java [tests-base-main/org/keycloak/testsuite/pages/social/InstagramLoginPage.java] -> File:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java java-scope: import
+   IMPORTS File:tests-base-main/org/keycloak/testsuite/pages/social/MicrosoftLoginPage.java [tests-base-main/org/keycloak/testsuite/pages/social/MicrosoftLoginPage.java] -> File:tests-base-main/org/keycloak/testsuite/util/WaitUtils.java java-scope: import

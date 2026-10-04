@@ -1,0 +1,26 @@
+== START nodes matching ['_tokenendpoint_tokenendpoint_']: 12
+   services_org_keycloak_protocol_oidc_endpoints_tokenendpoint_tokenendpoint_tokenendpoint
+   services_org_keycloak_protocol_oidc_endpoints_tokenendpoint_tokenendpoint_processgrantrequest
+   services_org_keycloak_protocol_oidc_endpoints_tokenendpoint_tokenendpoint_introspect
+   services_org_keycloak_protocol_oidc_endpoints_tokenendpoint_tokenendpoint_preflight
+   services_org_keycloak_protocol_oidc_endpoints_tokenendpoint_tokenendpoint_checkssl
+   services_org_keycloak_protocol_oidc_endpoints_tokenendpoint_tokenendpoint_checkrealm
+   services_org_keycloak_protocol_oidc_endpoints_tokenendpoint_tokenendpoint_checkclient
+   services_org_keycloak_protocol_oidc_endpoints_tokenendpoint_tokenendpoint_checkgranttype
+== CLOSURE over ['calls'] from starts: 99 nodes
+  target 'resourceindicatorspostprocessor' in closure: 0
+  target 'tokeninterceptorexception' in closure: 0
+== PAIR edges 'tokenpostprocessor_tokenpostprocessor' -> 'resourceindicatorspostprocessor': 0
+== PAIR edges 'tokenendpoint' -> 'tokeninterceptorexception': 2
+   imports services_org_keycloak_protocol_oidc_endpoints_tokenendpoint -> tokeninterceptorexception EXTRACTED
+   imports services_org_keycloak_protocol_oidc_endpoints_tokenendpoint -> services_org_keycloak_protocol_oidc_token_tokeninterceptorexception_tokeninterceptorexception EXTRACTED
+== PAIR edges 'resourceindicatorspostprocessor_resourceindicatorspostprocessor' -> 'tokeninterceptorexception': 0
+== PAIR edges 'invoketokenpostprocessors' -> '': 3
+   calls services_org_keycloak_protocol_oidc_tokenmanager_accesstokenresponsebuilder_invoketokenpostprocessors -> services_org_keycloak_protocol_oidc_token_tokenpostprocessorcontext_tokenpostprocessorcontext INFERRED
+   calls services_org_keycloak_protocol_oidc_tokenmanager_accesstokenresponsebuilder_invoketokenpostprocessors -> server_spi_org_keycloak_models_keycloaksession_keycloaksession_getkeycloaksessionfactory INFERRED
+   calls services_org_keycloak_protocol_oidc_tokenmanager_accesstokenresponsebuilder_invoketokenpostprocessors -> server_spi_org_keycloak_models_keycloaksession_keycloaksession_getprovider INFERRED
+== GOLD cross-file edges into nodes of file '*endpoints/TokenEndpoint.java*' (18 nodes): 3
+   by kind: {'imports': 3}
+   imports services_org_keycloak_protocol_oidc_oidcloginprotocolservice [services/org/keycloak/protocol/oidc/OIDCLoginProtocolService.java] -> services_org_keycloak_protocol_oidc_endpoints_tokenendpoint_tokenendpoint EXTRACTED
+   imports services_org_keycloak_protocol_oidc_oidcwellknownprovider [services/org/keycloak/protocol/oidc/OIDCWellKnownProvider.java] -> services_org_keycloak_protocol_oidc_endpoints_tokenendpoint_tokenendpoint EXTRACTED
+   imports services_org_keycloak_protocol_oidc_tokenexchange_v1tokenexchangeprovider [services/org/keycloak/protocol/oidc/tokenexchange/V1TokenExchangeProvider.java] -> services_org_keycloak_protocol_oidc_endpoints_tokenendpoint_tokenendpoint EXTRACTED

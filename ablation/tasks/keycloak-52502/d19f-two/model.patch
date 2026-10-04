@@ -1,0 +1,75 @@
+diff --git a/services/src/main/java/org/keycloak/services/managers/DefaultBlockingBruteForceProtector.java b/services/src/main/java/org/keycloak/services/managers/DefaultBlockingBruteForceProtector.java
+index 91e0f8a0..07b02803 100644
+--- a/services/src/main/java/org/keycloak/services/managers/DefaultBlockingBruteForceProtector.java
++++ b/services/src/main/java/org/keycloak/services/managers/DefaultBlockingBruteForceProtector.java
+@@ -21,10 +21,13 @@ import java.util.LinkedHashMap;
+ import java.util.Map;
+ import java.util.Map.Entry;
+ import java.util.Set;
++import java.util.concurrent.CountDownLatch;
++import java.util.concurrent.TimeUnit;
+ import java.util.concurrent.atomic.AtomicBoolean;
+ 
+ import jakarta.ws.rs.core.UriInfo;
+ 
++import org.jboss.logging.Logger;
+ import org.keycloak.common.ClientConnection;
+ import org.keycloak.models.AbstractKeycloakTransaction;
+ import org.keycloak.models.KeycloakSession;
+@@ -142,6 +145,18 @@ public class DefaultBlockingBruteForceProtector extends DefaultBruteForceProtect
+         super.processLogin(realm, user, clientConnection, uriInfo, success, categories);
+     }
+ 
++    @Override
++    protected void awaitProcessed(CountDownLatch processed) {
++        // make sure the failure/success is fully processed (and its events sent) before the request continues
++        try {
++            if (!processed.await(5, TimeUnit.SECONDS)) {
++                Logger.getLogger(DefaultBlockingBruteForceProtector.class).warn("Timed out waiting for brute force processing");
++            }
++        } catch (InterruptedException e) {
++            Thread.currentThread().interrupt();
++        }
++    }
++
+     @Override
+     public void failure(KeycloakSession session, RealmModel realm, String userId, String remoteAddr, long failureTime, Set<String> categories) {
+         // remove the user from concurrent login attemps once it's processed
+diff --git a/services/src/main/java/org/keycloak/services/managers/DefaultBruteForceProtector.java b/services/src/main/java/org/keycloak/services/managers/DefaultBruteForceProtector.java
+index 388a71b0..b2dcddba 100644
+--- a/services/src/main/java/org/keycloak/services/managers/DefaultBruteForceProtector.java
++++ b/services/src/main/java/org/keycloak/services/managers/DefaultBruteForceProtector.java
+@@ -23,6 +23,7 @@ import java.time.LocalDateTime;
+ import java.time.ZoneId;
+ import java.util.Collections;
+ import java.util.Set;
++import java.util.concurrent.CountDownLatch;
+ import java.util.concurrent.ExecutorService;
+ 
+ import jakarta.ws.rs.core.HttpHeaders;
+@@ -251,7 +252,8 @@ public class DefaultBruteForceProtector implements BruteForceProtector {
+         });
+         final HttpRequest bruteForceHttpRequest = new BruteForceHttpRequest(uriInfo);
+         final HttpResponse bruteForceHttpResponse = new BruteForceHttpResponse();
+-        executor.execute(() -> KeycloakModelUtils.runJobInTransaction(factory, s -> {
++        final CountDownLatch processed = new CountDownLatch(1);
++        executor.execute(() -> { try { KeycloakModelUtils.runJobInTransaction(factory, s -> {
+             s.getContext().setRealm(s.realms().getRealm(realm.getId()));
+             s.getContext().setHttpRequest(bruteForceHttpRequest);
+             s.getContext().setHttpResponse(bruteForceHttpResponse);
+@@ -260,7 +262,14 @@ public class DefaultBruteForceProtector implements BruteForceProtector {
+             } else {
+                 failure(s, realm, user.getId(), clientConnection.getRemoteHost(), Time.currentTimeMillis(), categories);
+             }
+-        }));
++        }); } finally { processed.countDown(); } });
++        awaitProcessed(processed);
++    }
++
++    /**
++     * Hook allowing subclasses to wait until the off-thread processing (including its transaction commit) is done.
++     */
++    protected void awaitProcessed(CountDownLatch processed) {
+     }
+ 
+     @Override

@@ -1,0 +1,8 @@
+engine: this checkout /Users/Anonymous/Documents/AxiomEngine/wt-bench19 (0.1.9); parser /Users/Anonymous/Documents/AxiomEngine/wt-bench19/parser/dist
+building java graph for /Users/Anonymous/Documents/AxiomEngine/bench/oss/work-keycloak/keycloak-52568/d19-two/repo … (java 8390 · typescript 1028 · python 2 · javascript 60 · csharp 0 files)
+Traceback (most recent call last):
+  File "/Users/Anonymous/Documents/AxiomEngine/wt-bench19/plugins/axiomengine/skills/axiomengine/scripts/axiomengine-index", line 732, in <module>
+    con.execute("VACUUM")                 # the tables above are dropped and recreated on every run; without this the file only grows
+    ^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: database or disk is full
+indexing the new graph failed — the graph that was there is untouched

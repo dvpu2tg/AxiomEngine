@@ -1,0 +1,5 @@
+output store sizes:
+164M	work/cg/.codegraph
+241M	work/crg-data
+422M	work/gnx/.gitnexus
+142M	work/gfy/graphify-out

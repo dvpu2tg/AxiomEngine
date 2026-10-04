@@ -1,0 +1,88 @@
+diff --git a/independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java b/independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java
+index fa83d665..198254e2 100644
+--- a/independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java
++++ b/independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java
+@@ -55,6 +55,7 @@
+ import io.smallrye.mutiny.vertx.ReadStreamSubscriber;
+ import io.smallrye.stork.api.ServiceInstance;
+ import io.vertx.core.AsyncResult;
++import io.vertx.core.Context;
+ import io.vertx.core.Future;
+ import io.vertx.core.Handler;
+ import io.vertx.core.MultiMap;
+@@ -203,9 +204,14 @@ public void accept(HttpClientRequest httpClientRequest) {
+                     updateRequestHeadersFromConfig(requestContext, headerMap);
+                     setEntityRelatedHeaders(headerMap, requestContext.getEntity());
+                     setVertxHeaders(httpClientRequest, headerMap);
++                    // read the stream on the caller's context, so that its (request) scope is available
++                    Context callerContext = requestContext.getClientRequestContext() != null
++                            ? requestContext.getClientRequestContext().getContext()
++                            : null;
+                     Future<HttpClientResponse> sent = httpClientRequest.send(
+                             new InputStreamReadStream(
+-                                    Vertx.currentContext().owner(), (InputStream) requestContext.getEntity().getEntity(),
++                                    Vertx.currentContext().owner(), callerContext,
++                                    (InputStream) requestContext.getEntity().getEntity(),
+                                     httpClientRequest, inputStreamChunkSize));
+                     attachSentHandlers(sent, httpClientRequest, requestContext);
+                 } else if (requestContext.isMultiBufferUpload()) {
+diff --git a/independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/impl/InputStreamReadStream.java b/independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/impl/InputStreamReadStream.java
+index 97c5f828..be21212c 100644
+--- a/independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/impl/InputStreamReadStream.java
++++ b/independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/impl/InputStreamReadStream.java
+@@ -4,6 +4,7 @@
+ import java.util.concurrent.atomic.AtomicInteger;
+ 
+ import io.vertx.core.AsyncResult;
++import io.vertx.core.Context;
+ import io.vertx.core.Future;
+ import io.vertx.core.Handler;
+ import io.vertx.core.Vertx;
+@@ -27,6 +28,7 @@ public class InputStreamReadStream implements ReadStream<Buffer> {
+ 
+     private final Buffer endSentinel;
+     private final Vertx vertx;
++    private final Context context;
+     private final InputStream is;
+     private final HttpClientRequest request;
+     private final int chunkSize;
+@@ -36,7 +38,16 @@ public class InputStreamReadStream implements ReadStream<Buffer> {
+     private byte[] bytes;
+ 
+     public InputStreamReadStream(Vertx vertx, InputStream is, HttpClientRequest request, int chunkSize) {
++        this(vertx, null, is, request, chunkSize);
++    }
++
++    /**
++     * @param context the context (typically the one of the caller) on which the stream is read, so that things like the
++     *        request scope are available to the stream; if {@code null} the current context is used
++     */
++    public InputStreamReadStream(Vertx vertx, Context context, InputStream is, HttpClientRequest request, int chunkSize) {
+         this.vertx = vertx;
++        this.context = context != null ? context : vertx.getOrCreateContext();
+         this.is = is;
+         this.request = request;
+         this.chunkSize = chunkSize;
+@@ -60,7 +71,7 @@ protected AtomicInteger initialValue() {
+     public ReadStream<Buffer> handler(Handler<Buffer> handler) {
+         boolean start = inboundBuffer == null && handler != null;
+         if (start) {
+-            inboundBuffer = new InboundBuffer<>(vertx.getOrCreateContext());
++            inboundBuffer = new InboundBuffer<>(context);
+             inboundBuffer.drainHandler(new Handler<>() {
+                 @Override
+                 public void handle(Void event) {
+@@ -101,11 +112,11 @@ private void readChunk() {
+         } finally {
+             atomicInteger.decrementAndGet();
+         }
+-        vertx.runOnContext(v -> readChunk());
++        context.runOnContext(v -> readChunk());
+     }
+ 
+     private void readChunk2() {
+-        Future<Buffer> fut = vertx.executeBlocking(() -> {
++        Future<Buffer> fut = context.executeBlocking(() -> {
+             if (bytes == null) {
+                 bytes = new byte[chunkSize];
+             }

@@ -1,0 +1,21 @@
+== START nodes matching ['userprofile/UserProfile.java::UserProfile.', 'UserStoragePrivateUtil.java::UserStoragePrivateUtil.']: 8
+   /private/tmp/baseline-cmp/work4/crg-src/server-spi-private/org/keycloak/userprofile/UserProfile.java::UserProfile.validate
+   /private/tmp/baseline-cmp/work4/crg-src/server-spi-private/org/keycloak/userprofile/UserProfile.java::UserProfile.create
+   /private/tmp/baseline-cmp/work4/crg-src/server-spi-private/org/keycloak/userprofile/UserProfile.java::UserProfile.update
+   /private/tmp/baseline-cmp/work4/crg-src/server-spi-private/org/keycloak/userprofile/UserProfile.java::UserProfile.getAttributes
+   /private/tmp/baseline-cmp/work4/crg-src/server-spi-private/org/keycloak/userprofile/UserProfile.java::UserProfile.toRepresentation
+   /private/tmp/baseline-cmp/work4/crg-src/storage-private/org/keycloak/storage/UserStoragePrivateUtil.java::UserStoragePrivateUtil.userLocalStorage
+   /private/tmp/baseline-cmp/work4/crg-src/storage-private/org/keycloak/storage/UserStoragePrivateUtil.java::UserStoragePrivateUtil.runFullSync
+   /private/tmp/baseline-cmp/work4/crg-src/storage-private/org/keycloak/storage/UserStoragePrivateUtil.java::UserStoragePrivateUtil.runPeriodicSync
+== CLOSURE over ['CALLS'] from starts: 18 nodes
+  target 'UserMapStorage' in closure: 0
+== PAIR edges 'UserRegistrationProvider.java' -> 'UserMapStorage': 0
+== PAIR edges 'UserProvider.java' -> 'UserMapStorage': 0
+== PAIR edges 'ComponentFactory.java' -> 'UserMapStorageFactory': 0
+== PAIR edges 'UserMapStorageFactory.java::UserMapStorageFactory.create' -> 'UserMapStorage': 2
+   CALLS /private/tmp/baseline-cmp/work4/crg-src/tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorageFactory.java::UserMapStorageFactory.create -> UserMapStorage EXTRACTED
+   CALLS /private/tmp/baseline-cmp/work4/crg-src/testsuite-providers/org/keycloak/testsuite/federation/UserMapStorageFactory.java::UserMapStorageFactory.create -> UserMapStorage EXTRACTED
+== PAIR edges 'DeclarativeUserProfileProvider' -> 'addUser': 1
+   CALLS /private/tmp/baseline-cmp/work4/crg-src/services/org/keycloak/userprofile/DeclarativeUserProfileProvider.java::DeclarativeUserProfileProvider.apply -> addUser EXTRACTED
+== GOLD cross-file edges into nodes of file '*federation/UserMapStorage.java*' (70 nodes): 0
+   by kind: {}

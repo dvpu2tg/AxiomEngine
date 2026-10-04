@@ -1,0 +1,1 @@
+testsuite/integration-arquillian/tests/base/src/main/java/org/keycloak/testsuite/util/WaitUtils.java

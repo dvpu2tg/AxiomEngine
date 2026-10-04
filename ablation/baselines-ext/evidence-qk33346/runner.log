@@ -1,0 +1,15 @@
+ALLDONE
+/tmp/baseline-cmp/evidence-qk33346/codegraph.build.log:real 2.49
+/tmp/baseline-cmp/evidence-qk33346/crg.build.log:real 2.36
+/tmp/baseline-cmp/evidence-qk33346/gitnexus.build.log:real 23.22
+/tmp/baseline-cmp/evidence-qk33346/graphify.build.log:real 3.77
+ 21M	/tmp/baseline-cmp/work6/cg/.codegraph
+ 15M	/tmp/baseline-cmp/work6/gfy/graphify-out
+ 29M	/tmp/baseline-cmp/work6/crg-data
+ 96M	/tmp/baseline-cmp/work6/gnx/.gitnexus
+●  8,184 nodes, 14,616 edges in 494ms
+INFO: Temporal resolver: no Workflow/ActivityInterface nodes, skipping
+INFO: Loaded 2743 unique nodes, 15849 edges
+Full build: 354 files, 3758 nodes, 16030 edges (postprocess=full)
+  5,759 nodes | 13,680 edges | 347 clusters | 491 flows
+[graphify watch] Rebuilt (no clustering): 3596 nodes, 10773 edges

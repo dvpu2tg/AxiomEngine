@@ -1,0 +1,18 @@
+diff --git a/services/src/main/java/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java b/services/src/main/java/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java
+index aebc05ca..6839fc18 100644
+--- a/services/src/main/java/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java
++++ b/services/src/main/java/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java
+@@ -434,6 +434,13 @@ public class OID4VCAuthorizationDetailsProcessor implements AuthorizationDetails
+             if (offerClientId != null && !offerClientId.equals(loginClientId)) {
+                 throw new IllegalStateException("Credential offer target client '" + offerClientId + "' different from login client '" + loginClientId + "'");
+             }
++
++            // Check the logged-in user is the user the credential offer is targeted to (if any)
++            String offerUserId = offerState.getTargetUserId();
++            String loginUserId = clientSessionCtx.getClientSession().getUserSession().getUser().getId();
++            if (offerUserId != null && !offerUserId.equals(loginUserId)) {
++                throw new IllegalStateException("Credential offer target user '" + offerUserId + "' different from login user '" + loginUserId + "'");
++            }
+         }
+ 
+         return offerState;

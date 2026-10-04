@@ -1,0 +1,15 @@
+engine: this checkout /Users/Anonymous/Documents/AxiomEngine/wt-bench19 (0.1.9); parser /Users/Anonymous/Documents/AxiomEngine/wt-bench19/parser/dist
+building java graph for /Users/Anonymous/Documents/AxiomEngine/bench/oss/work-keycloak/keycloak-52502/d19v2-two/repo … (java 8390 · typescript 1027 · python 2 · javascript 60 · csharp 0 files)
+indexed /Users/Anonymous/Documents/AxiomEngine/bench/oss/work-keycloak/keycloak-52502/d19v2-two/repo/.axiomengine/out/java/graph.sqlite [java]: symbols=124879 refs=678827 literals=125257 comments=51253 nested_types=2631
+tier                 edges
+multi_inferred       289985
+known_edge           281285
+ambiguous_unknown    157558
+boundary_lib         57515
+fan_capped           22717
+ambiguous_anon       561
+callback_registered  301
+event_dispatch       2
+graph ready; precomputing impact facts in the background
+datalog rules ready: 4/4 compiled (impact.dl=cached, path-every.dl=cached, path-opt.dl=cached, path.dl=cached)
+graph at /Users/Anonymous/Documents/AxiomEngine/bench/oss/work-keycloak/keycloak-52502/d19v2-two/repo/.axiomengine/out/graph.sqlite

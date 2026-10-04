@@ -1,0 +1,52 @@
+diff --git a/independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/impl/InputStreamReadStream.java b/independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/impl/InputStreamReadStream.java
+index 97c5f828..2a422b76 100644
+--- a/independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/impl/InputStreamReadStream.java
++++ b/independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/impl/InputStreamReadStream.java
+@@ -4,6 +4,7 @@
+ import java.util.concurrent.atomic.AtomicInteger;
+ 
+ import io.vertx.core.AsyncResult;
++import io.vertx.core.Context;
+ import io.vertx.core.Future;
+ import io.vertx.core.Handler;
+ import io.vertx.core.Vertx;
+@@ -27,6 +28,7 @@ public class InputStreamReadStream implements ReadStream<Buffer> {
+ 
+     private final Buffer endSentinel;
+     private final Vertx vertx;
++    private final Context context;
+     private final InputStream is;
+     private final HttpClientRequest request;
+     private final int chunkSize;
+@@ -37,6 +39,8 @@ public class InputStreamReadStream implements ReadStream<Buffer> {
+ 
+     public InputStreamReadStream(Vertx vertx, InputStream is, HttpClientRequest request, int chunkSize) {
+         this.vertx = vertx;
++        // capture the context that issued the request so that all callbacks stay on it
++        this.context = vertx.getOrCreateContext();
+         this.is = is;
+         this.request = request;
+         this.chunkSize = chunkSize;
+@@ -60,7 +64,7 @@ protected AtomicInteger initialValue() {
+     public ReadStream<Buffer> handler(Handler<Buffer> handler) {
+         boolean start = inboundBuffer == null && handler != null;
+         if (start) {
+-            inboundBuffer = new InboundBuffer<>(vertx.getOrCreateContext());
++            inboundBuffer = new InboundBuffer<>(context);
+             inboundBuffer.drainHandler(new Handler<>() {
+                 @Override
+                 public void handle(Void event) {
+@@ -101,11 +105,11 @@ private void readChunk() {
+         } finally {
+             atomicInteger.decrementAndGet();
+         }
+-        vertx.runOnContext(v -> readChunk());
++        context.runOnContext(v -> readChunk());
+     }
+ 
+     private void readChunk2() {
+-        Future<Buffer> fut = vertx.executeBlocking(() -> {
++        Future<Buffer> fut = context.executeBlocking(() -> {
+             if (bytes == null) {
+                 bytes = new byte[chunkSize];
+             }

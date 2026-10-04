@@ -1,0 +1,23 @@
+diff --git a/scim/model/src/main/java/org/keycloak/scim/model/user/UserResourceTypeProvider.java b/scim/model/src/main/java/org/keycloak/scim/model/user/UserResourceTypeProvider.java
+index 1dbd7c4a..c4bf97db 100644
+--- a/scim/model/src/main/java/org/keycloak/scim/model/user/UserResourceTypeProvider.java
++++ b/scim/model/src/main/java/org/keycloak/scim/model/user/UserResourceTypeProvider.java
+@@ -65,7 +65,6 @@ public class UserResourceTypeProvider extends AbstractScimResourceTypeProvider<U
+ 
+     @Override
+     public User onCreate(User resource) {
+-        UserProfileProvider provider = session.getProvider(UserProfileProvider.class);
+         RealmModel realm = session.getContext().getRealm();
+         String username = realm.isRegistrationEmailAsUsername() ? resource.getEmail() : resource.getUserName();
+ 
+@@ -73,8 +72,8 @@ public class UserResourceTypeProvider extends AbstractScimResourceTypeProvider<U
+             throw new ModelValidationException(realm.isRegistrationEmailAsUsername() ? "email is required" : "username is required");
+         }
+ 
+-        UserProfile profile = provider.create(UserProfileContext.SCIM, Map.of(UserModel.USERNAME, username));
+-        UserModel model = profile.create(false);
++        // always create the user in local storage, SCIM does not support users managed by federation providers
++        UserModel model = UserStoragePrivateUtil.userLocalStorage(session).addUser(realm, username);
+         UserModelAttributeRecorder recorder = new UserModelAttributeRecorder(model, new HashMap<>());
+ 
+         populate(recorder, resource);

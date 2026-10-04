@@ -1,0 +1,16 @@
+diff --git a/services/src/main/java/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java b/services/src/main/java/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java
+index 3aea5684..cda14f5a 100644
+--- a/services/src/main/java/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java
++++ b/services/src/main/java/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java
+@@ -57,7 +57,10 @@ public class ResourceIndicatorsPostProcessor implements TokenPostProcessor {
+         if (audience != null && isClientUrn(requestedResource)) {
+             audienceToSet = findAudienceByClientUrn(requestedResource, audience);
+         } else if (audience != null) {
+-            audienceToSet = findAudienceByClientAttribute(requestedResource, audience);
++            audienceToSet = find(requestedResource, audience);
++            if (audienceToSet == null) {
++                audienceToSet = findAudienceByClientAttribute(requestedResource, audience);
++            }
+         }
+ 
+         if (audienceToSet == null) {

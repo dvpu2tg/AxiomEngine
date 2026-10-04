@@ -1,0 +1,39 @@
+page 1 of 4:
+main (24 declarations) → OID4VCAuthorizationDetailsProcessor (type: 18 methods): 5 of 18 target(s) reached through resolved calls; nearest at 5 hop(s)
+  5 call(s):
+    KeycloakServer.main   testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:164
+      → [known_edge · call @ testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:169] KeycloakServer.bootstrapKeycloakServer   testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:172
+      → [multi_inferred · call @ testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:274] KeycloakServer.importRealm   testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:379
+      → [multi_inferred · resource-close @ testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:381] DefaultKeycloakSession.close   services/src/main/java/org/keycloak/services/DefaultKeycloakSession.java:379
+      → [fan_capped · call @ services/src/main/java/org/keycloak/services/DefaultKeycloakSession.java:397] Provider.close   server-spi/src/main/java/org/keycloak/provider/Provider.java:25
+      → [dispatch] OID4VCAuthorizationDetailsProcessor.close   services/src/main/java/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:350
+  8 call(s):
+    KeycloakServer.main   testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:164
+      → [known_edge · call @ testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:169] KeycloakServer.bootstrapKeycloakServer   testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:172
+      → [multi_inferred · call @ testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:274] KeycloakServer.importRealm   testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:379
+      → [multi_inferred · call @ testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:382] DefaultKeycloakTransactionManager.begin   services/src/main/java/org/keycloak/services/DefaultKeycloakTransactionManager.java:97
+      → [multi_inferred · call @ services/src/main/java/org/keycloak/services/DefaultKeycloakTransactionManager.java:107] DefaultKeycloakSession.getProvider   services/src/main/java/org/keycloak/services/DefaultKeycloakSession.java:199
+      → [known_edge · call @ services/src/main/java/org/keycloak/services/DefaultKeycloakSession.java:202] DefaultKeycloakSession.getOrCreateProvider   services/src/main/java/org/keycloak/services/DefaultKeycloakSession.java:205
+      → [fan_capped · call @ services/src/main/java/org/keycloak/services/DefaultKeycloakSession.java:214] ProviderFactory.create   server-spi/src/main/java/org/keycloak/provider/ProviderFactory.java:38
+      → [dispatch] OID4VCAuthorizationDetailsProcessorFactory.create   services/src/main/java/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java:37
+      → [known_edge · new @ services/src/main/java/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java:39] OID4VCAuthorizationDetailsProcessor.OID4VCAuthorizationDetailsProcessor   services/src/main/java/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:73
+  20 call(s):
+    KeycloakServer.main   testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:164
+      → [known_edge · call @ testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:169] KeycloakServer.bootstrapKeycloakServer   testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:172
+      → [known_edge · call @ testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:290] TestsuiteCLI.start   testsuite/utils/src/main/java/org/keycloak/testsuite/util/cli/TestsuiteCLI.java:98
+      → [multi_inferred · call @ testsuite/utils/src/main/java/org/keycloak/testsuite/util/cli/TestsuiteCLI.java:117] AbstractCommand.runCommand   testsuite/utils/src/main/java/org/keycloak/testsuite/util/cli/AbstractCommand.java:44
+      → [known_edge · call @ testsuite/utils/src/main/java/org/keycloak/testsuite/util/cli/AbstractCommand.java:46] KeycloakModelUtils.runJobInTransaction   server-spi-private/src/main/java/org/keycloak/models/utils/KeycloakModelUtils.java:407
+      → [known_edge · call @ server-spi-private/src/main/java/org/keycloak/models/utils/KeycloakModelUtils.java:408] KeycloakModelUtils.runJobInTransaction   server-spi-private/src/main/java/org/keycloak/models/utils/KeycloakModelUtils.java:417
+      → [fan_capped · call @ server-spi-private/src/main/java/org/keycloak/models/utils/KeycloakModelUtils.java:419] KeycloakSessionTask.run   server-spi/src/main/java/org/keycloak/models/KeycloakSessionTask.java:27
+      → [dispatch] SamlService.ArtifactResolutionRunnable.run   services/src/main/java/org/keycloak/protocol/saml/SamlService.java:1460
+      → [known_edge · call @ services/src/main/java/org/keycloak/protocol/saml/SamlService.java:1535] SamlService.BindingProtocol.handleSamlRequest   services/src/main/java/org/keycloak/protocol/saml/SamlService.java:306
+      → [multi_inferred · call @ services/src/main/java/org/keycloak/protocol/saml/SamlService.java:368] SamlService.BindingProtocol.loginRequest   services/src/main/java/org/keycloak/protocol/saml/SamlService.java:462
+      → [known_edge · call @ services/src/main/java/org/keycloak/protocol/saml/SamlService.java:588] SamlService.newBrowserAuthentication   services/src/main/java/org/keycloak/protocol/saml/SamlService.java:938
+      → [multi_inferred · call @ services/src/main/java/org/keycloak/protocol/saml/SamlService.java:940] SamlService.newBrowserAuthentication   services/src/main/java/org/keycloak/protocol/saml/SamlService.java:943
+      → [known_edge · call @ services/src/main/java/org/keycloak/protocol/saml/SamlService.java:944] AuthorizationEndpointBase.handleBrowserAuthenticationRequest   services/src/main/java/org/keycloak/protocol/AuthorizationEndpointBase.java:107
+      → [multi_inferred · call @ services/src/main/java/org/keycloak/protocol/AuthorizationEndpointBase.java:117] AuthenticationProcessor.authenticateOnly   services/src/main/java/org/keycloak/authentication/AuthenticationProcessor.java:1109
+
+  verified: every printed hop is an edge in the graph and a second, independent traversal finds the same length
+  bound: the methods on the nearest chain contain 80 unresolved call(s) — other chains may exist that the graph cannot see
+next: the chain is verified (every printed hop is an edge in the graph); its 36 call site(s): testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:169, testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:274, services/src/main/java/org/keycloak/services/DefaultKeycloakSession.java:397, testsuite/utils/src/main/java/org/keycloak/testsuite/KeycloakServer.java:382, services/src/main/java/org/keycloak/services/DefaultKeycloakTransactionManager.java:107, services/src/main/java/org/keycloak/services/DefaultKeycloakSession.java:202 … — one hop is [multi_inferred], one of several candidates: check that call site only if the answer depends on which. For a change, those sites are what to check; to explain how it works, read each hop's body — `context "how does …" --from <start>` prints the whole flow
+page 1 of 4 (~2000 tokens a page): 3 more page(s) left, 55 row(s): main — ask for the next with --page 2, or all of it with --page all; --budget N changes the page size; narrow instead with --in <path>, --depth N or --tests-only

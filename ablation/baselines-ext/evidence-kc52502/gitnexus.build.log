@@ -1,0 +1,17 @@
+
+  GitNexus Analyzer (1.6.11)
+
+  GitNexus Analyzer (1.6.11)
+  Warning: no .git directory found — commit-tracking and incremental updates disabled.
+
+{"level":40,"time":1791086248588,"name":"gitnexus","msg":"[java-package-siblings] 1 file(s) lacked reliable package facts; wildcard attribution disabled for this language workspace"}
+{"level":40,"time":1791086251526,"name":"gitnexus","truncation":{"truncated":true,"entryPointCandidatesDropped":6204,"entryPointsUnexplored":0,"walksCutByBudget":4,"tracesDepthCapped":0,"calleesDropped":5023,"processesDropped":0},"msg":"[processes] 334 flows reported, but whole flows are MISSING: 6204 of 6404 candidate entry point(s) never ranked in, 0 ranked entry point(s) never traced, 0 deduplicated flow(s) dropped at maxProcesses, 0 trace(s) cut at maxTraceDepth, 5023 callee(s) skipped at maxBranching, 4 walk(s) cut by the per-entry trace budget. An absent flow does NOT mean the code path does not exist."}
+
+  Repository indexed successfully (101.8s)
+
+  15,167 nodes | 65,463 edges | 614 clusters | 334 flows
+  /private/tmp/baseline-cmp/work5/gnx
+
+real 104.26
+user 88.44
+sys 10.54

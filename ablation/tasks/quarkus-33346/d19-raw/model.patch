@@ -1,0 +1,60 @@
+diff --git a/independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java b/independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java
+index fa83d665..a47de768 100644
+--- a/independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java
++++ b/independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java
+@@ -12,6 +12,7 @@
+ import java.util.List;
+ import java.util.Locale;
+ import java.util.Map;
++import java.util.concurrent.Callable;
+ import java.util.function.Consumer;
+ import java.util.function.Function;
+ 
+@@ -55,6 +56,7 @@
+ import io.smallrye.mutiny.vertx.ReadStreamSubscriber;
+ import io.smallrye.stork.api.ServiceInstance;
+ import io.vertx.core.AsyncResult;
++import io.vertx.core.Context;
+ import io.vertx.core.Future;
+ import io.vertx.core.Handler;
+ import io.vertx.core.MultiMap;
+@@ -238,6 +240,39 @@ public void handle(AsyncResult<Void> ar) {
+                     });
+                     Future<HttpClientResponse> sent = httpClientRequest.response();
+                     attachSentHandlers(sent, httpClientRequest, requestContext);
++                } else if (requestContext.isInputStreamUpload() && Context.isOnEventLoopThread()) {
++                    // writer interceptors force us to fully read the stream, which can block (and thus must not
++                    // happen on the event loop), so we prepare the body on a worker thread
++                    Context vertxContext = Vertx.currentContext();
++                    vertxContext.<Buffer> executeBlocking(new Callable<>() {
++                        @Override
++                        public Buffer call() throws Exception {
++                            return ClientSendRequestHandler.this
++                                    .setRequestHeadersAndPrepareBody(httpClientRequest, requestContext);
++                        }
++                    }, false).onComplete(new Handler<>() {
++                        @Override
++                        public void handle(AsyncResult<Buffer> ar) {
++                            if (ar.failed()) {
++                                requestContext.resume(ar.cause());
++                                return;
++                            }
++                            Buffer actualEntity = ar.result();
++                            Future<HttpClientResponse> sent;
++                            if (actualEntity == AsyncInvokerImpl.EMPTY_BUFFER) {
++                                sent = httpClientRequest.send();
++                                if (loggingScope != LoggingScope.NONE) {
++                                    clientLogger.logRequest(httpClientRequest, null, false);
++                                }
++                            } else {
++                                sent = httpClientRequest.send(actualEntity);
++                                if (loggingScope != LoggingScope.NONE) {
++                                    clientLogger.logRequest(httpClientRequest, actualEntity, false);
++                                }
++                            }
++                            attachSentHandlers(sent, httpClientRequest, requestContext);
++                        }
++                    });
+                 } else {
+                     Future<HttpClientResponse> sent;
+                     Buffer actualEntity;

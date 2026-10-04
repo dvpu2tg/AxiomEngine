@@ -1,0 +1,51 @@
+== START nodes matching ['::TokenEndpoint::']: 33
+   org.keycloak.protocol.oidc.endpoints::TokenEndpoint::LOGGER
+   org.keycloak.protocol.oidc.endpoints::TokenEndpoint::formParams
+   org.keycloak.protocol.oidc.endpoints::TokenEndpoint::client
+   org.keycloak.protocol.oidc.endpoints::TokenEndpoint::clientAuthAttributes
+   org.keycloak.protocol.oidc.endpoints::TokenEndpoint::clientConfig
+   org.keycloak.protocol.oidc.endpoints::TokenEndpoint::session
+   org.keycloak.protocol.oidc.endpoints::TokenEndpoint::request
+   org.keycloak.protocol.oidc.endpoints::TokenEndpoint::httpResponse
+== CLOSURE over ['calls', 'instantiates'] from starts: 2208 nodes
+  target 'ResourceIndicatorsPostProcessor' in closure: 0
+  target 'TokenInterceptorException' in closure: 2
+     org.keycloak.protocol.oidc.token::TokenInterceptorException::getDescription
+     org.keycloak.protocol.oidc.token::TokenInterceptorException::getError
+== PAIR edges 'TokenPostProcessor' -> 'ResourceIndicatorsPostProcessor': 1
+   calls org.keycloak.protocol.oidc.token::TokenPostProcessor::process -> org.keycloak.protocol.oidc.resourceindicators::ResourceIndicatorsPostProcessor::process {"synthesizedBy":"interface-impl","via":"process","registeredAt":"services/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java:20"}
+== PAIR edges 'TokenEndpoint' -> 'TokenInterceptorException': 2
+   calls org.keycloak.protocol.oidc.endpoints::TokenEndpoint::processGrantRequest -> org.keycloak.protocol.oidc.token::TokenInterceptorException::getError {"confidence":0.9,"resolvedBy":"instance-method","refName":"e.getError"}
+   calls org.keycloak.protocol.oidc.endpoints::TokenEndpoint::processGrantRequest -> org.keycloak.protocol.oidc.token::TokenInterceptorException::getDescription {"confidence":0.9,"resolvedBy":"instance-method","refName":"e.getDescription"}
+== PAIR edges 'ResourceIndicatorsPostProcessor' -> 'TokenInterceptorException': 4
+   instantiates org.keycloak.protocol.oidc.resourceindicators::ResourceIndicatorsPostProcessor::process -> org.keycloak.protocol.oidc.token::TokenInterceptorException {"confidence":0.9,"resolvedBy":"import","refName":"TokenInterceptorException"}
+   instantiates org.keycloak.protocol.oidc.resourceindicators::ResourceIndicatorsPostProcessor::process -> org.keycloak.protocol.oidc.token::TokenInterceptorException {"confidence":0.9,"resolvedBy":"import","refName":"TokenInterceptorException"}
+   instantiates org.keycloak.protocol.oidc.resourceindicators::ResourceIndicatorsPostProcessor::process -> org.keycloak.protocol.oidc.token::TokenInterceptorException {"confidence":0.9,"resolvedBy":"import","refName":"TokenInterceptorException"}
+   instantiates org.keycloak.protocol.oidc.resourceindicators::ResourceIndicatorsPostProcessor::process -> org.keycloak.protocol.oidc.token::TokenInterceptorException {"confidence":0.9,"resolvedBy":"import","refName":"TokenInterceptorException"}
+== PAIR edges 'TokenManager' -> 'TokenPostProcessor': 2
+   contains org.keycloak.protocol.oidc::TokenManager::AccessTokenResponseBuilder -> org.keycloak.protocol.oidc::TokenManager::AccessTokenResponseBuilder::invokeTokenPostProcessors 
+   calls org.keycloak.protocol.oidc::TokenManager::AccessTokenResponseBuilder::build -> org.keycloak.protocol.oidc::TokenManager::AccessTokenResponseBuilder::invokeTokenPostProcessors {"confidence":0.9,"resolvedBy":"exact-match","refName":"invokeTokenPostProcessors"}
+== GOLD cross-file edges into nodes of file '*endpoints/TokenEndpoint.java*' (92 nodes): 8
+   by kind: {'imports': 3, 'instantiates': 2, 'calls': 3}
+   imports org.keycloak.protocol.oidc [services/org/keycloak/protocol/oidc/OIDCLoginProtocolService.java] -> org.keycloak.protocol.oidc.endpoints::TokenEndpoint {"confidence":0.95,"resolvedBy":"import","refName":"org.keycloak.protocol.oidc.endpoints.TokenEndpoint"}
+   instantiates org.keycloak.protocol.oidc::OIDCLoginProtocolService::token [services/org/keycloak/protocol/oidc/OIDCLoginProtocolService.java] -> org.keycloak.protocol.oidc.endpoints::TokenEndpoint {"confidence":0.9,"resolvedBy":"import","refName":"TokenEndpoint"}
+   imports org.keycloak.protocol.oidc [services/org/keycloak/protocol/oidc/OIDCWellKnownProvider.java] -> org.keycloak.protocol.oidc.endpoints::TokenEndpoint {"confidence":0.95,"resolvedBy":"import","refName":"org.keycloak.protocol.oidc.endpoints.TokenEndpoint"}
+   calls org.keycloak.protocol.oidc.endpoints::AuthorizationEndpoint::process [services/org/keycloak/protocol/oidc/endpoints/AuthorizationEndpoint.java] -> org.keycloak.protocol.oidc.endpoints::TokenEndpoint::checkRealm {"confidence":0.7,"resolvedBy":"exact-match","refName":"checkRealm"}
+   imports org.keycloak.protocol.oidc.tokenexchange [services/org/keycloak/protocol/oidc/tokenexchange/V1TokenExchangeProvider.java] -> org.keycloak.protocol.oidc.endpoints::TokenEndpoint {"confidence":0.95,"resolvedBy":"import","refName":"org.keycloak.protocol.oidc.endpoints.TokenEndpoint"}
+   instantiates org.keycloak.protocol.oidc.tokenexchange::V1TokenExchangeProvider::exchangeClientToSAML2Client [services/org/keycloak/protocol/oidc/tokenexchange/V1TokenExchangeProvider.java] -> org.keycloak.protocol.oidc.endpoints::TokenEndpoint::TokenExchangeSamlProtocol {"confidence":0.7,"resolvedBy":"exact-match","refName":"TokenExchangeSamlProtocol"}
+   calls org.keycloak.protocol.saml::SamlProtocol::buildErrorResponse [services/org/keycloak/protocol/saml/SamlProtocol.java] -> org.keycloak.protocol.oidc.endpoints::TokenEndpoint::TokenExchangeSamlProtocol::buildErrorResponse {"synthesizedBy":"interface-impl","via":"buildErrorResponse","registeredAt":"services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:316"}
+   calls org.keycloak.protocol.saml::SamlProtocol::buildAuthenticatedResponse [services/org/keycloak/protocol/saml/SamlProtocol.java] -> org.keycloak.protocol.oidc.endpoints::TokenEndpoint::TokenExchangeSamlProtocol::buildAuthenticatedResponse {"synthesizedBy":"interface-impl","via":"buildAuthenticatedResponse","registeredAt":"services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:297"}
+== outgoing calls of invokeTokenPostProcessors ==
+calls|org.keycloak.models::KeycloakSession::getKeycloakSessionFactory|{"confidence":0.9,"resolvedBy":"instance-method","refName":"session.getKeycloakSessionFactory"}
+calls|org.keycloak.models::KeycloakSession::getProvider|{"confidence":0.9,"resolvedBy":"instance-method","refName":"session.getProvider"}
+calls|org.keycloak.protocol.oidc.rar::AuthorizationDetailsProcessor::process|{"confidence":0.65,"resolvedBy":"instance-method","refName":"processor.process"}
+== closure membership checks ==
+org.keycloak.protocol.oidc.grants::OAuth2GrantType::getEventType
+org.keycloak.protocol.oidc.grants::OAuth2GrantType::getSupportedMultivaluedRequestParameters
+org.keycloak.protocol.oidc.grants::OAuth2GrantType::getTokenParameterNames
+org.keycloak.protocol.oidc.grants::OAuth2GrantType::preProcess
+org.keycloak.protocol.oidc.grants::OAuth2GrantType::process
+org.keycloak.protocol.oidc.grants::OAuth2GrantType::isTokenAllowed
+org.keycloak.protocol.oidc.grants::OAuth2GrantType::Context
+org.keycloak.protocol.oidc::TokenManager::AccessTokenResponseBuilder::invokeTokenPostProcessors
+org.keycloak.protocol.oidc::TokenManager::AccessTokenResponseBuilder::build

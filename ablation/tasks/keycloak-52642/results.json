@@ -1,0 +1,51 @@
+[
+ {
+  "instance": "keycloak-52642",
+  "arm": "d19-raw",
+  "exit": 0,
+  "wall_s": 27,
+  "turns": 11,
+  "cost_usd": 0.1122496,
+  "tokens_in": 16,
+  "tokens_out": 1579,
+  "cache_read": 167858,
+  "cache_create": 15714,
+  "ctx_ingested": 16712,
+  "first_edit_turn": 9,
+  "ctx_before_first_edit": 14943,
+  "explore_calls": 4,
+  "graph_calls": 0,
+  "edit_calls": 3,
+  "run_calls": 1,
+  "files_read": 0,
+  "gold_files": [
+   "scim/model/src/main/java/org/keycloak/scim/model/user/UserResourceTypeProvider.java"
+  ],
+  "gold_files_read": 0,
+  "wasted_reads": 0,
+  "files_read_list": [],
+  "patch_files": [
+   "scim/model/src/main/java/org/keycloak/scim/model/user/UserResourceTypeProvider.java"
+  ],
+  "patch_bytes": 1141,
+  "gold_hit": 1,
+  "denials": {},
+  "tools": {
+   "Bash": 6,
+   "Edit": 2
+  },
+  "old_cli_calls": 0,
+  "is_error": false,
+  "subtype": "success",
+  "build_seconds": null,
+  "resolved": null,
+  "task": "keycloak-52642",
+  "first_gold_turn": 5,
+  "cli_calls": 0,
+  "stream_sha256": "b1028d7d24366927f43b43f328a9307b38c44d1fc37681da22a4678bd43f8eba",
+  "artifacts": {
+   "stream": "keycloak-52642/d19-raw/stream.jsonl",
+   "patch": "keycloak-52642/d19-raw/model.patch"
+  }
+ }
+]

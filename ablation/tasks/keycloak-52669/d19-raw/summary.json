@@ -1,0 +1,42 @@
+{
+ "instance": "keycloak-52669",
+ "arm": "raw",
+ "exit": 0,
+ "wall_s": 20,
+ "turns": 10,
+ "cost_usd": 0.110445,
+ "tokens_in": 14,
+ "tokens_out": 1475,
+ "cache_read": 144795,
+ "cache_create": 16677,
+ "ctx_ingested": 20182,
+ "first_edit_turn": 9,
+ "ctx_before_first_edit": 17007,
+ "explore_calls": 4,
+ "graph_calls": 0,
+ "edit_calls": 1,
+ "run_calls": 2,
+ "files_read": 1,
+ "gold_files": 1,
+ "gold_files_read": 1,
+ "wasted_reads": 0,
+ "files_read_list": [
+  "services/src/main/java/org/keycloak/protocol/oid4vc/issuance/OID4VCIssuerEndpoint.java"
+ ],
+ "patch_files": [
+  "services/src/main/java/org/keycloak/protocol/oid4vc/issuance/OID4VCIssuerEndpoint.java"
+ ],
+ "patch_bytes": 1218,
+ "gold_hit": 1,
+ "denials": {},
+ "tools": {
+  "Bash": 4,
+  "Read": 2,
+  "Edit": 1
+ },
+ "old_cli_calls": 0,
+ "is_error": false,
+ "subtype": "success",
+ "build_seconds": null,
+ "resolved": null
+}

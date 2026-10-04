@@ -1,0 +1,102 @@
+[
+ {
+  "instance": "keycloak-47120",
+  "arm": "d19-raw",
+  "exit": 0,
+  "wall_s": 24,
+  "turns": 7,
+  "cost_usd": 0.101861,
+  "tokens_in": 12,
+  "tokens_out": 1128,
+  "cache_read": 122285,
+  "cache_create": 16525,
+  "ctx_ingested": 18844,
+  "first_edit_turn": null,
+  "ctx_before_first_edit": null,
+  "explore_calls": 4,
+  "graph_calls": 0,
+  "edit_calls": 1,
+  "run_calls": 0,
+  "files_read": 0,
+  "gold_files": [
+   "services/src/main/java/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java"
+  ],
+  "gold_files_read": 0,
+  "wasted_reads": 0,
+  "files_read_list": [],
+  "patch_files": [
+   "services/src/main/java/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java"
+  ],
+  "patch_bytes": 1123,
+  "gold_hit": 1,
+  "denials": {},
+  "tools": {
+   "Bash": 5
+  },
+  "old_cli_calls": 0,
+  "is_error": false,
+  "subtype": "success",
+  "build_seconds": null,
+  "resolved": null,
+  "task": "keycloak-47120",
+  "first_gold_turn": 4,
+  "cli_calls": 0,
+  "stream_sha256": "f7488a3b2eff41393ec00735961718a481635617b5f14704378f575153a5e293",
+  "artifacts": {
+   "stream": "keycloak-47120/d19-raw/stream.jsonl",
+   "patch": "keycloak-47120/d19-raw/model.patch"
+  }
+ },
+ {
+  "instance": "keycloak-47120",
+  "arm": "d19-two",
+  "exit": 0,
+  "wall_s": 126,
+  "turns": 7,
+  "cost_usd": 0.10728059999999999,
+  "tokens_in": 12,
+  "tokens_out": 1183,
+  "cache_read": 149393,
+  "cache_create": 16387,
+  "ctx_ingested": 18742,
+  "first_edit_turn": 6,
+  "ctx_before_first_edit": 15592,
+  "explore_calls": 2,
+  "graph_calls": 2,
+  "edit_calls": 1,
+  "run_calls": 0,
+  "files_read": 1,
+  "gold_files": [
+   "services/src/main/java/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java"
+  ],
+  "gold_files_read": 1,
+  "wasted_reads": 0,
+  "files_read_list": [
+   "services/src/main/java/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java"
+  ],
+  "patch_files": [
+   "services/src/main/java/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java"
+  ],
+  "patch_bytes": 1092,
+  "gold_hit": 1,
+  "denials": {},
+  "tools": {
+   "Bash": 2,
+   "Read": 2,
+   "Edit": 1
+  },
+  "old_cli_calls": 0,
+  "is_error": false,
+  "subtype": "success",
+  "build_seconds": 734,
+  "resolved": null,
+  "task": "keycloak-47120",
+  "first_gold_turn": 3,
+  "cli_calls": 2,
+  "stream_sha256": "eaa49c8faa1634f26ef25214ec406720717418abf21f2f8f41fe6586264e780c",
+  "artifacts": {
+   "stream": "keycloak-47120/d19-two/stream.jsonl",
+   "patch": "keycloak-47120/d19-two/model.patch"
+  }
+ }
+]

@@ -1,0 +1,48 @@
+== START nodes matching ['::ClientSendRequestHandler::setMultipartHeadersAndPrepareBody']: 1
+   org.jboss.resteasy.reactive.client.handlers::ClientSendRequestHandler::setMultipartHeadersAndPrepareBody
+== CLOSURE over ['calls', 'instantiates'] from starts: 66 nodes
+  target 'BlockingOperationNotAllowedException' in closure: 1
+     io.quarkus.runtime::BlockingOperationNotAllowedException
+  target 'VertxRequestHandler' in closure: 0
+  target 'MultiByteHttpData' in closure: 2
+     org.jboss.resteasy.reactive.client.impl.multipart::MultiByteHttpData::length
+     org.jboss.resteasy.reactive.client.impl.multipart::MultiByteHttpData::toString
+== PAIR edges 'ClientSendRequestHandler' -> 'QuarkusMultipartFormUpload': 5
+   calls org.jboss.resteasy.reactive.client.handlers::ClientSendRequestHandler::handle::<Consumer$anon@111>::accept -> org.jboss.resteasy.reactive.client.impl.multipart::QuarkusMultipartFormUpload::run {"confidence":0.9,"resolvedBy":"instance-method","refName":"actualEntity.run"}
+   references org.jboss.resteasy.reactive.client.handlers::ClientSendRequestHandler::setMultipartHeadersAndPrepareBody -> org.jboss.resteasy.reactive.client.impl.multipart::QuarkusMultipartFormUpload {"confidence":0.9,"resolvedBy":"import","refName":"QuarkusMultipartFormUpload"}
+   instantiates org.jboss.resteasy.reactive.client.handlers::ClientSendRequestHandler::setMultipartHeadersAndPrepareBody -> org.jboss.resteasy.reactive.client.impl.multipart::QuarkusMultipartFormUpload {"confidence":0.9,"resolvedBy":"import","refName":"QuarkusMultipartFormUpload"}
+   calls org.jboss.resteasy.reactive.client.handlers::ClientSendRequestHandler::setMultipartHeadersAndPrepareBody -> org.jboss.resteasy.reactive.client.impl.multipart::QuarkusMultipartFormUpload::isChunked {"confidence":0.9,"resolvedBy":"instance-method","refName":"multipartFormUpload.isChunked"}
+   calls org.jboss.resteasy.reactive.client.handlers::ClientSendRequestHandler::setMultipartHeadersAndPrepareBody -> org.jboss.resteasy.reactive.client.impl.multipart::QuarkusMultipartFormUpload::headers {"confidence":0.9,"resolvedBy":"instance-method","refName":"multipartFormUpload.headers"}
+== PAIR edges 'MultiByteHttpData' -> 'execute': 1
+   contains org.jboss.resteasy.reactive.client.impl.multipart::MultiByteHttpData::ExecutorWithContext -> org.jboss.resteasy.reactive.client.impl.multipart::MultiByteHttpData::ExecutorWithContext::execute 
+== PAIR edges 'SecurityIdentityProxy' -> '': 28
+   contains security-runtime/io/quarkus/security/runtime/SecurityIdentityProxy.java -> io.quarkus.security.runtime 
+   contains io.quarkus.security.runtime::SecurityIdentityProxy -> io.quarkus.security.runtime::SecurityIdentityProxy::association 
+   contains io.quarkus.security.runtime::SecurityIdentityProxy -> io.quarkus.security.runtime::SecurityIdentityProxy::getPrincipal 
+   contains io.quarkus.security.runtime::SecurityIdentityProxy -> io.quarkus.security.runtime::SecurityIdentityProxy::isAnonymous 
+   contains io.quarkus.security.runtime::SecurityIdentityProxy -> io.quarkus.security.runtime::SecurityIdentityProxy::getRoles 
+   contains io.quarkus.security.runtime::SecurityIdentityProxy -> io.quarkus.security.runtime::SecurityIdentityProxy::hasRole 
+   contains io.quarkus.security.runtime::SecurityIdentityProxy -> io.quarkus.security.runtime::SecurityIdentityProxy::getCredential 
+   contains io.quarkus.security.runtime::SecurityIdentityProxy -> io.quarkus.security.runtime::SecurityIdentityProxy::getCredentials 
+   contains io.quarkus.security.runtime::SecurityIdentityProxy -> io.quarkus.security.runtime::SecurityIdentityProxy::getAttribute 
+   contains io.quarkus.security.runtime::SecurityIdentityProxy -> io.quarkus.security.runtime::SecurityIdentityProxy::getAttributes 
+   contains io.quarkus.security.runtime::SecurityIdentityProxy -> io.quarkus.security.runtime::SecurityIdentityProxy::getPermissions 
+   contains io.quarkus.security.runtime::SecurityIdentityProxy -> io.quarkus.security.runtime::SecurityIdentityProxy::checkPermission 
+== PAIR edges 'AbstractSecurityIdentityAssociation' -> 'BlockingOperationNotAllowedException': 1
+   instantiates io.quarkus.security.spi.runtime::AbstractSecurityIdentityAssociation::getIdentity -> io.quarkus.runtime::BlockingOperationNotAllowedException {"confidence":0.9,"resolvedBy":"import","refName":"BlockingOperationNotAllowedException"}
+== GOLD cross-file edges into nodes of file '*handlers/ClientSendRequestHandler.java*' (120 nodes): 3
+   by kind: {'calls': 1, 'imports': 1, 'instantiates': 1}
+   calls org.jboss.resteasy.reactive.client.impl::ClientBuilderImpl::build [rr-client-runtime/org/jboss/resteasy/reactive/client/impl/ClientBuilderImpl.java] -> org.jboss.resteasy.reactive.client.handlers::ClientSendRequestHandler::handle::<Consumer$anon@111>::accept {"confidence":0.65,"resolvedBy":"instance-method","refName":"clientOptionsCustomizer.accept"}
+   imports org.jboss.resteasy.reactive.client.impl [rr-client-runtime/org/jboss/resteasy/reactive/client/impl/HandlerChain.java] -> org.jboss.resteasy.reactive.client.handlers::ClientSendRequestHandler {"confidence":0.95,"resolvedBy":"import","refName":"org.jboss.resteasy.reactive.client.handlers.ClientSendRequestHandler"}
+   instantiates org.jboss.resteasy.reactive.client.impl::HandlerChain::HandlerChain [rr-client-runtime/org/jboss/resteasy/reactive/client/impl/HandlerChain.java] -> org.jboss.resteasy.reactive.client.handlers::ClientSendRequestHandler {"confidence":0.9,"resolvedBy":"import","refName":"ClientSendRequestHandler"}
+path:
+    org.jboss.resteasy.reactive.client.handlers::ClientSendRequestHandler::setMultipartHeadersAndPrepareBody   [rr-client-runtime/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java]
+    org.jboss.resteasy.reactive.client.impl.multipart::QuarkusMultipartForm::preparePojos   [rr-client-runtime/org/jboss/resteasy/reactive/client/impl/multipart/QuarkusMultipartForm.java]
+    org.jboss.resteasy.reactive.client.impl::ClientSerialisers::invokeClientWriter   [rr-client-runtime/org/jboss/resteasy/reactive/client/impl/ClientSerialisers.java]
+    io.quarkus.resteasy.runtime.vertx::JsonArrayWriter::writeTo   [resteasy-classic-runtime/io/quarkus/resteasy/runtime/vertx/JsonArrayWriter.java]
+    io.quarkus.resteasy.runtime.standalone::VertxOutputStream::flush   [resteasy-classic-runtime/io/quarkus/resteasy/runtime/standalone/VertxOutputStream.java]
+    io.quarkus.resteasy.runtime.standalone::VertxHttpResponse::writeBlocking   [resteasy-classic-runtime/io/quarkus/resteasy/runtime/standalone/VertxHttpResponse.java]
+    io.quarkus.resteasy.runtime.standalone::VertxOutput::write   [resteasy-classic-runtime/io/quarkus/resteasy/runtime/standalone/VertxOutput.java]
+    io.quarkus.resteasy.runtime.standalone::VertxBlockingOutput::write   [resteasy-classic-runtime/io/quarkus/resteasy/runtime/standalone/VertxBlockingOutput.java]
+    io.quarkus.resteasy.runtime.standalone::VertxBlockingOutput::awaitWriteable   [resteasy-classic-runtime/io/quarkus/resteasy/runtime/standalone/VertxBlockingOutput.java]
+    io.quarkus.runtime::BlockingOperationNotAllowedException   [core-runtime/io/quarkus/runtime/BlockingOperationNotAllowedException.java]

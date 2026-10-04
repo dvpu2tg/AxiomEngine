@@ -1,0 +1,49 @@
+{
+ "instance": "quarkus-33346",
+ "arm": "two",
+ "exit": 0,
+ "wall_s": 1149,
+ "turns": 58,
+ "cost_usd": 0.8833274,
+ "tokens_in": 48,
+ "tokens_out": 11290,
+ "cache_read": 1606175,
+ "cache_create": 59662,
+ "ctx_ingested": 144785,
+ "first_edit_turn": 57,
+ "ctx_before_first_edit": 141810,
+ "explore_calls": 17,
+ "graph_calls": 10,
+ "edit_calls": 2,
+ "run_calls": 3,
+ "files_read": 6,
+ "gold_files": 1,
+ "gold_files_read": 1,
+ "wasted_reads": 5,
+ "files_read_list": [
+  "core/runtime/src/main/java/io/quarkus/runtime/BlockingOperationControl.java",
+  "extensions/vertx/runtime/src/main/java/io/quarkus/vertx/core/runtime/VertxCoreRecorder.java",
+  "independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/handlers/ClientCaptureCurrentContextRestHandler.java",
+  "independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java",
+  "independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/handlers/ClientSwitchToRequestContextRestHandler.java",
+  "independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/handlers/VertxClientInputStream.java"
+ ],
+ "patch_files": [
+  "independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java",
+  "independent-projects/resteasy-reactive/client/runtime/src/main/java/org/jboss/resteasy/reactive/client/impl/InputStreamReadStream.java"
+ ],
+ "patch_bytes": 5155,
+ "gold_hit": 1,
+ "denials": {},
+ "tools": {
+  "Bash": 21,
+  "Read": 10,
+  "Monitor": 3,
+  "Edit": 1
+ },
+ "old_cli_calls": 0,
+ "is_error": false,
+ "subtype": "success",
+ "build_seconds": 1019,
+ "resolved": null
+}

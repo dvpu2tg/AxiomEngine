@@ -1,0 +1,67 @@
+== START nodes matching ['UserProfile.java:UserProfile.', 'UserStoragePrivateUtil.java:UserStoragePrivateUtil.']: 11
+   Method:server-spi-private/org/keycloak/userprofile/UserProfile.java:UserProfile.validate#0
+   Method:server-spi-private/org/keycloak/userprofile/UserProfile.java:UserProfile.create#0
+   Method:server-spi-private/org/keycloak/userprofile/UserProfile.java:UserProfile.create#1
+   Method:server-spi-private/org/keycloak/userprofile/UserProfile.java:UserProfile.update
+   Method:server-spi-private/org/keycloak/userprofile/UserProfile.java:UserProfile.getAttributes#0
+   Method:server-spi-private/org/keycloak/userprofile/UserProfile.java:UserProfile.toRepresentation#0
+   Method:server-spi-private/org/keycloak/userprofile/UserProfile.java:UserProfile.toRepresentation#1
+   Method:server-spi-private/org/keycloak/userprofile/UserProfile.java:UserProfile.toRepresentation#2
+== CLOSURE over ['CALLS'] from starts: 6953 nodes
+  target 'UserMapStorage' in closure: 12
+     Method:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:UserMapStorage.addUser#2
+     Method:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:UserMapStorage.createUser#2
+     Method:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:UserMapStorage.getUserById#2
+     Method:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:UserMapStorage.isImportEnabled#0
+     Method:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:UserMapStorage.removeUser#2
+     Method:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:UserMapStorage.translateUserName#1
+     Method:testsuite-providers/org/keycloak/testsuite/federation/UserMapStorage.java:UserMapStorage.addUser#2
+     Method:testsuite-providers/org/keycloak/testsuite/federation/UserMapStorage.java:UserMapStorage.createUser#2
+     Method:testsuite-providers/org/keycloak/testsuite/federation/UserMapStorage.java:UserMapStorage.getUserById#2
+     Method:testsuite-providers/org/keycloak/testsuite/federation/UserMapStorage.java:UserMapStorage.isImportEnabled#0
+== PAIR edges 'UserRegistrationProvider.java' -> 'UserMapStorage': 0
+== PAIR edges 'UserProvider.java:UserProvider.addUser' -> '': 1
+   MEMBER_OF Method:server-spi/org/keycloak/models/UserProvider.java:UserProvider.addUser#5 -> comm_623 leiden-algorithm
+== PAIR edges 'ComponentFactory.java' -> 'UserMapStorageFactory': 0
+== PAIR edges 'UserMapStorageFactory.java:UserMapStorageFactory.create' -> '': 2
+   CALLS Method:testsuite-providers/org/keycloak/testsuite/federation/UserMapStorageFactory.java:UserMapStorageFactory.create#2 -> Constructor:testsuite-providers/org/keycloak/testsuite/federation/UserMapStorage.java:UserMapStorage.UserMapStorage#4 import-resolved
+   CALLS Method:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorageFactory.java:UserMapStorageFactory.create#2 -> Constructor:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:UserMapStorage.UserMapStorage#4 import-resolved
+== PAIR edges 'DeclarativeUserProfileProvider' -> 'addUser': 2
+   CALLS Method:services/org/keycloak/userprofile/DeclarativeUserProfileProvider.java:DeclarativeUserProfileProvider$1.apply#1 -> Method:server-spi/org/keycloak/models/UserProvider.java:UserProvider.addUser#5 import-resolved
+   CALLS Method:services/org/keycloak/userprofile/DeclarativeUserProfileProvider.java:DeclarativeUserProfileProvider$1.apply#1 -> Method:storage-private/org/keycloak/storage/UserStorageManager.java:UserStorageManager.addUser#2 interface-dispatch
+== GOLD cross-file edges into nodes of file '*federation/UserMapStorage.java*' (110 nodes): 14
+   by kind: {'CALLS': 12, 'CONTAINS': 2}
+   CALLS Method:storage-private/org/keycloak/storage/UserStorageManager.java:UserStorageManager.removeUser#2 [storage-private/org/keycloak/storage/UserStorageManager.java] -> Method:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:UserMapStorage.removeUser#2 interface-dispatch
+   CALLS Method:storage-private/org/keycloak/storage/UserStorageManager.java:UserStorageManager.removeUser#2 [storage-private/org/keycloak/storage/UserStorageManager.java] -> Method:testsuite-providers/org/keycloak/testsuite/federation/UserMapStorage.java:UserMapStorage.removeUser#2 interface-dispatch
+   CALLS Method:storage-private/org/keycloak/storage/UserStorageManager.java:UserStorageManager.getUserById#2 [storage-private/org/keycloak/storage/UserStorageManager.java] -> Method:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:UserMapStorage.getUserById#2 interface-dispatch
+   CALLS Method:storage-private/org/keycloak/storage/UserStorageManager.java:UserStorageManager.getUserById#2 [storage-private/org/keycloak/storage/UserStorageManager.java] -> Method:testsuite-providers/org/keycloak/testsuite/federation/UserMapStorage.java:UserMapStorage.getUserById#2 interface-dispatch
+   CALLS Method:storage-private/org/keycloak/storage/UserStorageManager.java:UserStorageManager.getGroupMembersStream#4 [storage-private/org/keycloak/storage/UserStorageManager.java] -> Method:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:UserMapStorage.getGroupMembersStream#4 interface-dispatch
+   CALLS Method:storage-private/org/keycloak/storage/UserStorageManager.java:UserStorageManager.getGroupMembersStream#4 [storage-private/org/keycloak/storage/UserStorageManager.java] -> Method:testsuite-providers/org/keycloak/testsuite/federation/UserMapStorage.java:UserMapStorage.getGroupMembersStream#4 interface-dispatch
+   CALLS Method:storage-private/org/keycloak/storage/UserStorageManager.java:UserStorageManager.getGroupMembersStream#6 [storage-private/org/keycloak/storage/UserStorageManager.java] -> Method:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:UserMapStorage.getGroupMembersStream#4 interface-dispatch
+   CALLS Method:storage-private/org/keycloak/storage/UserStorageManager.java:UserStorageManager.getGroupMembersStream#6 [storage-private/org/keycloak/storage/UserStorageManager.java] -> Method:testsuite-providers/org/keycloak/testsuite/federation/UserMapStorage.java:UserMapStorage.getGroupMembersStream#4 interface-dispatch
+   CALLS Method:storage-private/org/keycloak/storage/UserStorageManager.java:UserStorageManager.searchForUserByUserAttributeStream#3 [storage-private/org/keycloak/storage/UserStorageManager.java] -> Method:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:UserMapStorage.searchForUserByUserAttributeStream#3 interface-dispatch
+   CALLS Method:storage-private/org/keycloak/storage/UserStorageManager.java:UserStorageManager.searchForUserByUserAttributeStream#3 [storage-private/org/keycloak/storage/UserStorageManager.java] -> Method:testsuite-providers/org/keycloak/testsuite/federation/UserMapStorage.java:UserMapStorage.searchForUserByUserAttributeStream#3 interface-dispatch
+   CALLS Method:testsuite-providers/org/keycloak/testsuite/federation/UserMapStorageFactory.java:UserMapStorageFactory.create#2 [testsuite-providers/org/keycloak/testsuite/federation/UserMapStorageFactory.java] -> Constructor:testsuite-providers/org/keycloak/testsuite/federation/UserMapStorage.java:UserMapStorage.UserMapStorage#4 import-resolved
+   CALLS Method:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorageFactory.java:UserMapStorageFactory.create#2 [tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorageFactory.java] -> Constructor:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:UserMapStorage.UserMapStorage#4 import-resolved
+   CONTAINS Folder:tests-custom-providers/org/keycloak/tests/providers/federation [tests-custom-providers/org/keycloak/tests/providers/federation] -> File:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java 
+   CONTAINS Folder:testsuite-providers/org/keycloak/testsuite/federation [testsuite-providers/org/keycloak/testsuite/federation] -> File:testsuite-providers/org/keycloak/testsuite/federation/UserMapStorage.java 
+path from UserProfile.create to None
+START Method:storage-private/org/keycloak/storage/UserStoragePrivateUtil.java:UserStoragePrivateUtil.userLocalStorage#1 -> Method:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:UserMapStorage.getUserById#2
+    Method:storage-private/org/keycloak/storage/UserStoragePrivateUtil.java:UserStoragePrivateUtil.userLocalStorage#1
+    Method:services/org/keycloak/services/DefaultKeycloakSession.java:DefaultKeycloakSession.getProvider#1
+    Method:services/org/keycloak/services/DefaultKeycloakSession.java:DefaultKeycloakSession.getOrCreateProvider#2
+    Method:infinispan/org/keycloak/spi/infinispan/impl/embedded/DefaultCacheEmbeddedConfigProviderFactory.java:DefaultCacheEmbeddedConfigProviderFactory.create#1
+    Method:infinispan/org/keycloak/spi/infinispan/impl/embedded/DefaultCacheEmbeddedConfigProviderFactory.java:DefaultCacheEmbeddedConfigProviderFactory.createConfiguration#1
+    Method:infinispan/org/keycloak/spi/infinispan/impl/embedded/DefaultCacheEmbeddedConfigProviderFactory.java:DefaultCacheEmbeddedConfigProviderFactory.configureSingleSiteWithPersistentSessions#3
+    Method:infinispan/org/keycloak/spi/infinispan/impl/embedded/DefaultCacheEmbeddedConfigProviderFactory.java:DefaultCacheEmbeddedConfigProviderFactory.singleSiteConfiguration#3
+    Method:server-spi-private/org/keycloak/models/utils/KeycloakModelUtils.java:KeycloakModelUtils.runJobInTransaction#2
+    Method:server-spi-private/org/keycloak/models/utils/KeycloakModelUtils.java:KeycloakModelUtils.runJobInTransaction#3
+    Method:services/org/keycloak/events/email/EmailEventListenerProvider.java:EmailEventListenerProvider$1.run#1
+    Method:storage-private/org/keycloak/storage/UserStorageManager.java:UserStorageManager.getUserById#2
+    Method:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:UserMapStorage.getUserById#2
+--- incoming CALLS to UserMapStorage.addUser:
+   Method:testsuite-providers/org/keycloak/testsuite/federation/UserMapStorage.java:UserMapStorage.createUser#2 local-call
+   Method:tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:UserMapStorage.createUser#2 local-call
+--- incoming CALLS to UserMapStorageFactory.create:
+--- outgoing CALLS of UserProfile.create (interface):
+   Method:server-spi-private/org/keycloak/userprofile/UserProfile.java:UserProfile.create#0 local-call

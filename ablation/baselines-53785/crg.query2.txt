@@ -1,0 +1,33 @@
+== (b) edges into OpenContainerPathTree.java targets from other files ==
+
+== INHERITS rows naming OpenContainerPathTree ==
+INHERITS|/private/tmp/baseline-cmp/work2/crg-src/app-model/io/quarkus/paths/ArchivePathTree.java::ArchivePathTree.OpenArchivePathTree|OpenContainerPathTree
+INHERITS|/private/tmp/baseline-cmp/work2/crg-src/app-model/io/quarkus/paths/DirectoryPathTree.java::DirectoryPathTree|OpenContainerPathTree
+
+== any CALLS target exactly bare ArchivePathTree/OpenContainerPathTree (ctor attempts) from other files ==
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/app-model/io/quarkus/paths/ArchivePathTree.java::ArchivePathTree.walk|walk|105
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/app-model/io/quarkus/paths/ArchivePathTree.java::ArchivePathTree.walkIfContains|walk|132
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/app-model/io/quarkus/paths/ArchivePathTree.java::ArchivePathTree.walkRaw|walk|115
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/app-model/io/quarkus/paths/PathTreeWithManifest.java::MultiReleaseResourceMapping.apply|walk|186
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/bootstrap-core/io/quarkus/bootstrap/classloading/PathTreeClassPathElement.java::PathTreeClassPathElement.getProvidedResources|getResourceNames|156
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/bootstrap-core/io/quarkus/bootstrap/classloading/PathTreeClassPathElement.java::PathTreeClassPathElement.getResource|getResourceNames|101
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/bootstrap-core/io/quarkus/bootstrap/classloading/PathTreeClassPathElement.java::PathTreeClassPathElement.getResources|getResourceNames|115
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/bootstrap-core/io/quarkus/bootstrap/classloading/PathTreeClassPathElement.java::PathTreeClassPathElement.toString|getResourceNames|201
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/core-deployment/io/quarkus/deployment/dev/RuntimeUpdatesProcessor.java::RuntimeUpdatesProcessor.checkForChangedClasses|walk|789
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/core-deployment/io/quarkus/deployment/dev/RuntimeUpdatesProcessor.java::RuntimeUpdatesProcessor.checkForClassFilesChangesInModule|walk|964
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/core-deployment/io/quarkus/deployment/dev/RuntimeUpdatesProcessor.java::RuntimeUpdatesProcessor.checkForFileChange|walk|1114
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/core-deployment/io/quarkus/deployment/dev/RuntimeUpdatesProcessor.java::RuntimeUpdatesProcessor.setWatchedFilePathsInternal|walk|1334
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/core-deployment/io/quarkus/deployment/dev/testing/JunitTestRunner.java::JunitTestRunner.discoverTestClasses|walk|591
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/core-deployment/io/quarkus/deployment/index/ApplicationArchiveBuildStep.java::ApplicationArchiveBuildStep.indexPathTree|walk|306
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/core-deployment/io/quarkus/deployment/index/IndexingUtil.java::IndexingUtil.indexTree|walk|71
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/core-deployment/io/quarkus/deployment/pkg/jar/AbstractFastJarBuilder.java::AbstractFastJarBuilder.build|walk|395
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/core-deployment/io/quarkus/deployment/pkg/jar/AbstractJarBuilder.java::AbstractJarBuilder.copyFiles|walk|123
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/core-deployment/io/quarkus/deployment/pkg/steps/JarTreeShakeInput.java::JarTreeShakeInput.collectApplicationClasses|walk|450
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/core-deployment/io/quarkus/deployment/pkg/steps/JarTreeShakeInput.java::JarTreeShakeInput.detectAppJavaVersion|walk|565
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/core-deployment/io/quarkus/deployment/pkg/steps/JarTreeShakeProcessor.java::JarTreeShakeProcessor.collectNativeImageRoots|walk|331
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/core-deployment/io/quarkus/deployment/pkg/steps/JarTreeShaker.java::JarTreeShaker.extractClassNamesFromSerializedResources|walk|715
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/core-deployment/io/quarkus/deployment/pkg/steps/NativeImageBuildStep.java::NativeImageBuildStep.copySourcesToSourceCache|walk|583
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/core-deployment/io/quarkus/deployment/steps/CompiledJavaVersionBuildStep.java::CompiledJavaVersionBuildStep.getMajorJavaVersion|walk|54
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/core-deployment/io/quarkus/deployment/util/ArtifactInfoUtil.java::ArtifactInfoUtil.groupIdAndArtifactId|walk|151
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/core-deployment/io/quarkus/deployment/util/ArtifactResourceResolver.java::ArtifactResourceResolver.pathsForArtifact|walk|81
+CALLS|/private/tmp/baseline-cmp/work2/crg-src/core-deployment/io/quarkus/deployment/util/FSWatchUtil.java::FSWatchUtil.doObserve|walk|60

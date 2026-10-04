@@ -1,0 +1,22 @@
+== outgoing edges of ProviderFactory::create (interface method) ==
+references|org.keycloak.models::KeycloakSession
+
+== incoming edges of ProviderFactory::create ==
+calls|org.keycloak.authorization.store.syncronization::ClientApplicationSynchronizer::synchronize
+calls|org.keycloak.authorization.store.syncronization::GroupSynchronizer::synchronize
+calls|org.keycloak.authorization.store.syncronization::OrganizationSynchronizer::synchronize
+calls|org.keycloak.authorization.store.syncronization::RealmSynchronizer::synchronize
+calls|org.keycloak.authorization.store.syncronization::RoleSynchronizer::synchronize
+calls|org.keycloak.authorization.store.syncronization::UserSynchronizer::synchronize
+calls|org.keycloak.services::DefaultKeycloakSession::getOrCreateProvider
+calls|org.keycloak.services.resources::IdentityBrokerService::getIdentityProvider
+contains|org.keycloak.provider::ProviderFactory
+
+== AuthorizationDetailsProcessorFactory::create node + outgoing ==
+method:f1b2ed1a894dbf53a28e51651bab4e18
+calls|org.keycloak.protocol.oid4vc.issuance::OID4VCAuthorizationDetailsProcessorFactory::create|{"synthesizedBy":"interface-impl","via":"create","registeredAt":"services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java:37"}
+references|org.keycloak.models::KeycloakSession|{"confidence":0.9,"resolvedBy":"import","refName":"KeycloakSession"}
+references|org.keycloak.protocol.oidc.rar::AuthorizationDetailsProcessor|{"confidence":0.9,"resolvedBy":"exact-match","refName":"AuthorizationDetailsProcessor"}
+
+== incoming of AuthorizationDetailsProcessorFactory::create ==
+contains|org.keycloak.protocol.oidc.rar::AuthorizationDetailsProcessorFactory

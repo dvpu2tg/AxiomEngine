@@ -1,0 +1,12 @@
+Re-extracting code files in . (no LLM needed)...
+  AST extraction: 100/354 uncached files (28%) [10 workers]
+  AST extraction: 200/354 uncached files (56%) [10 workers]
+  AST extraction: 300/354 uncached files (84%) [10 workers]
+  AST extraction: 354/354 uncached files (100%) [10 workers]
+[graphify watch] Rebuilt (no clustering): 3596 nodes, 10773 edges
+[graphify watch] graph.json updated in graphify-out
+Code graph updated. For doc/paper/image changes run /graphify --update in your AI assistant.
+Tip: set GEMINI_API_KEY or GOOGLE_API_KEY to use Gemini for semantic extraction.
+real 3.77
+user 4.65
+sys 1.35

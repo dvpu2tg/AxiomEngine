@@ -1,0 +1,18 @@
+ensureFile (2 declarations) → IoUtil (type: 15 methods): 4 of 15 target(s) reached through resolved calls; nearest at 0 hop(s)
+    IoUtil.ensureFile is itself an endpoint of both
+  1 call(s):
+    IoUtil.ensureFile   integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/util/IoUtil.java:97
+      → [known_edge · call @ integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/util/IoUtil.java:111] IoUtil.warnErr   integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/util/IoUtil.java:179
+  1 call(s):
+    IoUtil.ensureFile   integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/util/IoUtil.java:97
+      → [known_edge · call @ integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/util/IoUtil.java:109] IoUtil.setWindowsPermissions   integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/util/IoUtil.java:138
+  1 call(s):
+    IoUtil.ensureFile   integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/util/IoUtil.java:97
+      → [known_edge · call @ integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/util/IoUtil.java:107] IoUtil.setUnixPermissions   integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/util/IoUtil.java:128
+  verified: every printed hop is an edge in the graph and a second, independent traversal finds the same length
+  what the hops are:
+    [known_edge] resolved to one declaration
+  the target(s) call into libraries (not traversed — where the client graph ends): external:java.util.Set.contains ×4, external:java.nio.file.attribute.AclEntry.principal ×2, external:java.nio.file.FileSystem.supportedFileAttributeViews, external:java.nio.file.attribute.AclFileAttributeView.getAcl, external:java.nio.file.attribute.AclFileAttributeView.getOwner, external:java.nio.file.attribute.AclFileAttributeView.setAcl, external:java.util.ListIterator.hasNext, external:java.util.ListIterator.next, external:java.util.ListIterator.remove
+  (one shortest chain per reached target; --every for all the routes and every method on any of them)
+  bound: the methods on the nearest chain contain 6 unresolved call(s) — other chains may exist that the graph cannot see
+next: the chain is verified (every printed hop is an edge in the graph); its 3 call site(s): integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/util/IoUtil.java:111, integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/util/IoUtil.java:109, integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/util/IoUtil.java:107. For a change, those sites are what to check; to explain how it works, read each hop's body — `context "how does …" --from <start>` prints the whole flow

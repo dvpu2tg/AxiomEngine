@@ -1,0 +1,16 @@
+diff --git a/services/src/main/java/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java b/services/src/main/java/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java
+index 3aea5684..6143ca99 100644
+--- a/services/src/main/java/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java
++++ b/services/src/main/java/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java
+@@ -80,6 +80,11 @@ public class ResourceIndicatorsPostProcessor implements TokenPostProcessor {
+     }
+ 
+     private String findAudienceByClientAttribute(String resource, String[] audience) {
++        // custom audience (e.g. from an audience mapper) matching the resource directly
++        String customAudience = find(resource, audience);
++        if (customAudience != null) {
++            return customAudience;
++        }
+         for (String a : audience) {
+             ClientModel client = session.clients().getClientByClientId(session.getContext().getRealm(), a);
+             if (client != null) {

@@ -1,0 +1,15 @@
+== outgoing of PathTree::walk (decl) ==
+calls|io.quarkus.paths::ArchivePathTree::walk|{"synthesizedBy":"interface-impl","via":"walk","registeredAt":"app-model/io/quarkus/paths/ArchivePathTree.java:101"}
+calls|io.quarkus.paths::FilteredPathTree::walk|{"synthesizedBy":"interface-impl","via":"walk","registeredAt":"app-model/io/quarkus/paths/FilteredPathTree.java:35"}
+references|io.quarkus.paths::PathVisitor|{"confidence":0.9,"resolvedBy":"exact-match","refName":"PathVisitor"}
+== incoming of ArchivePathTree::walk ==
+calls|io.quarkus.deployment.pkg.jar::AbstractJarBuilder::copyFiles|{"confidence":0.65,"resolvedBy":"instance-method","refName":"tree.walk"}
+calls|io.quarkus.paths::PathTree::walk|{"synthesizedBy":"interface-impl","via":"walk","registeredAt":"app-model/io/quarkus/paths/ArchivePathTree.java:101"}
+contains|io.quarkus.paths::ArchivePathTree|
+== where does the chain break: outgoing calls of PathTreeClassPathElement::getProvidedResources ==
+calls|io.quarkus.paths::PathTree::getResourceNames
+== is PathTreeClassPathElement::getProvidedResources in closure from loadStepsFrom? ==
+io.quarkus.deployment.util::ServiceUtil::classesNamedIn
+io.quarkus.deployment.util::ServiceUtil::classNamesNamedIn
+io.quarkus.deployment.util::ServiceUtil::readStream
+io.quarkus.runtime.util::ClassPathUtils::consumeAsStreams

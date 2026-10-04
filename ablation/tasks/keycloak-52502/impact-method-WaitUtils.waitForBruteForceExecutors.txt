@@ -1,0 +1,40 @@
+change: WaitUtils.waitForBruteForceExecutors   [method]
+page 1 of 2:
+(`alongside` = no call, no reference, no contract — only that a fix touching one of these often touches the other;
+ it is never a seed, so the transitive layer below is unaffected by it)
+reads or uses it (17 callable(s): 17 resolved; 17 of them test):
+    +17 test callable(s) in 3 file(s): testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java (15), testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/broker/AbstractAdvancedBrokerTest.java (1), testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/federation/ldap/LDAPReadOnlyTest.java (1) also reach it, not listed here — `axiomengine test-impact` names them and the command that runs them (--tests lists them by file)
+declared alongside it, not a dependent (12 callable(s): 12 alongside; 12 of them test):
+    +12 test callable(s) in 1 file(s): testsuite/integration-arquillian/tests/base/src/main/java/org/keycloak/testsuite/util/WaitUtils.java (12) also reach it, not listed here — `axiomengine test-impact` names them and the command that runs them (--tests lists them by file)
+reaches those through resolved calls: 47 more callable(s) in 3 file(s)
+    by hop: 1:17, 2:13, 3:14, 4:3
+    test files: 3 — listed under tests below (--tests-only for all of them)
+    inherited by 4 test class(es) that extend a reached one — they run those tests too: KcOidcBrokerTest (1) testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/broker/KcOidcBrokerTest.java:85, KcOidcBrokerTransientSessionsTest (1) testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/broker/KcOidcBrokerTransientSessionsTest.java:114, KcSamlBrokerTest (1) testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/broker/KcSamlBrokerTest.java:74, OAuth2BrokerTest (1) testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/broker/OAuth2BrokerTest.java:28
+tests: 35 of 11389 test method(s) reach the change (their own body, or a fixture that runs before or after them: constructor, static initializer, @Before*/@After*/setUp/tearDown)
+    how sure each route is: 35 sound  —  32 reach it through resolved single-target calls within 3 hops
+    [sound] AbstractAdvancedBrokerTest::loginWithExistingUserWithBruteForceEnabled   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/broker/AbstractAdvancedBrokerTest.java:168   1 hop(s)
+    [sound] BruteForceTest::testCookieSsoReauthenticationDoesNotResetLockout   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:1156   1 hop(s)
+    [sound] BruteForceTest::testFailureCountResetWithPasswordGrantType   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:1045   1 hop(s)
+    [sound] BruteForceTest::testGrantInvalidOtp   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:307   1 hop(s)
+    [sound] BruteForceTest::testGrantInvalidPassword   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:258   1 hop(s)
+    [sound] BruteForceTest::testGrantMissingOtp   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:358   1 hop(s)
+    [sound] BruteForceTest::testGrantPermamentOtpAbsolut   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:405   1 hop(s)
+    [sound] BruteForceTest::testNoFailureResetForPermanentLockout   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:627   1 hop(s)
+    [sound] BruteForceTest::testBrowserInvalidPasswordDifferentCase   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:736   2 hop(s)
+    [sound] BruteForceTest::testBrowserInvalidTotp   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:828   2 hop(s)
+    [sound] BruteForceTest::testBrowserInvalidTotpAbsolut   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:836   2 hop(s)
+    [sound] BruteForceTest::testBrowserMissingTotp   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:847   2 hop(s)
+    [sound] BruteForceTest::testBrowserTotpSessionInvalidAfterLockout   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:855   2 hop(s)
+    [sound] BruteForceTest::testNumberOfFailuresForPermanentlyDisabledUsersWithPasswordGrantType   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:496   2 hop(s)
+    [sound] BruteForceTest::testNumberOfFailuresForTemporaryDisabledUsersWithPasswordGrantType   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:481   2 hop(s)
+    [sound] BruteForceTest::testPermanentLockout   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:876   2 hop(s)
+    [sound] BruteForceTest::testPermanentLockoutWithTempLockoutParamsSet   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:912   2 hop(s)
+    [sound] BruteForceTest::testTemporaryLockout   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:952   2 hop(s)
+    [sound] LDAPReadOnlyTest::testReadOnlyUserGetsPermanentlyLocked   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/federation/ldap/LDAPReadOnlyTest.java:201   2 hop(s)
+    [sound] BruteForceTest::testBrowserInvalidPassword   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:525   3 hop(s)
+    [sound] BruteForceTest::testBrowserMissingPassword   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:820   3 hop(s)
+
+verified: 98 printed edge(s) looked up again in the graph, all present
+bound: 161 unresolved call(s) inside the impacted set — what those reach is unknown, so the set is a lower bound
+next: no production code depends on it, but 35 test(s) reach it — read testsuite/integration-arquillian/tests/base/src/main/java/org/keycloak/testsuite/util/WaitUtils.java:178 and edit there, then run those tests (`test-impact` after the edit)
+page 1 of 2 (~2000 tokens a page): 1 more page(s) left, 34 row(s): tests, entry points — ask for the next with --page 2, or all of it with --page all; --budget N changes the page size; narrow instead with --in <path>, --depth N or --tests-only

@@ -1,0 +1,33 @@
+== START nodes matching ['endpoints/TokenEndpoint.java::TokenEndpoint.']: 13
+   /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java::TokenEndpoint.TokenEndpoint
+   /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java::TokenEndpoint.processGrantRequest
+   /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java::TokenEndpoint.introspect
+   /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java::TokenEndpoint.preflight
+   /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java::TokenEndpoint.checkSsl
+   /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java::TokenEndpoint.checkRealm
+   /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java::TokenEndpoint.checkClient
+   /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java::TokenEndpoint.checkGrantType
+== CLOSURE over ['CALLS'] from starts: 737 nodes
+  target 'ResourceIndicatorsPostProcessor' in closure: 0
+  target 'TokenInterceptorException' in closure: 1
+     /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/token/TokenInterceptorException.java::TokenInterceptorException.getDescription
+== PAIR edges 'TokenPostProcessor.java' -> 'ResourceIndicatorsPostProcessor': 0
+== PAIR edges 'TokenEndpoint.java::TokenEndpoint' -> 'TokenInterceptorException': 1
+   CALLS /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java::TokenEndpoint.processGrantRequest -> /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/token/TokenInterceptorException.java::TokenInterceptorException.getDescription EXTRACTED
+== PAIR edges 'ResourceIndicatorsPostProcessor.java' -> 'TokenInterceptorException': 5
+   IMPORTS_FROM /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java -> /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/token/TokenInterceptorException.java EXTRACTED
+   CALLS /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java::ResourceIndicatorsPostProcessor.process -> /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/token/TokenInterceptorException.java::TokenInterceptorException EXTRACTED
+   CALLS /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java::ResourceIndicatorsPostProcessor.process -> /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/token/TokenInterceptorException.java::TokenInterceptorException EXTRACTED
+   CALLS /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java::ResourceIndicatorsPostProcessor.process -> /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/token/TokenInterceptorException.java::TokenInterceptorException EXTRACTED
+   CALLS /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java::ResourceIndicatorsPostProcessor.process -> /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/token/TokenInterceptorException.java::TokenInterceptorException EXTRACTED
+== PAIR edges 'invokeTokenPostProcessors' -> 'process': 1
+   CALLS /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/TokenManager.java::AccessTokenResponseBuilder.invokeTokenPostProcessors -> /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/token/TokenPostProcessor.java::TokenPostProcessor.process EXTRACTED
+== GOLD cross-file edges into nodes of file '*endpoints/TokenEndpoint.java*' (18 nodes): 7
+   by kind: {'IMPORTS_FROM': 3, 'CALLS': 1, 'CONTAINS': 3}
+   IMPORTS_FROM /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/OIDCLoginProtocolService.java [/private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/OIDCLoginProtocolService.java] -> /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java EXTRACTED
+   CALLS /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/OIDCLoginProtocolService.java::OIDCLoginProtocolService.token [/private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/OIDCLoginProtocolService.java] -> /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java::TokenEndpoint EXTRACTED
+   IMPORTS_FROM /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/OIDCWellKnownProvider.java [/private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/OIDCWellKnownProvider.java] -> /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java EXTRACTED
+   CONTAINS /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java::TokenExchangeSamlProtocol [] -> /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java::TokenExchangeSamlProtocol.TokenExchangeSamlProtocol EXTRACTED
+   CONTAINS /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java::TokenExchangeSamlProtocol [] -> /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java::TokenExchangeSamlProtocol.buildAuthenticatedResponse EXTRACTED
+   CONTAINS /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java::TokenExchangeSamlProtocol [] -> /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java::TokenExchangeSamlProtocol.buildErrorResponse EXTRACTED
+   IMPORTS_FROM /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/tokenexchange/V1TokenExchangeProvider.java [/private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/tokenexchange/V1TokenExchangeProvider.java] -> /private/tmp/baseline-cmp/work3/crg-src/services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java EXTRACTED

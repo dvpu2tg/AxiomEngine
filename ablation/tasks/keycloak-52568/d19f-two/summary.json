@@ -1,0 +1,42 @@
+{
+ "instance": "keycloak-52568",
+ "arm": "two",
+ "exit": 0,
+ "wall_s": 237,
+ "turns": 19,
+ "cost_usd": 0.18615340000000008,
+ "tokens_in": 24,
+ "tokens_out": 3242,
+ "cache_read": 352827,
+ "cache_create": 20780,
+ "ctx_ingested": 29026,
+ "first_edit_turn": 10,
+ "ctx_before_first_edit": 23060,
+ "explore_calls": 7,
+ "graph_calls": 1,
+ "edit_calls": 4,
+ "run_calls": 1,
+ "files_read": 1,
+ "gold_files": 1,
+ "gold_files_read": 0,
+ "wasted_reads": 1,
+ "files_read_list": [
+  "services/src/main/java/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java"
+ ],
+ "patch_files": [
+  "services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java"
+ ],
+ "patch_bytes": 1402,
+ "gold_hit": 1,
+ "denials": {},
+ "tools": {
+  "Bash": 9,
+  "Read": 1,
+  "Edit": 3
+ },
+ "old_cli_calls": 0,
+ "is_error": false,
+ "subtype": "success",
+ "build_seconds": 943,
+ "resolved": null
+}

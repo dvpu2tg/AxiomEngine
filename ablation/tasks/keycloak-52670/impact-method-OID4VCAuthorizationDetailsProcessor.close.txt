@@ -1,0 +1,26 @@
+change: OID4VCAuthorizationDetailsProcessor.close   [method]
+page 1 of 9:
+must change with it (1: bound by a contract the engine resolved):
+    Provider.close   server-spi/src/main/java/org/keycloak/provider/Provider.java:25   — it overrides this
+(`alongside` = no call, no reference, no contract — only that a fix touching one of these often touches the other;
+ it is never a seed, so the transitive layer below is unaffected by it)
+reads or uses it (813 callable(s): 813 by name; 770 of them test):
+    +40 [by name] (the same method name on an untyped receiver; may be another method) — grep -rn "\.close(" . lists them; --page all or --limit N prints each row
+    +770 test callable(s) in 298 file(s): tests/base/src/test/java/org/keycloak/tests/organization/mapper/OrganizationOIDCProtocolMapperTest.java (39), testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/authz/EntitlementAPITest.java (31), testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/organization/broker/AbstractBrokerSelfRegistrationTest.java (30), testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/oauth/OIDCProtocolMappersTest.java (24) … also reach it, not listed here — `axiomengine test-impact` names them and the command that runs them (--tests lists them by file)
+declared alongside it, not a dependent (16 callable(s): 16 alongside):
+    … +11 more in 1 file(s): services/src/main/java/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java (11)   (--page 2 for the next rows, --limit N for all of them)
+reaches those through resolved calls: 30310 more callable(s) in 4579 file(s)
+    1939 of those 30310 are reached ONLY through a dependent that is not an exact edge ([by name], [text], [one of a set]): they stand or fall with it
+    by hop: 1:821, 2:617, 3:1499, 4:1788, 5:2619, 6:3454, 7:2941, 8:3958, 9:3083, 10:3141, 11:2593, 12:1715, 13:1032, 14:433, 15:305, 16:77, 17:51, 18:53, 19:88, 20:37, 21:5
+
+also in this answer (counts are for the whole answer):
+  written as a plain word outside the source: 60 line(s) in 57 file(s) name "close" with no call, quote or qualifier around it (template text, CI and build files, comments) — not counted as a binding; grep -rnw "close" . lists them
+  tests: 9870 of 11389 test method(s) reach the change (their own body, or a fixture that runs before or after them: constructor, static initializer, @Before*/@After*/setUp/tearDown)
+    how sure each route is: 2401 fixture, 7469 by name  —  0 reach it through resolved single-target calls within 3 hops
+
+verified: 60435 printed edge(s) looked up again in the graph, all present
+bound: 105779 unresolved call(s) inside the impacted set — what those reach is unknown, so the set is a lower bound
+through a call the engine could not resolve: 813 caller(s) write this method's name on an untyped receiver — counted in the reach above, so that part of it MAY not be real: PemUtils.decodeCertificate adapters/saml/core/src/main/java/org/keycloak/adapters/saml/config/PemUtils.java:149, KeycloakAdapterConfigDeploymentProcessor.getXML adapters/saml/wildfly/wildfly-subsystem/src/main/java/org/keycloak/subsystem/adapter/saml/extension/KeycloakAdapterConfigDeploymentProcessor.java:92, Base64.OutputStream.close common/src/main/java/org/keycloak/common/util/Base64.java:1688, DerUtils.decodePrivateKey common/src/main/java/org/keycloak/common/util/DerUtils.java:48
+note: 813 entries are not an exact edge — [one of a set] is one member of a target set the engine could not narrow (its own oracle: right 126 of 351 times, against 528 of 585 for a resolved edge), [by name] / [text] may be a same-named other thing
+next: 15 places are bound to it in 15 file(s) — start with the contract (server-spi/src/main/java/org/keycloak/provider/Provider.java:25), then the files with the most: federation/ldap/src/main/java/org/keycloak/storage/ldap/idm/store/ldap/LDAPOperationManager.java (1), integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/util/HttpUtil.java (1), model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/RealmCacheSession.java (1); the 813 [by name]/[text] row(s) are leads — open one only if the change is to the name or the signature; `test-impact` after the edit for the tests
+page 1 of 9 (~2000 tokens a page): 8 more page(s) left, 155 row(s): entry points, written as a plain word outside the sour, tests, [by name]/[text] users, declared alongside it, not a dependent — ask for the next with --page 2, or all of it with --page all; --budget N changes the page size; narrow instead with --in <path>, --depth N or --tests-only

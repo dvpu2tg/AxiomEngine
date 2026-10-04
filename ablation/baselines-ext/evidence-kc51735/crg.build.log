@@ -1,0 +1,46 @@
+INFO: Schema version 1 -> 9: running migrations
+INFO: Running migration v2
+INFO: Migration v2: added 'signature' column to nodes
+INFO: Running migration v3
+INFO: Migration v3: created flows and flow_memberships tables
+INFO: Running migration v4
+INFO: Migration v4: added 'community_id' column to nodes
+INFO: Migration v4: created communities table
+INFO: Running migration v5
+INFO: Migration v5: created nodes_fts FTS5 virtual table
+INFO: Running migration v6
+INFO: Migration v6: created summary tables (community_summaries, flow_snapshots, risk_index)
+INFO: Running migration v7
+INFO: Migration v7: added compound edge indexes
+INFO: Running migration v8
+INFO: Migration v8: created composite edge index
+INFO: Running migration v9
+INFO: Migration v9: added edge confidence columns
+INFO: Migrations complete, now at schema version 9
+INFO: Progress: 200/3129 files parsed
+INFO: Progress: 400/3129 files parsed
+INFO: Progress: 600/3129 files parsed
+INFO: Progress: 800/3129 files parsed
+INFO: Progress: 1000/3129 files parsed
+INFO: Progress: 1200/3129 files parsed
+INFO: Progress: 1400/3129 files parsed
+INFO: Progress: 1600/3129 files parsed
+INFO: Progress: 1800/3129 files parsed
+INFO: Progress: 2000/3129 files parsed
+INFO: Progress: 2200/3129 files parsed
+INFO: Progress: 2400/3129 files parsed
+INFO: Progress: 2600/3129 files parsed
+INFO: Progress: 2800/3129 files parsed
+INFO: Progress: 3000/3129 files parsed
+INFO: Progress: 3129/3129 files parsed
+INFO: Spring DI resolver: resolved 13 CALLS edges in 3129 Java files
+INFO: Spring event resolver: indexed 0 events and emitted 0 CALLS edges
+INFO: Temporal resolver: no Workflow/ActivityInterface nodes, skipping
+INFO: Resolved 8064 evidence-backed bare CALLS targets
+INFO: FTS index rebuilt: 32716 rows indexed
+INFO: Loaded 29587 unique nodes, 174882 edges
+INFO: igraph not available, using file-based community detection
+Full build: 3129 files, 34608 nodes, 178398 edges (postprocess=full)
+real 23.59
+user 27.26
+sys 9.00

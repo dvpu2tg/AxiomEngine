@@ -1,0 +1,61 @@
+diff --git a/core/deployment/src/main/java/io/quarkus/deployment/pkg/jar/UberJarBuilder.java b/core/deployment/src/main/java/io/quarkus/deployment/pkg/jar/UberJarBuilder.java
+index a9e5afc0..cad222e6 100644
+--- a/core/deployment/src/main/java/io/quarkus/deployment/pkg/jar/UberJarBuilder.java
++++ b/core/deployment/src/main/java/io/quarkus/deployment/pkg/jar/UberJarBuilder.java
+@@ -2,6 +2,7 @@
+ 
+ import static io.quarkus.deployment.pkg.PackageConfig.JarConfig.JarType.UBER_JAR;
+ 
++import java.io.Closeable;
+ import java.io.IOException;
+ import java.io.UncheckedIOException;
+ import java.nio.file.Files;
+@@ -147,7 +148,18 @@ public JarBuildItem build() throws IOException {
+ 
+     private void buildUberJar0(Path runnerJar) throws IOException {
+ 
+-        try (ArchiveCreator archiveCreator = new ParallelCommonsCompressArchiveCreator(runnerJar,
++        // path trees must stay open until the archive creator is closed, since entry content is read lazily
++        // (in parallel) when the archive is written; resources are closed in reverse order of declaration
++        final List<OpenPathTree> openPathTrees = new ArrayList<>();
++        try (Closeable pathTreesCloser = () -> {
++            for (OpenPathTree t : openPathTrees) {
++                try {
++                    t.close();
++                } catch (IOException e) {
++                    LOG.debug("Failed to close path tree", e);
++                }
++            }
++        }; ArchiveCreator archiveCreator = new ParallelCommonsCompressArchiveCreator(runnerJar,
+                 packageConfig.jar().compress(), packageConfig.outputTimestamp().orElse(null),
+                 executorService)) {
+             LOG.info("Building uber jar: " + runnerJar);
+@@ -182,7 +194,7 @@ private void buildUberJar0(Path runnerJar) throws IOException {
+                     continue;
+                 }
+ 
+-                walkFileDependencyForDependency(archiveCreator, duplicateCatcher,
++                walkFileDependencyForDependency(archiveCreator, openPathTrees, duplicateCatcher,
+                         concatenatedEntries, allIgnoredEntriesPredicate, appDep,
+                         mergeResourcePaths);
+             }
+@@ -237,7 +249,7 @@ private Predicate<String> getIgnoredEntriesPredicate() {
+         return path -> UBER_JAR_IGNORED_ENTRIES_PREDICATE.test(path) || ignoredEntries.contains(path);
+     }
+ 
+-    private void walkFileDependencyForDependency(ArchiveCreator archiveCreator,
++    private void walkFileDependencyForDependency(ArchiveCreator archiveCreator, List<OpenPathTree> openPathTrees,
+             Map<String, Set<Dependency>> duplicateCatcher, Map<String, List<byte[]>> concatenatedEntries,
+             Predicate<String> ignoredEntriesPredicate, ResolvedDependency appDep,
+             Set<String> mergeResourcePaths) throws IOException {
+@@ -246,7 +258,9 @@ private void walkFileDependencyForDependency(ArchiveCreator archiveCreator,
+         // is that we are actually using a SharedOpenArchivePathTree here, which simply increments and decrements
+         // the user count of the cached shared open path tree instance. This open path tree instance will remain open
+         // until the last user called close() on it, which will be the Quarkus classloaders closing.
+-        try (OpenPathTree pathTree = appDep.getContentTree().open()) {
++        final OpenPathTree pathTree = appDep.getContentTree().open();
++        openPathTrees.add(pathTree);
++        {
+             pathTree.walkRaw(visit -> {
+                 try {
+                     final String relativePath = visit.getResourceName();

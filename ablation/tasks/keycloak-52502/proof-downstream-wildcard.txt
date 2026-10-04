@@ -1,0 +1,40 @@
+page 1 of 2:
+everything reached from BruteForceTest.testExceedMaxTemporaryLockouts: 27499 method(s) in 3845 file(s)
+  26020 production, 1479 test. Through exact calls only: 17 production, 38 test; the other 27444 only through a dispatch choice (an interface or override with several implementations, a call with several candidates) — they MAY run it, not must
+  by hop: 1:16, 2:23, 3:65, 4:192, 5:345, 6:870, 7:2620, 8:2131, 9:2148, 10:2293, 11:1919, 12:2038, 13:2376, 14:1175, 15:836, 16:821, 17:1112, 18:1829, 19:1094, 20:953, 21:661, 22:430, 23:555, 24:353, 25:269, 26:202, 27:95, 28:32, 29:28, 30:11, 31:4, 32:1, 33:2
+  files: core/src/main/java/org/keycloak/representations/idm/RealmRepresentation.java (278), model/jpa/src/main/java/org/keycloak/models/jpa/RealmAdapter.java (263), model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/RealmAdapter.java (260), server-spi/src/main/java/org/keycloak/models/RealmModel.java (255), server-spi-private/src/main/java/org/keycloak/models/utils/RealmModelDelegate.java (246), model/jpa/src/main/java/org/keycloak/models/jpa/entities/RealmEntity.java (122), model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/authorization/StoreFactoryCacheSession.java (121), model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/RealmCacheSession.java (114), model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/entities/CachedRealm.java (108), server-spi-private/src/main/java/org/keycloak/models/delegate/ClientModelLazyDelegate.java (101), services/src/main/java/org/keycloak/authentication/AuthenticationProcessor.java (101), model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/ClientAdapter.java (91) … +3652
+  test files: 181, 1479 method(s) — not listed; `axiomengine test-impact` is the verb for them
+  nearest first:
+     1 hop(s)  AbstractTestRealmKeycloakTest.updateUser   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/AbstractTestRealmKeycloakTest.java:61
+     1 hop(s)  AbstractUserRepresentation.setEnabled   core/src/main/java/org/keycloak/representations/idm/AbstractUserRepresentation.java:163
+     1 hop(s)  BruteForceTest.expectPermanentlyDisabled   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:1256
+     1 hop(s)  BruteForceTest.expectTemporarilyDisabled   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:1231
+     1 hop(s)  BruteForceTest.loginInvalidPassword   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:1374
+     1 hop(s)  Keycloak.realm   integration/admin-client-core/src/main/java/org/keycloak/admin/client/Keycloak.java:194
+     1 hop(s)  ManagedRealm.admin   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testframework/realm/ManagedRealm.java:20
+     1 hop(s)  ManagedRealm.admin   test-framework/core/src/main/java/org/keycloak/testframework/realm/ManagedRealm.java:80
+     1 hop(s)  RealmRepresentation.setMaxTemporaryLockouts   core/src/main/java/org/keycloak/representations/idm/RealmRepresentation.java:800
+     1 hop(s)  RealmRepresentation.setPermanentLockout   core/src/main/java/org/keycloak/representations/idm/RealmRepresentation.java:792
+     1 hop(s)  RealmResource.toRepresentation   integration/admin-client-core/src/main/java/org/keycloak/admin/client/resource/RealmResource.java:54
+     1 hop(s)  RealmResource.update   integration/admin-client-core/src/main/java/org/keycloak/admin/client/resource/RealmResource.java:58
+     1 hop(s)  RealmResource.users   integration/admin-client-core/src/main/java/org/keycloak/admin/client/resource/RealmResource.java:100
+     1 hop(s)  TimeOffSet.set   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testframework/remote/timeoffset/TimeOffSet.java:15
+     1 hop(s)  TimeOffSet.set   test-framework/remote/src/main/java/org/keycloak/testframework/remote/timeoffset/TimeOffSet.java:51
+     1 hop(s)  UsersResource.search   integration/admin-client-core/src/main/java/org/keycloak/admin/client/resource/UsersResource.java:204
+     2 hop(s)  AbstractChangeImportedUserPasswordsTest.getPassword   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/AbstractChangeImportedUserPasswordsTest.java:107
+     2 hop(s)  AbstractKeycloakTest.getAdminClient   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/AbstractKeycloakTest.java:354
+     2 hop(s)  AbstractKeycloakTest.getTestingClient   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/AbstractKeycloakTest.java:343
+     2 hop(s)  AbstractKeycloakTest.shouldResetTimeOffset   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/AbstractKeycloakTest.java:689
+     2 hop(s)  AbstractUserRepresentation.getId   core/src/main/java/org/keycloak/representations/idm/AbstractUserRepresentation.java:51
+     2 hop(s)  BruteForceTest.expectPermanentlyDisabled   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:1260
+     2 hop(s)  BruteForceTest.expectTemporarilyDisabled   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:1239
+     2 hop(s)  BruteForceTest.loginInvalidPassword   testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:1378
+     2 hop(s)  DefaultKeycloakSession.getKeycloakSessionFactory   services/src/main/java/org/keycloak/services/DefaultKeycloakSession.java:189
+     2 hop(s)  DefaultKeycloakSessionFactory.publish   services/src/main/java/org/keycloak/services/DefaultKeycloakSessionFactory.java:84
+     2 hop(s)  Keycloak.realms   integration/admin-client-core/src/main/java/org/keycloak/admin/client/Keycloak.java:190
+
+  verified: a second, independent traversal over the same facts gives the same 27499 methods at the same depths
+  bound: 41 unresolved call(s) inside the 40 method(s) printed above (20809 across the whole closure) — the set is a lower bound; `path <one of them> BruteForceTest.testExceedMaxTemporaryLockouts` for the chain
+next: the nearest callers are at 1 hop(s): AbstractTestRealmKeycloakTest.updateUser testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/AbstractTestRealmKeycloakTest.java:61, AbstractUserRepresentation.setEnabled core/src/main/java/org/keycloak/representations/idm/AbstractUserRepresentation.java:163, BruteForceTest.expectPermanentlyDisabled testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:1256, BruteForceTest.expectTemporarilyDisabled testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:1231, BruteForceTest.loginInvalidPassword testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/forms/BruteForceTest.java:1374 — read those; farther hops matter only if these pass the change on (of 27499 in all)
+page 1 of 2 (~2000 tokens a page): 1 more page(s) left, 14 row(s): everything reached from BruteForceTest.t — ask for the next with --page 2, or all of it with --page all; --budget N changes the page size; narrow instead with --in <path>, --depth N or --tests-only
+        3.98 real         3.06 user         0.54 sys

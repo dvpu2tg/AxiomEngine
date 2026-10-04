@@ -1,0 +1,18 @@
+--- ExtensionLoader.java:ExtensionLoader.loadStepsFrom: 33 outgoing CALLS; containing 'ServiceUtil': 1
+    ExtensionLoader.loadStepsFrom#6 -> Method:core-deployment/io/quarkus/deployment/util/ServiceUtil.java:ServiceUtil.classesNamedIn#2 import-resolved
+--- ServiceUtil.java:ServiceUtil.classesNamedIn: 1 outgoing CALLS; containing 'classNamesNamedIn': 1
+    ServiceUtil.classesNamedIn#2 -> Method:core-deployment/io/quarkus/deployment/util/ServiceUtil.java:ServiceUtil.classNamesNamedIn#2 local-call
+--- ServiceUtil.java:ServiceUtil.classNamesNamedIn: 4 outgoing CALLS; containing 'consumeAsStreams': 1
+    ServiceUtil.classNamesNamedIn#2 -> Method:core-runtime/io/quarkus/runtime/util/ClassPathUtils.java:ClassPathUtils.consumeAsStreams#3 import-resolved
+--- ClassPathUtils.java:ClassPathUtils.consumeAsStreams: 2 outgoing CALLS; containing 'getResources': 0
+    (out) Method:core-runtime/io/quarkus/runtime/util/ClassPathUtils.java:ClassPathUtils.consumeAsStreams#3
+    (out) Method:core-runtime/io/quarkus/runtime/util/ClassPathUtils.java:ClassPathUtils.consumeStream#2
+--- QuarkusClassLoader.java:QuarkusClassLoader.getResources: 11 outgoing CALLS; containing 'ClassPathResourceIndex': 3
+    QuarkusClassLoader.getResources#2 -> Method:bootstrap-core/io/quarkus/bootstrap/classloading/ClassPathResourceIndex.java:ClassPathResourceIndex.getClassPathElements#1 import-resolved
+    QuarkusClassLoader.getResources#2 -> Method:bootstrap-core/io/quarkus/bootstrap/classloading/ClassPathResourceIndex.java:ClassPathResourceIndex.isBanned#1 import-resolved
+    QuarkusClassLoader.getResources#2 -> Method:bootstrap-core/io/quarkus/bootstrap/classloading/QuarkusClassLoader.java:QuarkusClassLoader.getClassPathResourceIndex#0 local-call
+--- ClassPathResourceIndex.java:ClassPathResourceIndex.getClassPathElements: 1 outgoing CALLS; containing 'getProvidedResources': 0
+    (out) Method:bootstrap-core/io/quarkus/bootstrap/classloading/ClassPathResourceIndex.java:ClassPathResourceIndex.getResourceKey#1
+closure from getProvidedResources: 62
+OpenContainerPathTree members: ['Method:app-model/io/quarkus/paths/OpenContainerPathTree.java:OpenContainerPathTree.getRootPath#0', 'Method:app-model/io/quarkus/paths/OpenContainerPathTree.java:OpenContainerPathTree.walk#1']
+ArchivePathTree members: ['Method:app-model/io/quarkus/paths/ArchivePathTree.java:ArchivePathTree.getRoots#0', 'Method:app-model/io/quarkus/paths/ArchivePathTree.java:ArchivePathTree.openFs#0', 'Method:app-model/io/quarkus/paths/ArchivePathTree.java:ArchivePathTree.walk#1', 'Method:app-model/io/quarkus/paths/ArchivePathTree.java:OpenArchivePathTree.ensureOpen#0', 'Method:app-model/io/quarkus/paths/ArchivePathTree.java:OpenArchivePathTree.getResourceNames#0', 'Method:app-model/io/quarkus/paths/ArchivePathTree.java:OpenArchivePathTree.readLock#0', 'Method:app-model/io/quarkus/paths/ArchivePathTree.java:OpenArchivePathTree.walk#1', 'Method:app-model/io/quarkus/paths/SharedArchivePathTree.java:CallerOpenPathTree.getResourceNames#0', 'Method:app-model/io/quarkus/paths/SharedArchivePathTree.java:CallerOpenPathTree.walk#1']

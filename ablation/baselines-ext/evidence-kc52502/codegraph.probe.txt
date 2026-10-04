@@ -1,0 +1,58 @@
+== START nodes matching ['::BruteForceTest::testExceedMaxTemporaryLockouts']: 1
+   org.keycloak.testsuite.forms::BruteForceTest::testExceedMaxTemporaryLockouts
+== CLOSURE over ['calls', 'instantiates'] from starts: 19 nodes
+  target 'WaitUtils' in closure: 0
+== PAIR edges 'BruteForceTest' -> 'WaitUtils': 25
+   calls org.keycloak.testsuite.forms::BruteForceTest::testGrantInvalidPassword -> org.keycloak.testsuite.util::WaitUtils::waitForBruteForceExecutors {"confidence":0.9,"resolvedBy":"import","refName":"WaitUtils.waitForBruteForceExecutors"}
+   calls org.keycloak.testsuite.forms::BruteForceTest::testGrantInvalidPassword -> org.keycloak.testsuite.util::WaitUtils::waitForBruteForceExecutors {"confidence":0.9,"resolvedBy":"import","refName":"WaitUtils.waitForBruteForceExecutors"}
+   calls org.keycloak.testsuite.forms::BruteForceTest::testGrantInvalidPassword -> org.keycloak.testsuite.util::WaitUtils::waitForBruteForceExecutors {"confidence":0.9,"resolvedBy":"import","refName":"WaitUtils.waitForBruteForceExecutors"}
+   calls org.keycloak.testsuite.forms::BruteForceTest::testGrantInvalidOtp -> org.keycloak.testsuite.util::WaitUtils::waitForBruteForceExecutors {"confidence":0.9,"resolvedBy":"import","refName":"WaitUtils.waitForBruteForceExecutors"}
+   calls org.keycloak.testsuite.forms::BruteForceTest::testGrantInvalidOtp -> org.keycloak.testsuite.util::WaitUtils::waitForBruteForceExecutors {"confidence":0.9,"resolvedBy":"import","refName":"WaitUtils.waitForBruteForceExecutors"}
+   calls org.keycloak.testsuite.forms::BruteForceTest::testGrantInvalidOtp -> org.keycloak.testsuite.util::WaitUtils::waitForBruteForceExecutors {"confidence":0.9,"resolvedBy":"import","refName":"WaitUtils.waitForBruteForceExecutors"}
+   calls org.keycloak.testsuite.forms::BruteForceTest::testGrantMissingOtp -> org.keycloak.testsuite.util::WaitUtils::waitForBruteForceExecutors {"confidence":0.9,"resolvedBy":"import","refName":"WaitUtils.waitForBruteForceExecutors"}
+   calls org.keycloak.testsuite.forms::BruteForceTest::testGrantMissingOtp -> org.keycloak.testsuite.util::WaitUtils::waitForBruteForceExecutors {"confidence":0.9,"resolvedBy":"import","refName":"WaitUtils.waitForBruteForceExecutors"}
+   calls org.keycloak.testsuite.forms::BruteForceTest::testGrantMissingOtp -> org.keycloak.testsuite.util::WaitUtils::waitForBruteForceExecutors {"confidence":0.9,"resolvedBy":"import","refName":"WaitUtils.waitForBruteForceExecutors"}
+   calls org.keycloak.testsuite.forms::BruteForceTest::testGrantPermamentOtpAbsolut -> org.keycloak.testsuite.util::WaitUtils::waitForBruteForceExecutors {"confidence":0.9,"resolvedBy":"import","refName":"WaitUtils.waitForBruteForceExecutors"}
+   calls org.keycloak.testsuite.forms::BruteForceTest::testGrantPermamentOtpAbsolut -> org.keycloak.testsuite.util::WaitUtils::waitForBruteForceExecutors {"confidence":0.9,"resolvedBy":"import","refName":"WaitUtils.waitForBruteForceExecutors"}
+   calls org.keycloak.testsuite.forms::BruteForceTest::testNoFailureResetForPermanentLockout -> org.keycloak.testsuite.util::WaitUtils::waitForBruteForceExecutors {"confidence":0.9,"resolvedBy":"import","refName":"WaitUtils.waitForBruteForceExecutors"}
+== PAIR edges 'BruteForceTest::testExceedMaxTemporaryLockouts' -> 'loginInvalidPassword': 4
+   calls org.keycloak.testsuite.forms::BruteForceTest::testExceedMaxTemporaryLockouts -> org.keycloak.testsuite.forms::BruteForceTest::loginInvalidPassword {"confidence":0.7,"resolvedBy":"exact-match","refName":"loginInvalidPassword"}
+   calls org.keycloak.testsuite.forms::BruteForceTest::testExceedMaxTemporaryLockouts -> org.keycloak.testsuite.forms::BruteForceTest::loginInvalidPassword {"confidence":0.7,"resolvedBy":"exact-match","refName":"loginInvalidPassword"}
+   calls org.keycloak.testsuite.forms::BruteForceTest::testExceedMaxTemporaryLockouts -> org.keycloak.testsuite.forms::BruteForceTest::loginInvalidPassword {"confidence":0.7,"resolvedBy":"exact-match","refName":"loginInvalidPassword"}
+   calls org.keycloak.testsuite.forms::BruteForceTest::testExceedMaxTemporaryLockouts -> org.keycloak.testsuite.forms::BruteForceTest::loginInvalidPassword {"confidence":0.7,"resolvedBy":"exact-match","refName":"loginInvalidPassword"}
+== GOLD cross-file edges into nodes of file '*testsuite/util/WaitUtils.java*' (44 nodes): 353
+   by kind: {'imports': 82, 'calls': 269, 'references': 2}
+   imports org.keycloak.testsuite.adapter.page [tests-base-main/org/keycloak/testsuite/adapter/page/EmployeeRoleMappingServlet.java] -> org.keycloak.testsuite.util::WaitUtils {"confidence":0.95,"resolvedBy":"import","refName":"org.keycloak.testsuite.util.WaitUtils"}
+   calls org.keycloak.testsuite.adapter.page::EmployeeRoleMappingServlet::setRolesToCheck [tests-base-main/org/keycloak/testsuite/adapter/page/EmployeeRoleMappingServlet.java] -> org.keycloak.testsuite.util::WaitUtils::waitUntilElement {"confidence":0.9,"resolvedBy":"import","refName":"WaitUtils.waitUntilElement"}
+   calls org.keycloak.testsuite.adapter.page::EmployeeRoleMappingServlet::checkRolesEndPoint [tests-base-main/org/keycloak/testsuite/adapter/page/EmployeeRoleMappingServlet.java] -> org.keycloak.testsuite.util::WaitUtils::waitUntilElement {"confidence":0.9,"resolvedBy":"import","refName":"WaitUtils.waitUntilElement"}
+   imports org.keycloak.testsuite.adapter.page [tests-base-main/org/keycloak/testsuite/adapter/page/MultiTenant1Saml.java] -> org.keycloak.testsuite.util::WaitUtils::pause {"confidence":0.7,"resolvedBy":"instance-method","refName":"org.keycloak.testsuite.util.WaitUtils.pause"}
+   calls org.keycloak.testsuite.adapter.page::MultiTenant1Saml::logout [tests-base-main/org/keycloak/testsuite/adapter/page/MultiTenant1Saml.java] -> org.keycloak.testsuite.util::WaitUtils::pause {"confidence":0.9,"resolvedBy":"import","refName":"pause"}
+   imports org.keycloak.testsuite.adapter.page [tests-base-main/org/keycloak/testsuite/adapter/page/MultiTenant2Saml.java] -> org.keycloak.testsuite.util::WaitUtils::pause {"confidence":0.7,"resolvedBy":"instance-method","refName":"org.keycloak.testsuite.util.WaitUtils.pause"}
+   calls org.keycloak.testsuite.adapter.page::MultiTenant2Saml::logout [tests-base-main/org/keycloak/testsuite/adapter/page/MultiTenant2Saml.java] -> org.keycloak.testsuite.util::WaitUtils::pause {"confidence":0.9,"resolvedBy":"import","refName":"pause"}
+   imports org.keycloak.testsuite.adapter.page [tests-base-main/org/keycloak/testsuite/adapter/page/SAMLServlet.java] -> org.keycloak.testsuite.util::WaitUtils {"confidence":0.95,"resolvedBy":"import","refName":"org.keycloak.testsuite.util.WaitUtils"}
+   imports org.keycloak.testsuite.adapter.page [tests-base-main/org/keycloak/testsuite/adapter/page/SAMLServlet.java] -> org.keycloak.testsuite.util::WaitUtils::waitForPageToLoad {"confidence":0.7,"resolvedBy":"instance-method","refName":"org.keycloak.testsuite.util.WaitUtils.waitForPageToLoad"}
+   calls org.keycloak.testsuite.adapter.page::SAMLServlet::logout [tests-base-main/org/keycloak/testsuite/adapter/page/SAMLServlet.java] -> org.keycloak.testsuite.util::WaitUtils::waitForPageToLoad {"confidence":0.9,"resolvedBy":"import","refName":"waitForPageToLoad"}
+   calls org.keycloak.testsuite.adapter.page::SAMLServlet::checkRolesEndPoint [tests-base-main/org/keycloak/testsuite/adapter/page/SAMLServlet.java] -> org.keycloak.testsuite.util::WaitUtils::waitForPageToLoad {"confidence":0.9,"resolvedBy":"import","refName":"waitForPageToLoad"}
+   calls org.keycloak.testsuite.adapter.page::SAMLServlet::setRolesToCheck [tests-base-main/org/keycloak/testsuite/adapter/page/SAMLServlet.java] -> org.keycloak.testsuite.util::WaitUtils::waitForPageToLoad {"confidence":0.9,"resolvedBy":"import","refName":"waitForPageToLoad"}
+   calls org.keycloak.testsuite.adapter.page::SAMLServlet::setRolesToCheck [tests-base-main/org/keycloak/testsuite/adapter/page/SAMLServlet.java] -> org.keycloak.testsuite.util::WaitUtils::waitUntilElement {"confidence":0.9,"resolvedBy":"import","refName":"WaitUtils.waitUntilElement"}
+   imports org.keycloak.testsuite.arquillian.containers [tests-base-main/org/keycloak/testsuite/arquillian/containers/KeycloakQuarkusServerDeployableContainer.java] -> org.keycloak.testsuite.util::WaitUtils {"confidence":0.95,"resolvedBy":"import","refName":"org.keycloak.testsuite.util.WaitUtils"}
+   calls org.keycloak.testsuite.arquillian.containers::KeycloakQuarkusServerDeployableContainer::destroyDescendantsOnWindows [tests-base-main/org/keycloak/testsuite/arquillian/containers/KeycloakQuarkusServerDeployableContainer.java] -> org.keycloak.testsuite.util::WaitUtils::pause {"confidence":0.9,"resolvedBy":"import","refName":"WaitUtils.pause"}
+== loginInvalidPassword nodes ==
+method:d9d29fdf8ab6b13d0d8d5df2beccdf86|org.keycloak.testsuite.forms::BruteForceTest::loginInvalidPassword|1391
+method:d790b238095e21c8a55ea0c5540e170f|org.keycloak.testsuite.forms::BruteForceTest::loginInvalidPassword|1395
+method:adb8bc5e8441ae794db9f3d4fff802cc|org.keycloak.testsuite.forms::BruteForceTest::loginInvalidPassword|1399
+== outgoing calls of each ==
+1391|calls|org.keycloak.testsuite.forms::BruteForceTest::loginInvalidPassword
+1395|calls|org.keycloak.testsuite.forms::BruteForceTest::loginInvalidPassword
+1399|calls|org.keycloak.testsuite.pages::LoginPage::login
+1399|calls|org.keycloak.testsuite.page::AbstractPage::assertCurrent
+1399|calls|org.keycloak.testsuite.pages::LoginPage::getInputError
+1399|calls|org.keycloak.testsuite.util::WaitUtils::waitForBruteForceExecutors
+1399|calls|org.keycloak.testsuite::AssertEvents::clear
+== which loginInvalidPassword node does the test call (target id + line)? ==
+method:d9d29fdf8ab6b13d0d8d5df2beccdf86|1391
+method:d9d29fdf8ab6b13d0d8d5df2beccdf86|1391
+method:d9d29fdf8ab6b13d0d8d5df2beccdf86|1391
+method:d9d29fdf8ab6b13d0d8d5df2beccdf86|1391
+1391|method:d9d29fdf8ab6b13d0d8d5df2beccdf86|1391
+1395|method:d790b238095e21c8a55ea0c5540e170f|1395

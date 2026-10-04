@@ -1,0 +1,60 @@
+diff --git a/core/deployment/src/main/java/io/quarkus/deployment/pkg/jar/UberJarBuilder.java b/core/deployment/src/main/java/io/quarkus/deployment/pkg/jar/UberJarBuilder.java
+index a9e5afc0..41ed76f2 100644
+--- a/core/deployment/src/main/java/io/quarkus/deployment/pkg/jar/UberJarBuilder.java
++++ b/core/deployment/src/main/java/io/quarkus/deployment/pkg/jar/UberJarBuilder.java
+@@ -147,6 +147,8 @@ public JarBuildItem build() throws IOException {
+ 
+     private void buildUberJar0(Path runnerJar) throws IOException {
+ 
++        // the entries are read lazily when the archive creator is closed, so the path trees must stay open until then
++        final List<OpenPathTree> openPathTrees = new ArrayList<>();
+         try (ArchiveCreator archiveCreator = new ParallelCommonsCompressArchiveCreator(runnerJar,
+                 packageConfig.jar().compress(), packageConfig.outputTimestamp().orElse(null),
+                 executorService)) {
+@@ -182,7 +184,7 @@ private void buildUberJar0(Path runnerJar) throws IOException {
+                     continue;
+                 }
+ 
+-                walkFileDependencyForDependency(archiveCreator, duplicateCatcher,
++                walkFileDependencyForDependency(archiveCreator, openPathTrees, duplicateCatcher,
+                         concatenatedEntries, allIgnoredEntriesPredicate, appDep,
+                         mergeResourcePaths);
+             }
+@@ -218,6 +220,14 @@ private void buildUberJar0(Path runnerJar) throws IOException {
+                 LOG.debug("Uber jar will be marked as multi-release jar");
+                 archiveCreator.makeMultiVersion();
+             }
++        } finally {
++            for (OpenPathTree pathTree : openPathTrees) {
++                try {
++                    pathTree.close();
++                } catch (IOException e) {
++                    LOG.debug("Failed to close path tree", e);
++                }
++            }
+         }
+ 
+         runnerJar.toFile().setReadable(true, false);
+@@ -237,16 +247,16 @@ private Predicate<String> getIgnoredEntriesPredicate() {
+         return path -> UBER_JAR_IGNORED_ENTRIES_PREDICATE.test(path) || ignoredEntries.contains(path);
+     }
+ 
+-    private void walkFileDependencyForDependency(ArchiveCreator archiveCreator,
++    private void walkFileDependencyForDependency(ArchiveCreator archiveCreator, List<OpenPathTree> openPathTrees,
+             Map<String, Set<Dependency>> duplicateCatcher, Map<String, List<byte[]>> concatenatedEntries,
+             Predicate<String> ignoredEntriesPredicate, ResolvedDependency appDep,
+             Set<String> mergeResourcePaths) throws IOException {
+ 
+-        // The reason opening and closing a path tree right away works, unlike creating and closing a ZipFileSystem,
+-        // is that we are actually using a SharedOpenArchivePathTree here, which simply increments and decrements
+-        // the user count of the cached shared open path tree instance. This open path tree instance will remain open
+-        // until the last user called close() on it, which will be the Quarkus classloaders closing.
+-        try (OpenPathTree pathTree = appDep.getContentTree().open()) {
++        // The path tree is kept open until the archive has been written, since the file contents are read lazily
++        // when the archive creator is closed.
++        OpenPathTree pathTree = appDep.getContentTree().open();
++        openPathTrees.add(pathTree);
++        try {
+             pathTree.walkRaw(visit -> {
+                 try {
+                     final String relativePath = visit.getResourceName();

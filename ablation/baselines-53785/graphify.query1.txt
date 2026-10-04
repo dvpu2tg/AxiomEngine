@@ -1,0 +1,13 @@
+nodes 8450 links 26427 Counter({'imports': 7468, 'references': 7315, 'method': 5318, 'calls': 4322, 'contains': 1229, 'inherits': 299, 'case_of': 299, 'implements': 177})
+start: ['core_deployment_io_quarkus_deployment_extensionloader_extensionloader_loadstepsfrom', 'core_deployment_io_quarkus_deployment_extensionloader_extensionloader_loadstepsfromclass']
+closure size: 58
+pathtree-ish in closure: []
+--- outgoing of app_model_io_quarkus_paths_pathtree_pathtree_getresourcenames
+    ('calls', 'app_model_io_quarkus_paths_pathtree_pathtree_walk', 'EXTRACTED')
+--- outgoing of bootstrap_core_io_quarkus_bootstrap_classloading_pathtreeclasspathelement_pathtreeclasspathelement_getprovidedresources
+    ('references', 'bootstrap_core_io_quarkus_bootstrap_classloading_pathtreeclasspathelement_java_override', 'EXTRACTED')
+--- outgoing of app_model_io_quarkus_paths_pathtree_pathtree_walk
+    ('references', 'app_model_io_quarkus_paths_pathvisitor_pathvisitor', 'EXTRACTED')
+(b) inherits app-model/io/quarkus/paths/ArchivePathTree.java -> opencontainerpathtree EXTRACTED
+(b) inherits app-model/io/quarkus/paths/DirectoryPathTree.java -> opencontainerpathtree EXTRACTED
+(b) count: 2

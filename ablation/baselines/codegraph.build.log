@@ -1,0 +1,18 @@
+┌  Initializing CodeGraph
+│
+◆  Initialized in /private/tmp/baseline-cmp/work/cg
+│
+Scanning files...
+Parsing code...
+Resolving refs...
+Linking dynamic dispatch...
+│
+◆  Indexed 2,472 files
+│
+●  62,150 nodes, 158,359 edges in 3.1s
+│
+└  Done
+
+real 14.33
+user 20.06
+sys 6.92

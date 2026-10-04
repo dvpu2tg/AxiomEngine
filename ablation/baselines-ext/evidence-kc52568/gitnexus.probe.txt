@@ -1,0 +1,35 @@
+== START nodes matching ['TokenEndpoint.java:TokenEndpoint.']: 28
+   Method:services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:TokenEndpoint.processGrantRequest#0
+   Method:services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:TokenEndpoint.introspect#0
+   Method:services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:TokenEndpoint.preflight#0
+   Method:services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:TokenEndpoint.checkSsl#0
+   Method:services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:TokenEndpoint.checkRealm#0
+   Method:services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:TokenEndpoint.checkClient#0
+   Method:services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:TokenEndpoint.checkGrantType#0
+   Method:services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:TokenEndpoint.checkParameterDuplicated#0
+== CLOSURE over ['CALLS'] from starts: 5888 nodes
+  target 'ResourceIndicatorsPostProcessor' in closure: 0
+  target 'TokenInterceptorException' in closure: 0
+== PAIR edges 'TokenPostProcessor.java:TokenPostProcessor.process' -> 'ResourceIndicatorsPostProcessor': 0
+== PAIR edges 'TokenEndpoint.java' -> 'TokenInterceptorException': 1
+   IMPORTS File:services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java -> File:services/org/keycloak/protocol/oidc/token/TokenInterceptorException.java java-scope: import
+== PAIR edges 'ResourceIndicatorsPostProcessor.java' -> 'TokenInterceptorException': 2
+   IMPORTS File:services/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java -> File:services/org/keycloak/protocol/oidc/token/TokenInterceptorException.java java-scope: import
+   CALLS Method:services/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java:ResourceIndicatorsPostProcessor.process#1 -> Constructor:services/org/keycloak/protocol/oidc/token/TokenInterceptorException.java:TokenInterceptorException.TokenInterceptorException#2 import-resolved
+== PAIR edges 'invokeTokenPostProcessors' -> 'process': 0
+== GOLD cross-file edges into nodes of file '*endpoints/TokenEndpoint.java*' (35 nodes): 5
+   by kind: {'IMPORTS': 3, 'CALLS': 1, 'CONTAINS': 1}
+   IMPORTS File:services/org/keycloak/protocol/oidc/OIDCLoginProtocolService.java [services/org/keycloak/protocol/oidc/OIDCLoginProtocolService.java] -> File:services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java java-scope: import
+   IMPORTS File:services/org/keycloak/protocol/oidc/OIDCWellKnownProvider.java [services/org/keycloak/protocol/oidc/OIDCWellKnownProvider.java] -> File:services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java java-scope: import
+   IMPORTS File:services/org/keycloak/protocol/oidc/tokenexchange/V1TokenExchangeProvider.java [services/org/keycloak/protocol/oidc/tokenexchange/V1TokenExchangeProvider.java] -> File:services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java java-scope: import
+   CALLS Method:services/org/keycloak/protocol/oidc/OIDCLoginProtocolService.java:OIDCLoginProtocolService.token#0 [services/org/keycloak/protocol/oidc/OIDCLoginProtocolService.java] -> Constructor:services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:TokenEndpoint.TokenEndpoint#3 import-resolved
+   CONTAINS Folder:services/org/keycloak/protocol/oidc/endpoints [services/org/keycloak/protocol/oidc/endpoints] -> File:services/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java 
+--- outgoing of invokeTokenPostProcessors (all types):
+   CALLS -> Method:server-spi/org/keycloak/models/KeycloakSession.java:KeycloakSession.getKeycloakSessionFactory#0 import-resolved
+   CALLS -> Method:services/org/keycloak/services/DefaultKeycloakSession.java:DefaultKeycloakSession.getKeycloakSessionFactory#0 interface-dispatch
+   CALLS -> Method:server-spi/org/keycloak/models/KeycloakSessionFactory.java:KeycloakSessionFactory.getProviderFactoriesStream#1 import-resolved
+   CALLS -> Method:services/org/keycloak/services/DefaultKeycloakSessionFactory.java:DefaultKeycloakSessionFactory.getProviderFactoriesStream#1 interface-dispatch
+   CALLS -> Record:services/org/keycloak/protocol/oidc/token/TokenPostProcessorContext.java:TokenPostProcessorContext import-resolved
+   MEMBER_OF -> comm_250 leiden-algorithm
+--- incoming CALLS to ResourceIndicatorsPostProcessor.process:
+   HAS_METHOD Class:services/org/keycloak/protocol/oidc/resourceindicators/ResourceIndicatorsPostProcessor.java:ResourceIndicatorsPostProcessor None

@@ -1,0 +1,30 @@
+== ProviderFactory.create node ==
+interface:90e200dd0c5a0e9a803f17551e7081c2|interface|org.keycloak.provider::ProviderFactory
+method:82dd601f23b0f6e6f223925a80376c32|method|org.keycloak.provider::ProviderFactory::create
+method:2071a76755c313c962e4c4bc278c42fc|method|org.keycloak.provider::ProviderFactory::init
+method:cd552f1fbec9772ebf6c0721e85f5737|method|org.keycloak.provider::ProviderFactory::postInit
+method:0858f12cf7ad62c23e78d719b10e40e8|method|org.keycloak.provider::ProviderFactory::close
+method:7ed11c8739c76024a56a6e413877e560|method|org.keycloak.provider::ProviderFactory::getId
+method:a542c07b6a5155625c8b183d12ac70b2|method|org.keycloak.provider::ProviderFactory::order
+method:9a9d4ef927ba75c9ab7c9cf2925e2ac4|method|org.keycloak.provider::ProviderFactory::getConfigMetadata
+method:4560be89c433c512797c981fb1b679b0|method|org.keycloak.provider::ProviderFactory::dependsOn
+
+== (a1) outgoing edges of DefaultKeycloakSession.getOrCreateProvider ==
+calls|212|method|org.keycloak.authentication.authenticators.client::ClientAssertionState::Supplier::get
+calls|214|method|org.keycloak.provider::ProviderFactory::create
+references|205|class|org.keycloak.authentication.authenticators.client::ClientAssertionState::Supplier
+references|205|interface|org.keycloak.provider::ProviderFactory
+references|214|method|org.keycloak.services::DefaultKeycloakSession::DefaultKeycloakSession
+
+== (a2) any edge DefaultKeycloakSession* -> OID4VC factory or processor ==
+
+== (a3) incoming edges to OID4VC factory create ==
+org.keycloak.protocol.oidc.rar::AuthorizationDetailsProcessorFactory::create|server-spi-private/org/keycloak/protocol/oidc/rar/AuthorizationDetailsProcessorFactory.java|calls
+org.keycloak.protocol.oid4vc.issuance::OID4VCAuthorizationDetailsProcessorFactory|services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java|contains
+
+== (b) edges into OID4VCAuthorizationDetailsProcessor nodes from OTHER files ==
+services/org/keycloak/protocol/oid4vc/issuance/credentialoffer/DefaultCredentialOfferProvider.java|org.keycloak.protocol.oid4vc.issuance.credentialoffer::DefaultCredentialOfferProvider::createCredentialOffer|instantiates|org.keycloak.protocol.oid4vc.issuance::OID4VCAuthorizationDetailsProcessor
+services/org/keycloak/protocol/oid4vc/issuance/credentialoffer/DefaultCredentialOfferProvider.java|org.keycloak.protocol.oid4vc.issuance.credentialoffer::DefaultCredentialOfferProvider::createCredentialOffer|calls|org.keycloak.protocol.oid4vc.issuance::OID4VCAuthorizationDetailsProcessor::generateResponseAuthorizationDetails
+services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java|org.keycloak.protocol.oid4vc.issuance::OID4VCAuthorizationDetailsProcessorFactory::create|instantiates|org.keycloak.protocol.oid4vc.issuance::OID4VCAuthorizationDetailsProcessor
+services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java|org.keycloak.protocol.oid4vc.issuance::OID4VCAuthorizationDetailsProcessorFactory::create|references|org.keycloak.protocol.oid4vc.issuance::OID4VCAuthorizationDetailsProcessor
+services/org/keycloak/protocol/oid4vc/issuance/credentialoffer/DefaultCredentialOfferProvider.java|org.keycloak.protocol.oid4vc.issuance.credentialoffer|imports|org.keycloak.protocol.oid4vc.issuance::OID4VCAuthorizationDetailsProcessor

@@ -1,0 +1,21 @@
+diff --git a/services/src/main/java/org/keycloak/connections/httpclient/ProxyMappings.java b/services/src/main/java/org/keycloak/connections/httpclient/ProxyMappings.java
+index 3d900e71..49ea2a8e 100644
+--- a/services/src/main/java/org/keycloak/connections/httpclient/ProxyMappings.java
++++ b/services/src/main/java/org/keycloak/connections/httpclient/ProxyMappings.java
+@@ -114,7 +114,15 @@ public class ProxyMappings {
+     if (!isBlank(httpProxy)) {
+       // noProxy must be first as it's more specific than .*
+       if (!isBlank(noProxy)) {
+-        for (String host : noProxy.split(NO_PROXY_DELIMITER)) {
++        for (String entry : noProxy.split(NO_PROXY_DELIMITER)) {
++          String host = entry.trim();
++          // a leading dot is equivalent to the bare domain
++          while (host.startsWith(".")) {
++            host = host.substring(1);
++          }
++          if (host.isEmpty()) {
++            continue;
++          }
+           // do not support regex in no_proxy
+           proxyMappings.add(new ProxyMapping(Pattern.compile("(?:.+\\.)?" + Pattern.quote(host)), null, null));
+         }

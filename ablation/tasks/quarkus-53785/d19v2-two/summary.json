@@ -1,0 +1,42 @@
+{
+ "instance": "quarkus-53785",
+ "arm": "two",
+ "exit": 0,
+ "wall_s": 221,
+ "turns": 14,
+ "cost_usd": 0.24586180000000002,
+ "tokens_in": 18,
+ "tokens_out": 2943,
+ "cache_read": 261199,
+ "cache_create": 41039,
+ "ctx_ingested": 51863,
+ "first_edit_turn": null,
+ "ctx_before_first_edit": null,
+ "explore_calls": 5,
+ "graph_calls": 1,
+ "edit_calls": 1,
+ "run_calls": 2,
+ "files_read": 2,
+ "gold_files": 3,
+ "gold_files_read": 0,
+ "wasted_reads": 1,
+ "files_read_list": [
+  "core/deployment/src/main/java/io/quarkus/deployment/pkg/jar/ParallelCommonsCompressArchiveCreator.java",
+  "core/deployment/src/main/java/io/quarkus/deployment/pkg/jar/UberJarBuilder.java"
+ ],
+ "patch_files": [
+  "core/deployment/src/main/java/io/quarkus/deployment/pkg/jar/UberJarBuilder.java"
+ ],
+ "patch_bytes": 3570,
+ "gold_hit": 0,
+ "denials": {},
+ "tools": {
+  "Bash": 5,
+  "Read": 4
+ },
+ "old_cli_calls": 0,
+ "is_error": false,
+ "subtype": "success",
+ "build_seconds": 24,
+ "resolved": null
+}

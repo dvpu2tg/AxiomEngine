@@ -1,0 +1,44 @@
+{
+ "instance": "quarkus-51130",
+ "arm": "two",
+ "exit": 0,
+ "wall_s": 690,
+ "turns": 18,
+ "cost_usd": 0.1993862,
+ "tokens_in": 8,
+ "tokens_out": 1354,
+ "cache_read": 133642,
+ "cache_create": 7599,
+ "ctx_ingested": 30493,
+ "first_edit_turn": 17,
+ "ctx_before_first_edit": 25789,
+ "explore_calls": 5,
+ "graph_calls": 3,
+ "edit_calls": 1,
+ "run_calls": 1,
+ "files_read": 2,
+ "gold_files": 1,
+ "gold_files_read": 1,
+ "wasted_reads": 1,
+ "files_read_list": [
+  "extensions/hibernate-orm/deployment/src/main/java/io/quarkus/hibernate/orm/deployment/HibernateOrmProcessor.java",
+  "extensions/hibernate-orm/runtime-dev/src/main/java/io/quarkus/hibernate/orm/dev/HibernateOrmDevIntegrator.java"
+ ],
+ "patch_files": [
+  "extensions/hibernate-orm/deployment/src/main/java/io/quarkus/hibernate/orm/deployment/HibernateOrmProcessor.java"
+ ],
+ "patch_bytes": 1318,
+ "gold_hit": 1,
+ "denials": {},
+ "tools": {
+  "Bash": 5,
+  "Read": 4,
+  "Monitor": 2,
+  "Edit": 1
+ },
+ "old_cli_calls": 0,
+ "is_error": false,
+ "subtype": "success",
+ "build_seconds": 1014,
+ "resolved": null
+}

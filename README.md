@@ -37,6 +37,13 @@ tracked files, because of their size:
 The release also carries the run manifest, provenance, results, checksums, and
 logs under their original names.
 
+## `ablation/`
+
+Evidence for the ablation study: seven multi-hop issue-fix tasks with full
+agent transcripts per delivery arm, the engine's graph-query outputs behind
+each injected brief, baseline builders' query outputs on the same chains, and
+the blind brief generator. See `ablation/README.md` for the layout.
+
 ## Environment
 
 Results in the paper were produced with OpenJDK 24.0.2, Node v25.2.1,

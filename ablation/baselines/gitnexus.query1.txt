@@ -1,0 +1,31 @@
+### MATCH (n) WHERE n.id CONTAINS 'getOrCreateProvider' RETURN n.id LIMIT 20
+{"n.id":"Method:services/org/keycloak/services/DefaultKeycloakSession.java:DefaultKeycloakSession.getOrCreateProvider#2"}
+### MATCH (n) WHERE n.id CONTAINS 'OID4VCAuthorizationDetailsProcessor' RETURN n.id LIMIT 40
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java:OID4VCAuthorizationDetailsProcessorFactory.create#1"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java:OID4VCAuthorizationDetailsProcessorFactory.init#1"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java:OID4VCAuthorizationDetailsProcessorFactory.getId#0"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java:OID4VCAuthorizationDetailsProcessorFactory.order#0"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.isSupported#0"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.getSupportedType#0"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.getSupportedResponseJavaType#0"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.process#3"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.validateAuthorizationDetail#1"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.sanitizeBeforeSendingTokenResponse#1"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.getInvalidRequestException#1"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.validateClaims#2"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.buildAuthorizationDetailResponse#2"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.handleMissingAuthorizationDetails#2"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.processStoredAuthorizationDetails#3"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.afterAuthorizationDetailsProcessed#3"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.close#0"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.generateResponseAuthorizationDetails#2"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.createIssuedVerifiableCredential#3"}
+{"n.id":"Method:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.getCredentialOfferState#1"}
+{"n.id":"Property:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.logger"}
+{"n.id":"Property:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.session"}
+{"n.id":"Property:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java:OID4VCAuthorizationDetailsProcessorFactory.PROVIDER_ID"}
+{"n.id":"File:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java"}
+{"n.id":"File:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java"}
+{"n.id":"Constructor:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor.OID4VCAuthorizationDetailsProcessor#1"}
+{"n.id":"Class:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java:OID4VCAuthorizationDetailsProcessor"}
+{"n.id":"Class:services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java:OID4VCAuthorizationDetailsProcessorFactory"}

@@ -1,0 +1,2 @@
+closure size over calls from getOrCreateProvider: 2
+oid4vc nodes in closure: []

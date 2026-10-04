@@ -1,0 +1,15 @@
+diff --git a/scim/model/src/main/java/org/keycloak/scim/model/user/UserResourceTypeProvider.java b/scim/model/src/main/java/org/keycloak/scim/model/user/UserResourceTypeProvider.java
+index 1dbd7c4a..6c44a101 100644
+--- a/scim/model/src/main/java/org/keycloak/scim/model/user/UserResourceTypeProvider.java
++++ b/scim/model/src/main/java/org/keycloak/scim/model/user/UserResourceTypeProvider.java
+@@ -73,8 +73,8 @@ public class UserResourceTypeProvider extends AbstractScimResourceTypeProvider<U
+             throw new ModelValidationException(realm.isRegistrationEmailAsUsername() ? "email is required" : "username is required");
+         }
+ 
+-        UserProfile profile = provider.create(UserProfileContext.SCIM, Map.of(UserModel.USERNAME, username));
+-        UserModel model = profile.create(false);
++        // SCIM only reads from local storage, so users are always created locally and never in a federation provider
++        UserModel model = UserStoragePrivateUtil.userLocalStorage(session).addUser(realm, username);
+         UserModelAttributeRecorder recorder = new UserModelAttributeRecorder(model, new HashMap<>());
+ 
+         populate(recorder, resource);

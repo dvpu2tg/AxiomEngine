@@ -1,0 +1,8 @@
+candidate targets from the text (5 shown, best first — where it was written, how specific it is, how central):
+   100  OID4VCIssuerEndpoint.requestCredential   [method]   — `requestCredential` in inline code
+   100  OID4VCIssuerEndpoint.validateRequestEncryption   [method]   — `validateRequestEncryption` in inline code
+   100  getAuthResult (3 declarations)   [method]   — `getAuthResult` in inline code
+   100  OID4VCIssuerEndpoint.decryptCredentialRequest   [method]   — `decryptCredentialRequest` in inline code
+   100  verifyAndDecodeJwe (6 declarations)   [method]   — `verifyAndDecodeJwe` in inline code
+
+(run the impact of the best one with --top 1, or of the best few as one change set with --top N)

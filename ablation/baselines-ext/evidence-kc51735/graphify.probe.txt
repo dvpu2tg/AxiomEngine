@@ -1,0 +1,23 @@
+== START nodes matching ['_userprofile_userprofile_', '_userstorageprivateutil_userstorageprivateutil_']: 9
+   server_spi_private_org_keycloak_userprofile_userprofile_userprofile
+   server_spi_private_org_keycloak_userprofile_userprofile_userprofile_validate
+   server_spi_private_org_keycloak_userprofile_userprofile_userprofile_create
+   server_spi_private_org_keycloak_userprofile_userprofile_userprofile_update
+   server_spi_private_org_keycloak_userprofile_userprofile_userprofile_getattributes
+   server_spi_private_org_keycloak_userprofile_userprofile_userprofile_torepresentation
+   storage_private_org_keycloak_storage_userstorageprivateutil_userstorageprivateutil_userlocalstorage
+   storage_private_org_keycloak_storage_userstorageprivateutil_userstorageprivateutil_runfullsync
+== CLOSURE over ['calls'] from starts: 29 nodes
+  target 'usermapstorage' in closure: 0
+== PAIR edges 'userregistrationprovider' -> 'usermapstorage': 0
+== PAIR edges 'userprovider_userprovider_adduser' -> '': 2
+   references server_spi_org_keycloak_models_userprovider_userprovider_adduser -> server_spi_org_keycloak_models_realmmodel_realmmodel EXTRACTED
+   references server_spi_org_keycloak_models_userprovider_userprovider_adduser -> server_spi_org_keycloak_models_usermodel_usermodel EXTRACTED
+== PAIR edges 'componentfactory' -> 'usermapstoragefactory': 0
+== PAIR edges 'userlookupprovider' -> 'usermapstorage': 0
+== GOLD cross-file edges into nodes of file '*federation/UserMapStorage.java*' (64 nodes): 4
+   by kind: {'references': 4}
+   references tests_custom_providers_org_keycloak_tests_providers_federation_usermapstoragefactory_usermapstoragefactory [tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorageFactory.java] -> tests_custom_providers_org_keycloak_tests_providers_federation_usermapstorage_usermapstorage EXTRACTED
+   references tests_custom_providers_org_keycloak_tests_providers_federation_usermapstoragefactory_usermapstoragefactory_create [tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorageFactory.java] -> tests_custom_providers_org_keycloak_tests_providers_federation_usermapstorage_usermapstorage EXTRACTED
+   references testsuite_providers_org_keycloak_testsuite_federation_usermapstoragefactory_usermapstoragefactory [testsuite-providers/org/keycloak/testsuite/federation/UserMapStorageFactory.java] -> testsuite_providers_org_keycloak_testsuite_federation_usermapstorage_usermapstorage EXTRACTED
+   references testsuite_providers_org_keycloak_testsuite_federation_usermapstoragefactory_usermapstoragefactory_create [testsuite-providers/org/keycloak/testsuite/federation/UserMapStorageFactory.java] -> testsuite_providers_org_keycloak_testsuite_federation_usermapstorage_usermapstorage EXTRACTED

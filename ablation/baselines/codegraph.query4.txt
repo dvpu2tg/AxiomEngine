@@ -1,0 +1,5 @@
+== path check: BFS over calls+instantiates from getOrCreateProvider (depth<=6), does it reach OID4VC factory create or Processor? ==
+(empty = unreachable within 6 call hops)
+
+== count of reachable nodes at depth<=6 ==
+24|0

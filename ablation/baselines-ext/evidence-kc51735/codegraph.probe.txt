@@ -1,0 +1,55 @@
+== START nodes matching ['::UserProfile::', '::UserStoragePrivateUtil::']: 12
+   org.keycloak.userprofile::UserProfile::validate
+   org.keycloak.userprofile::UserProfile::create
+   org.keycloak.userprofile::UserProfile::create
+   org.keycloak.userprofile::UserProfile::update
+   org.keycloak.userprofile::UserProfile::update
+   org.keycloak.userprofile::UserProfile::getAttributes
+   org.keycloak.userprofile::UserProfile::toRepresentation
+   org.keycloak.userprofile::UserProfile::toRepresentation
+== CLOSURE over ['calls', 'instantiates'] from starts: 1401 nodes
+  target 'UserMapStorage' in closure: 0
+== PAIR edges 'UserRegistrationProvider' -> 'UserMapStorage': 4
+   calls org.keycloak.storage.user::UserRegistrationProvider::addUser -> org.keycloak.tests.providers.federation::UserMapStorage::addUser {"synthesizedBy":"interface-impl","via":"addUser","registeredAt":"tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:220"}
+   calls org.keycloak.storage.user::UserRegistrationProvider::removeUser -> org.keycloak.tests.providers.federation::UserMapStorage::removeUser {"synthesizedBy":"interface-impl","via":"removeUser","registeredAt":"tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:230"}
+   calls org.keycloak.storage.user::UserRegistrationProvider::addUser -> org.keycloak.testsuite.federation::UserMapStorage::addUser {"synthesizedBy":"interface-impl","via":"addUser","registeredAt":"testsuite-providers/org/keycloak/testsuite/federation/UserMapStorage.java:220"}
+   calls org.keycloak.storage.user::UserRegistrationProvider::removeUser -> org.keycloak.testsuite.federation::UserMapStorage::removeUser {"synthesizedBy":"interface-impl","via":"removeUser","registeredAt":"testsuite-providers/org/keycloak/testsuite/federation/UserMapStorage.java:230"}
+== PAIR edges 'UserProvider' -> 'UserMapStorage': 0
+== PAIR edges 'ComponentFactory' -> 'UserMapStorageFactory': 0
+== PAIR edges 'UserLookupProvider' -> 'UserMapStorage': 6
+   calls org.keycloak.storage.user::UserLookupProvider::getUserById -> org.keycloak.tests.providers.federation::UserMapStorage::getUserById {"synthesizedBy":"interface-impl","via":"getUserById","registeredAt":"tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:98"}
+   calls org.keycloak.storage.user::UserLookupProvider::getUserByUsername -> org.keycloak.tests.providers.federation::UserMapStorage::getUserByUsername {"synthesizedBy":"interface-impl","via":"getUserByUsername","registeredAt":"tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:206"}
+   calls org.keycloak.storage.user::UserLookupProvider::getUserByEmail -> org.keycloak.tests.providers.federation::UserMapStorage::getUserByEmail {"synthesizedBy":"interface-impl","via":"getUserByEmail","registeredAt":"tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:215"}
+   calls org.keycloak.storage.user::UserLookupProvider::getUserById -> org.keycloak.testsuite.federation::UserMapStorage::getUserById {"synthesizedBy":"interface-impl","via":"getUserById","registeredAt":"testsuite-providers/org/keycloak/testsuite/federation/UserMapStorage.java:98"}
+   calls org.keycloak.storage.user::UserLookupProvider::getUserByUsername -> org.keycloak.testsuite.federation::UserMapStorage::getUserByUsername {"synthesizedBy":"interface-impl","via":"getUserByUsername","registeredAt":"testsuite-providers/org/keycloak/testsuite/federation/UserMapStorage.java:206"}
+   calls org.keycloak.storage.user::UserLookupProvider::getUserByEmail -> org.keycloak.testsuite.federation::UserMapStorage::getUserByEmail {"synthesizedBy":"interface-impl","via":"getUserByEmail","registeredAt":"testsuite-providers/org/keycloak/testsuite/federation/UserMapStorage.java:215"}
+== GOLD cross-file edges into nodes of file '*federation/UserMapStorage.java*' (178 nodes): 28
+   by kind: {'references': 2, 'instantiates': 2, 'calls': 24}
+   references org.keycloak.tests.providers.federation::UserMapStorageFactory::create [tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorageFactory.java] -> org.keycloak.tests.providers.federation::UserMapStorage {"confidence":0.7,"resolvedBy":"exact-match","refName":"UserMapStorage"}
+   instantiates org.keycloak.tests.providers.federation::UserMapStorageFactory::create [tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorageFactory.java] -> org.keycloak.tests.providers.federation::UserMapStorage {"confidence":0.7,"resolvedBy":"exact-match","refName":"UserMapStorage"}
+   references org.keycloak.testsuite.federation::UserMapStorageFactory::create [testsuite-providers/org/keycloak/testsuite/federation/UserMapStorageFactory.java] -> org.keycloak.testsuite.federation::UserMapStorage {"confidence":0.7,"resolvedBy":"exact-match","refName":"UserMapStorage"}
+   instantiates org.keycloak.testsuite.federation::UserMapStorageFactory::create [testsuite-providers/org/keycloak/testsuite/federation/UserMapStorageFactory.java] -> org.keycloak.testsuite.federation::UserMapStorage {"confidence":0.7,"resolvedBy":"exact-match","refName":"UserMapStorage"}
+   calls org.keycloak.storage.user::UserLookupProvider::getUserById [server-spi/org/keycloak/storage/user/UserLookupProvider.java] -> org.keycloak.tests.providers.federation::UserMapStorage::getUserById {"synthesizedBy":"interface-impl","via":"getUserById","registeredAt":"tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:98"}
+   calls org.keycloak.storage.user::UserLookupProvider::getUserByUsername [server-spi/org/keycloak/storage/user/UserLookupProvider.java] -> org.keycloak.tests.providers.federation::UserMapStorage::getUserByUsername {"synthesizedBy":"interface-impl","via":"getUserByUsername","registeredAt":"tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:206"}
+   calls org.keycloak.storage.user::UserLookupProvider::getUserByEmail [server-spi/org/keycloak/storage/user/UserLookupProvider.java] -> org.keycloak.tests.providers.federation::UserMapStorage::getUserByEmail {"synthesizedBy":"interface-impl","via":"getUserByEmail","registeredAt":"tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:215"}
+   calls org.keycloak.storage.user::UserRegistrationProvider::addUser [server-spi/org/keycloak/storage/user/UserRegistrationProvider.java] -> org.keycloak.tests.providers.federation::UserMapStorage::addUser {"synthesizedBy":"interface-impl","via":"addUser","registeredAt":"tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:220"}
+   calls org.keycloak.storage.user::UserRegistrationProvider::removeUser [server-spi/org/keycloak/storage/user/UserRegistrationProvider.java] -> org.keycloak.tests.providers.federation::UserMapStorage::removeUser {"synthesizedBy":"interface-impl","via":"removeUser","registeredAt":"tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:230"}
+   calls org.keycloak.credential::CredentialInputUpdater::supportsCredentialType [server-spi/org/keycloak/credential/CredentialInputUpdater.java] -> org.keycloak.tests.providers.federation::UserMapStorage::supportsCredentialType {"synthesizedBy":"interface-impl","via":"supportsCredentialType","registeredAt":"tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:153"}
+   calls org.keycloak.credential::CredentialInputUpdater::updateCredential [server-spi/org/keycloak/credential/CredentialInputUpdater.java] -> org.keycloak.tests.providers.federation::UserMapStorage::updateCredential {"synthesizedBy":"interface-impl","via":"updateCredential","registeredAt":"tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:158"}
+   calls org.keycloak.credential::CredentialInputUpdater::disableCredentialType [server-spi/org/keycloak/credential/CredentialInputUpdater.java] -> org.keycloak.tests.providers.federation::UserMapStorage::disableCredentialType {"synthesizedBy":"interface-impl","via":"disableCredentialType","registeredAt":"tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:175"}
+   calls org.keycloak.credential::CredentialInputUpdater::getDisableableCredentialTypesStream [server-spi/org/keycloak/credential/CredentialInputUpdater.java] -> org.keycloak.tests.providers.federation::UserMapStorage::getDisableableCredentialTypesStream {"synthesizedBy":"interface-impl","via":"getDisableableCredentialTypesStream","registeredAt":"tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:180"}
+   calls org.keycloak.credential::CredentialInputValidator::supportsCredentialType [server-spi/org/keycloak/credential/CredentialInputValidator.java] -> org.keycloak.tests.providers.federation::UserMapStorage::supportsCredentialType {"synthesizedBy":"interface-impl","via":"supportsCredentialType","registeredAt":"tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:153"}
+   calls org.keycloak.credential::CredentialInputValidator::isConfiguredFor [server-spi/org/keycloak/credential/CredentialInputValidator.java] -> org.keycloak.tests.providers.federation::UserMapStorage::isConfiguredFor {"synthesizedBy":"interface-impl","via":"isConfiguredFor","registeredAt":"tests-custom-providers/org/keycloak/tests/providers/federation/UserMapStorage.java:185"}
+== closure membership (UserProvider::addUser / UserRegistrationProvider::addUser / DefaultUserProfile) ==
+org.keycloak.component::ComponentFactory::create
+org.keycloak.provider::ProviderFactory::create
+org.keycloak.userprofile::DefaultUserProfile::create
+org.keycloak.userprofile::DefaultUserProfile::create
+org.keycloak.userprofile::DefaultUserProfile::createUserRepresentation
+org.keycloak.services::DefaultKeycloakSession::getOrCreateProvider
+== outgoing of UserProvider::addUser (models) ==
+references|org.keycloak.models::UserModel
+references|org.keycloak.models::RealmModel
+calls|org.keycloak.storage::UserStorageManager::addUser
+calls|org.keycloak.storage::UserStorageManager::addUser
+== incoming calls of UserMapStorageFactory::create ==

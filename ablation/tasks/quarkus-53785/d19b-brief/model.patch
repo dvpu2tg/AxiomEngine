@@ -1,0 +1,78 @@
+diff --git a/core/deployment/src/main/java/io/quarkus/deployment/pkg/jar/UberJarBuilder.java b/core/deployment/src/main/java/io/quarkus/deployment/pkg/jar/UberJarBuilder.java
+index a9e5afc0..68fd4766 100644
+--- a/core/deployment/src/main/java/io/quarkus/deployment/pkg/jar/UberJarBuilder.java
++++ b/core/deployment/src/main/java/io/quarkus/deployment/pkg/jar/UberJarBuilder.java
+@@ -2,6 +2,7 @@
+ 
+ import static io.quarkus.deployment.pkg.PackageConfig.JarConfig.JarType.UBER_JAR;
+ 
++import java.io.Closeable;
+ import java.io.IOException;
+ import java.io.UncheckedIOException;
+ import java.nio.file.Files;
+@@ -147,9 +148,30 @@ public JarBuildItem build() throws IOException {
+ 
+     private void buildUberJar0(Path runnerJar) throws IOException {
+ 
+-        try (ArchiveCreator archiveCreator = new ParallelCommonsCompressArchiveCreator(runnerJar,
+-                packageConfig.jar().compress(), packageConfig.outputTimestamp().orElse(null),
+-                executorService)) {
++        // Entries are read lazily and in parallel when the archive creator is closed, so the dependency
++        // path trees must stay open until then. They are declared before the archive creator so that
++        // they get closed after it.
++        final List<OpenPathTree> openTrees = new ArrayList<>();
++        try (Closeable treesCloser = () -> {
++            IOException failure = null;
++            for (OpenPathTree tree : openTrees) {
++                try {
++                    tree.close();
++                } catch (IOException e) {
++                    if (failure == null) {
++                        failure = e;
++                    } else {
++                        failure.addSuppressed(e);
++                    }
++                }
++            }
++            if (failure != null) {
++                throw failure;
++            }
++        };
++                ArchiveCreator archiveCreator = new ParallelCommonsCompressArchiveCreator(runnerJar,
++                        packageConfig.jar().compress(), packageConfig.outputTimestamp().orElse(null),
++                        executorService)) {
+             LOG.info("Building uber jar: " + runnerJar);
+ 
+             final Map<String, List<byte[]>> concatenatedEntries = new HashMap<>();
+@@ -182,7 +204,7 @@ private void buildUberJar0(Path runnerJar) throws IOException {
+                     continue;
+                 }
+ 
+-                walkFileDependencyForDependency(archiveCreator, duplicateCatcher,
++                walkFileDependencyForDependency(archiveCreator, openTrees, duplicateCatcher,
+                         concatenatedEntries, allIgnoredEntriesPredicate, appDep,
+                         mergeResourcePaths);
+             }
+@@ -237,16 +259,16 @@ private Predicate<String> getIgnoredEntriesPredicate() {
+         return path -> UBER_JAR_IGNORED_ENTRIES_PREDICATE.test(path) || ignoredEntries.contains(path);
+     }
+ 
+-    private void walkFileDependencyForDependency(ArchiveCreator archiveCreator,
++    private void walkFileDependencyForDependency(ArchiveCreator archiveCreator, List<OpenPathTree> openTrees,
+             Map<String, Set<Dependency>> duplicateCatcher, Map<String, List<byte[]>> concatenatedEntries,
+             Predicate<String> ignoredEntriesPredicate, ResolvedDependency appDep,
+             Set<String> mergeResourcePaths) throws IOException {
+ 
+-        // The reason opening and closing a path tree right away works, unlike creating and closing a ZipFileSystem,
+-        // is that we are actually using a SharedOpenArchivePathTree here, which simply increments and decrements
+-        // the user count of the cached shared open path tree instance. This open path tree instance will remain open
+-        // until the last user called close() on it, which will be the Quarkus classloaders closing.
+-        try (OpenPathTree pathTree = appDep.getContentTree().open()) {
++        // The tree is not closed here: the archive creator reads the files lazily, so it has to stay open
++        // until the archive has been written. The caller closes it afterwards.
++        final OpenPathTree pathTree = appDep.getContentTree().open();
++        openTrees.add(pathTree);
++        try {
+             pathTree.walkRaw(visit -> {
+                 try {
+                     final String relativePath = visit.getResourceName();

@@ -1,0 +1,46 @@
+{
+ "instance": "keycloak-52670",
+ "arm": "two",
+ "exit": 0,
+ "wall_s": 635,
+ "turns": 21,
+ "cost_usd": 0.3708684,
+ "tokens_in": 28,
+ "tokens_out": 3118,
+ "cache_read": 468502,
+ "cache_create": 61483,
+ "ctx_ingested": 93372,
+ "first_edit_turn": 20,
+ "ctx_before_first_edit": 83667,
+ "explore_calls": 6,
+ "graph_calls": 4,
+ "edit_calls": 1,
+ "run_calls": 2,
+ "files_read": 4,
+ "gold_files": 1,
+ "gold_files_read": 1,
+ "wasted_reads": 3,
+ "files_read_list": [
+  "services/src/main/java/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java",
+  "services/src/main/java/org/keycloak/protocol/oid4vc/issuance/OID4VCIssuerEndpoint.java",
+  "services/src/main/java/org/keycloak/protocol/oid4vc/refresh/OID4VCIRefreshTokenProvider.java",
+  "services/src/main/java/org/keycloak/protocol/oidc/grants/PreAuthorizedCodeGrantType.java"
+ ],
+ "patch_files": [
+  "services/src/main/java/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java"
+ ],
+ "patch_bytes": 1436,
+ "gold_hit": 1,
+ "denials": {},
+ "tools": {
+  "Bash": 7,
+  "Read": 5,
+  "Monitor": 1,
+  "Edit": 1
+ },
+ "old_cli_calls": 0,
+ "is_error": false,
+ "subtype": "success",
+ "build_seconds": 937,
+ "resolved": null
+}

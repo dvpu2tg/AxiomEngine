@@ -1,0 +1,16 @@
+diff --git a/extensions/hibernate-orm/deployment/src/main/java/io/quarkus/hibernate/orm/deployment/HibernateOrmProcessor.java b/extensions/hibernate-orm/deployment/src/main/java/io/quarkus/hibernate/orm/deployment/HibernateOrmProcessor.java
+index 02a0485d..7d4a1cf3 100644
+--- a/extensions/hibernate-orm/deployment/src/main/java/io/quarkus/hibernate/orm/deployment/HibernateOrmProcessor.java
++++ b/extensions/hibernate-orm/deployment/src/main/java/io/quarkus/hibernate/orm/deployment/HibernateOrmProcessor.java
+@@ -832,7 +832,10 @@ public void build(RecorderContext recorderContext, HibernateOrmRecorder recorder
+             integratorClasses.add((Class<? extends Integrator>) recorderContext.classProxy(integratorClassName));
+         }
+         if (launchMode.getLaunchMode() == LaunchMode.DEVELOPMENT) {
+-            integratorClasses.add(HibernateOrmDevIntegrator.class);
++            // Use a class proxy so the class is resolved lazily by the runtime class loader
++            // (e.g. in remote dev, a direct class literal would be loaded by a different class loader)
++            integratorClasses.add(
++                    (Class<? extends Integrator>) recorderContext.classProxy(HibernateOrmDevIntegrator.class.getName()));
+             integratorClasses.add(SchemaManagementIntegrator.class);
+         }
+ 

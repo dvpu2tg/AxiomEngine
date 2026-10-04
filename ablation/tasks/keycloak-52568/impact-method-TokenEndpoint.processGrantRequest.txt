@@ -1,0 +1,20 @@
+change: TokenEndpoint.processGrantRequest   [method]
+entry point: TokenEndpoint.processGrantRequest is a http entry point — a framework invokes it, so no client call site reaches it. Changing it changes what the outside world can call.
+directly touches it: nothing the graph can see — the declaration is used only where it is declared, or through something the parser did not record
+(`alongside` = no call, no reference, no contract — only that a fix touching one of these often touches the other;
+ it is never a seed, so the transitive layer below is unaffected by it)
+declared alongside it, not a dependent (14 callable(s): 14 alongside):
+    [alongside] TokenEndpoint.preflight   services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:191   — a sibling of the same type
+    [alongside] TokenEndpoint.sanitizeFormParameters   services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:252   — a sibling of the same type
+    [alongside] TokenEndpoint.checkClient   services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:211   — a sibling of the same type, using the same field clientAuthAttributes, clientConfig, cors, event, session
+    [alongside] TokenEndpoint.checkGrantType   services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:224   — a sibling of the same type, using the same field cors, event, grant, grantType, session
+    [alongside] TokenEndpoint.checkParameterDuplicated   services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:238   — a sibling of the same type, using the same field cors, formParams, grant
+    … +9 more in 1 file(s): services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java (9)   (--page 2 for the next rows, --limit N for all of them)
+reaches those through resolved calls: 0 more callable(s) in 0 file(s)
+tests: 0 of 11389 test method(s) reach the change
+    NOT CHECKED: @Consumes on TokenEndpoint.processGrantRequest; @POST on TokenEndpoint.processGrantRequest — a framework calls it and the graph does not model how, so a test that enters through that framework (a request, a started context, an event) reaches it with no route counted here: grep -rnw "processGrantRequest" .
+verified: nothing to check — no entry in this answer claims a CALL EDGE, so there is none to look up (the entries are: 14 alongside)
+bound: the closure could not start — no dependent above is a resolved call the closure can walk back from, so what reaches THEM is not in this answer
+bound: 5 unresolved call(s) inside the impacted set — what those reach is unknown, so the set is a lower bound
+why nothing in the graph calls TokenEndpoint.processGrantRequest: an HTTP route handler (a framework or runner calls it); decorated @Consumes, which a framework reads: it may call it with no call site here (services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:122); decorated @POST, which a framework reads: it may call it with no call site here (services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:123)
+next: nothing in this graph calls it, but it is not local — it is a http entry point, so its callers are outside the graph (the framework, a request, a client, a runner, a scheduler): read services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:122; a body change is safe there, a change to its name, route, parameters or result breaks those callers

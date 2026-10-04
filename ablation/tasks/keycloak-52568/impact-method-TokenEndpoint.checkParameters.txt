@@ -1,0 +1,24 @@
+change: TokenEndpoint.checkParameters   [method]
+(`alongside` = no call, no reference, no contract — only that a fix touching one of these often touches the other;
+ it is never a seed, so the transitive layer below is unaffected by it)
+reads or uses it (1 callable(s): 1 resolved):
+    [resolved] TokenEndpoint.processGrantRequest   services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:159   — calls it; also: a sibling of the same type, using the same field cors; a sibling of the same type, using the same field formParams (+2 more)
+declared alongside it, not a dependent (13 callable(s): 13 alongside):
+    [alongside] TokenEndpoint.sanitizeFormParameters   services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:252   — a sibling of the same type
+    [alongside] TokenEndpoint.preflight   services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:191   — a sibling of the same type, using the same field LOGGER
+    [alongside] TokenEndpoint.checkClient   services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:211   — a sibling of the same type, using the same field cors, session
+    [alongside] TokenEndpoint.checkGrantType   services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:224   — a sibling of the same type, using the same field cors, grant, session
+    [alongside] TokenEndpoint.checkParameterDuplicated   services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:238   — a sibling of the same type, using the same field cors, formParams, grant
+    … +8 more in 1 file(s): services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java (8)   (--page 2 for the next rows, --limit N for all of them)
+reaches those through resolved calls: 1 more callable(s) in 1 file(s)
+    by hop: 1:1
+    source files (1, nearest first): services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java (1)
+    how each is reached (→ an exact call, ⇢ one of a set / a dispatch choice; nearest first):
+      services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java: TokenEndpoint.processGrantRequest
+    entry points (1: a framework enters them, for the reason given, or nothing resolved calls them — a framework, a runner, reflection — or a test; 0 hops = touches it directly), nearest first:
+       1 hop(s)  TokenEndpoint.processGrantRequest @Consumes,POST   services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:122   — an HTTP route handler
+tests: 0 of 11389 test method(s) reach the change
+    NOT COUNTED: 1 entry point(s) of this change are entered by a framework (TokenEndpoint.processGrantRequest @Consumes) — a test that drives them through it (a request, an event, a mediator send) reaches the change with no route here unless a [by key] row says so, so the count is a lower bound; to find those tests: grep -rnw -e "processGrantRequest" .
+verified: 1 printed edge(s) looked up again in the graph, all present
+bound: 15 unresolved call(s) inside the impacted set — what those reach is unknown, so the set is a lower bound
+next: read services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:263, then only these 1 place(s) bound to it: services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java:159

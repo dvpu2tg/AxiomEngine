@@ -1,0 +1,21 @@
+== crg schema ==
+communities          flows                nodes_fts_data     
+community_summaries  metadata             nodes_fts_docsize  
+edges                nodes                nodes_fts_idx      
+flow_memberships     nodes_fts            risk_index         
+flow_snapshots       nodes_fts_config   
+CALLS|86118
+CONTAINS|24066
+IMPORTS_FROM|25163
+INHERITS|1903
+TEMPORAL_STUB|1
+
+== getOrCreateProvider node ==
+Function|getOrCreateProvider|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/services/DefaultKeycloakSession.java::DefaultKeycloakSession.getOrCreateProvider|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/services/DefaultKeycloakSession.java
+
+== OID4VC processor/factory nodes ==
+File|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java
+Class|OID4VCAuthorizationDetailsProcessor|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java::OID4VCAuthorizationDetailsProcessor
+Function|OID4VCAuthorizationDetailsProcessor|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java::OID4VCAuthorizationDetailsProcessor.OID4VCAuthorizationDetailsProcessor
+File|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java
+Class|OID4VCAuthorizationDetailsProcessorFactory|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java::OID4VCAuthorizationDetailsProcessorFactory

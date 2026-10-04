@@ -1,0 +1,1 @@
+scim/model/src/main/java/org/keycloak/scim/model/group/GroupResourceTypeProvider.java

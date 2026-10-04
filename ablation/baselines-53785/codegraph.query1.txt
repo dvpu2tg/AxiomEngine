@@ -1,0 +1,53 @@
+== key nodes ==
+method:48299c54594e0e3b2fe3a01c4dd2d812|method|io.quarkus.paths::ArchivePathTree::getResourceNames
+method:3da4ea7ec72ed9b3e0fe43dc71669c55|method|io.quarkus.paths::ArchivePathTree::OpenArchivePathTree::getResourceNames
+method:265b69854cf9fa704570fc8812cefabf|method|io.quarkus.paths::DirectoryPathTree::getResourceNames
+method:fde4bad39d9e32e30198e85a8c169080|method|io.quarkus.paths::EmptyPathTree::getResourceNames
+method:50bbbbe95818f18f6dbd6dcff1cd8f51|method|io.quarkus.paths::FilePathTree::getResourceNames
+method:7c3f286d5e0690dc8c4f4ed298bd236c|method|io.quarkus.paths::MultiRootPathTree::getResourceNames
+method:3930f3f325d344cf03526f24035a8ed6|method|io.quarkus.paths::PathTree::getResourceNames
+method:371712ba23fc33c885b7957ca208be41|method|io.quarkus.paths::SharedArchivePathTree::CallerOpenPathTree::getResourceNames
+method:844ba754539dd23c08b3b0943c1f548b|method|io.quarkus.deployment::ExtensionLoader::loadStepsFrom
+method:65562cb3bc7cb47fe6cac13ecbab7d26|method|io.quarkus.paths::ArchivePathTree::walk
+method:6f6386416d7a333f10ade6c7ded61932|method|io.quarkus.paths::ArchivePathTree::OpenArchivePathTree::walk
+method:3ad07d3bf79cad124170fdd3a40fcd17|method|io.quarkus.paths::EmptyPathTree::walk
+method:53f64ff07b67bf4f358d2ab44c2e3e45|method|io.quarkus.paths::FilePathTree::walk
+method:ed751b49d43a3e64cd4e588ba850a83c|method|io.quarkus.paths::FilteredPathTree::walk
+method:579270db8cc6e1f0f8634e9dda31c91a|method|io.quarkus.paths::MultiRootPathTree::walk
+method:c88598a4303e83d377b92055a77aebe3|method|io.quarkus.paths::OpenContainerPathTree::walk
+method:d3b3cfe3ed8ef484e7642d51ea91554e|method|io.quarkus.paths::PathTree::walk
+method:1d6ee16817924eeb08ada245febee2df|method|io.quarkus.paths::PathTreeVisit::walk
+method:094b848b4bd6b5a030b777049b15566e|method|io.quarkus.paths::SharedArchivePathTree::CallerOpenPathTree::walk
+
+== nodes for OpenContainerPathTree/ArchivePathTree/SharedArchivePathTree (class + walk) ==
+class:728091861302d588d82f90e3063b3535|class|io.quarkus.paths::ArchivePathTree
+method:32d9c838d8606deee81e4a4cb2e4dd84|method|io.quarkus.paths::ArchivePathTree::ArchivePathTree
+method:473830697f2af117e911f380a05dfa1d|method|io.quarkus.paths::ArchivePathTree::ArchivePathTree
+method:5dee80af044b94175c78615c3fa227f1|method|io.quarkus.paths::ArchivePathTree::ArchivePathTree
+method:65562cb3bc7cb47fe6cac13ecbab7d26|method|io.quarkus.paths::ArchivePathTree::walk
+method:6f6386416d7a333f10ade6c7ded61932|method|io.quarkus.paths::ArchivePathTree::OpenArchivePathTree::walk
+class:e3e185d60fe2914d34269f0e6b377fd0|class|io.quarkus.paths::OpenContainerPathTree
+method:66b854532099c60439355da2d5cedf23|method|io.quarkus.paths::OpenContainerPathTree::OpenContainerPathTree
+method:0a9ddc714f6aa927acb37173b0d6e3d0|method|io.quarkus.paths::OpenContainerPathTree::OpenContainerPathTree
+method:96eaf31bd80e096fd2719b83c0bce3c9|method|io.quarkus.paths::OpenContainerPathTree::OpenContainerPathTree
+method:da46207866925d6e9f2e1b4e61083aae|method|io.quarkus.paths::OpenContainerPathTree::OpenContainerPathTree
+method:c88598a4303e83d377b92055a77aebe3|method|io.quarkus.paths::OpenContainerPathTree::walk
+class:1f44a7cdbe7cd6d9761958f7f6cc92b8|class|io.quarkus.paths::SharedArchivePathTree
+method:1432e7485d4c794c7753fc77c74ca56e|method|io.quarkus.paths::SharedArchivePathTree::SharedArchivePathTree
+method:094b848b4bd6b5a030b777049b15566e|method|io.quarkus.paths::SharedArchivePathTree::CallerOpenPathTree::walk
+
+== (a1) outgoing calls of PathTree::getResourceNames ==
+calls|io.quarkus.paths::PathTree::walk|{"confidence":0.7,"resolvedBy":"exact-match","refName":"walk"}
+calls|io.quarkus.paths::PathVisit::getResourceName|{"confidence":0.65,"resolvedBy":"instance-method","refName":"visit.getResourceName"}
+calls|io.quarkus.paths::ArchivePathTree::getResourceNames|{"synthesizedBy":"interface-impl","via":"getResourceNames","registeredAt":"app-model/io/quarkus/paths/ArchivePathTree.java:144"}
+
+== (a2) incoming to OpenContainerPathTree::walk ==
+contains|io.quarkus.paths::OpenContainerPathTree|
+
+== (a3) BFS closure calls+instantiates from ExtensionLoader::loadStepsFrom ==
+114|io.quarkus.paths::ArchivePathTree::toString
+io.quarkus.paths::PathTreeUtils::asString
+io.quarkus.paths::PathTreeVisit
+io.quarkus.paths::PathTreeVisit::consume
+io.quarkus.paths::PathTreeVisit::setCurrent
+io.quarkus.paths::PathTreeVisit::relativize

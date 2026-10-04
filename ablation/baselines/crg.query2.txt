@@ -1,0 +1,25 @@
+== (a1) outgoing CALLS of getOrCreateProvider ==
+CALLS|get|EXTRACTED|207
+CALLS|get|EXTRACTED|212
+CALLS|create|EXTRACTED|214
+CALLS|put|EXTRACTED|215
+
+== (a2) edges DefaultKeycloakSession file -> anything OID4VC ==
+
+== (a3) incoming edges to OID4VC factory (class, create fn) ==
+CONTAINS|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java|EXTRACTED
+CONTAINS|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java::OID4VCAuthorizationDetailsProcessorFactory|EXTRACTED
+CONTAINS|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java::OID4VCAuthorizationDetailsProcessorFactory|EXTRACTED
+CONTAINS|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java::OID4VCAuthorizationDetailsProcessorFactory|EXTRACTED
+CONTAINS|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java::OID4VCAuthorizationDetailsProcessorFactory|EXTRACTED
+
+== (b) edges into OID4VCAuthorizationDetailsProcessor (class/ctor/methods) from outside its file ==
+CALLS|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/credentialoffer/DefaultCredentialOfferProvider.java::DefaultCredentialOfferProvider.createCredentialOffer|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java::OID4VCAuthorizationDetailsProcessor|EXTRACTED
+CALLS|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/credentialoffer/DefaultCredentialOfferProvider.java::DefaultCredentialOfferProvider.createCredentialOffer|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessor.java::OID4VCAuthorizationDetailsProcessor.generateResponseAuthorizationDetails|EXTRACTED
+
+== (b2) unresolved bare-name CALLS targets named create from DefaultKeycloakSession ==
+CALLS|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/services/DefaultKeycloakSession.java::DefaultKeycloakSession.getOrCreateProvider|create|214
+CALLS|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/services/DefaultKeycloakSession.java::DefaultKeycloakSession.getOrCreateProvider|get|207
+CALLS|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/services/DefaultKeycloakSession.java::DefaultKeycloakSession.getOrCreateProvider|get|212
+CALLS|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/services/DefaultKeycloakSession.java::DefaultKeycloakSession.getOrCreateProvider|put|215
+CALLS|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/services/DefaultKeycloakSession.java::DefaultKeycloakSession.getProvider|create|260

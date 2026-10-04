@@ -1,0 +1,12 @@
+== outgoing edges of OID4VC factory file/class/fns ==
+CALLS|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java::OID4VCAuthorizationDetailsProcessorFactory.create|OID4VCAuthorizationDetailsProcessor|39
+CALLS|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java::OID4VCAuthorizationDetailsProcessorFactory.init|OID4VCAuthorizationDetailsParser|44
+CALLS|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java::OID4VCAuthorizationDetailsProcessorFactory.init|registerParser|44
+IMPORTS_FROM|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/OID4VCEnvironmentProviderFactory.java|21
+IMPORTS_FROM|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java|org.keycloak.Config|19
+IMPORTS_FROM|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java|org.keycloak.OID4VCConstants.OPENID_CREDENTIAL|25
+IMPORTS_FROM|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java|org.keycloak.models.KeycloakSession|20
+IMPORTS_FROM|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java|org.keycloak.protocol.oidc.rar.AuthorizationDetailsProcessorFactory|22
+IMPORTS_FROM|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java|org.keycloak.util.AuthorizationDetailsParser|23
+INHERITS|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java::OID4VCAuthorizationDetailsProcessorFactory|AuthorizationDetailsProcessorFactory|33
+INHERITS|/private/tmp/baseline-cmp/work/crg-src/services/org/keycloak/protocol/oid4vc/issuance/OID4VCAuthorizationDetailsProcessorFactory.java::OID4VCAuthorizationDetailsProcessorFactory|OID4VCEnvironmentProviderFactory|33

@@ -1,0 +1,1 @@
+services/src/main/java/org/keycloak/connections/httpclient/ProxyMappings.java

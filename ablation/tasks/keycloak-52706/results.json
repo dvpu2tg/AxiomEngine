@@ -1,0 +1,51 @@
+[
+ {
+  "instance": "keycloak-52706",
+  "arm": "d19-raw",
+  "exit": 0,
+  "wall_s": 17,
+  "turns": 5,
+  "cost_usd": 0.09903519999999999,
+  "tokens_in": 10,
+  "tokens_out": 829,
+  "cache_read": 101006,
+  "cache_create": 17631,
+  "ctx_ingested": 17641,
+  "first_edit_turn": 4,
+  "ctx_before_first_edit": 12681,
+  "explore_calls": 3,
+  "graph_calls": 0,
+  "edit_calls": 1,
+  "run_calls": 0,
+  "files_read": 0,
+  "gold_files": [
+   "services/src/main/java/org/keycloak/connections/httpclient/ProxyMappings.java"
+  ],
+  "gold_files_read": 0,
+  "wasted_reads": 0,
+  "files_read_list": [],
+  "patch_files": [
+   "services/src/main/java/org/keycloak/connections/httpclient/ProxyMappings.java"
+  ],
+  "patch_bytes": 1112,
+  "gold_hit": 1,
+  "denials": {},
+  "tools": {
+   "Bash": 3,
+   "Edit": 1
+  },
+  "old_cli_calls": 0,
+  "is_error": false,
+  "subtype": "success",
+  "build_seconds": null,
+  "resolved": null,
+  "task": "keycloak-52706",
+  "first_gold_turn": 3,
+  "cli_calls": 0,
+  "stream_sha256": "66449a79bc2b89ce03e16212de679f27a98f0991cba32ed4f74417577322250f",
+  "artifacts": {
+   "stream": "keycloak-52706/d19-raw/stream.jsonl",
+   "patch": "keycloak-52706/d19-raw/model.patch"
+  }
+ }
+]

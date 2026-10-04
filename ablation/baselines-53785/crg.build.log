@@ -1,0 +1,35 @@
+INFO: Schema version 1 -> 9: running migrations
+INFO: Running migration v2
+INFO: Migration v2: added 'signature' column to nodes
+INFO: Running migration v3
+INFO: Migration v3: created flows and flow_memberships tables
+INFO: Running migration v4
+INFO: Migration v4: added 'community_id' column to nodes
+INFO: Migration v4: created communities table
+INFO: Running migration v5
+INFO: Migration v5: created nodes_fts FTS5 virtual table
+INFO: Running migration v6
+INFO: Migration v6: created summary tables (community_summaries, flow_snapshots, risk_index)
+INFO: Running migration v7
+INFO: Migration v7: added compound edge indexes
+INFO: Running migration v8
+INFO: Migration v8: created composite edge index
+INFO: Running migration v9
+INFO: Migration v9: added edge confidence columns
+INFO: Migrations complete, now at schema version 9
+INFO: Progress: 200/831 files parsed
+INFO: Progress: 400/831 files parsed
+INFO: Progress: 600/831 files parsed
+INFO: Progress: 800/831 files parsed
+INFO: Progress: 831/831 files parsed
+INFO: Spring resolver: no INJECTS edges with field_name found, skipping
+INFO: Spring event resolver: indexed 0 events and emitted 0 CALLS edges
+INFO: Temporal resolver: no Workflow/ActivityInterface nodes, skipping
+INFO: Resolved 2340 evidence-backed bare CALLS targets
+INFO: FTS index rebuilt: 7601 rows indexed
+INFO: Loaded 6770 unique nodes, 43173 edges
+INFO: igraph not available, using file-based community detection
+Full build: 831 files, 8453 nodes, 43837 edges (postprocess=full)
+real 6.24
+user 8.12
+sys 3.07

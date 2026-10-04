@@ -1,0 +1,39 @@
+{
+ "instance": "keycloak-52502",
+ "arm": "two",
+ "exit": 0,
+ "wall_s": 133,
+ "turns": 20,
+ "cost_usd": 0.223761,
+ "tokens_in": 20,
+ "tokens_out": 5315,
+ "cache_read": 301235,
+ "cache_create": 27581,
+ "ctx_ingested": 48495,
+ "first_edit_turn": null,
+ "ctx_before_first_edit": null,
+ "explore_calls": 6,
+ "graph_calls": 0,
+ "edit_calls": 2,
+ "run_calls": 2,
+ "files_read": 0,
+ "gold_files": 1,
+ "gold_files_read": 0,
+ "wasted_reads": 0,
+ "files_read_list": [],
+ "patch_files": [
+  "services/src/main/java/org/keycloak/services/managers/DefaultBlockingBruteForceProtector.java",
+  "services/src/main/java/org/keycloak/services/managers/DefaultBruteForceProtector.java"
+ ],
+ "patch_bytes": 3867,
+ "gold_hit": 0,
+ "denials": {},
+ "tools": {
+  "Bash": 10
+ },
+ "old_cli_calls": 0,
+ "is_error": false,
+ "subtype": "success",
+ "build_seconds": 594,
+ "resolved": null
+}

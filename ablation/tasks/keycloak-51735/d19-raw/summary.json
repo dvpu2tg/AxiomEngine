@@ -1,0 +1,38 @@
+{
+ "instance": "keycloak-51735",
+ "arm": "raw",
+ "exit": 0,
+ "wall_s": 39,
+ "turns": 17,
+ "cost_usd": 0.15934979999999999,
+ "tokens_in": 22,
+ "tokens_out": 2790,
+ "cache_read": 258609,
+ "cache_create": 19921,
+ "ctx_ingested": 25970,
+ "first_edit_turn": null,
+ "ctx_before_first_edit": null,
+ "explore_calls": 7,
+ "graph_calls": 0,
+ "edit_calls": 2,
+ "run_calls": 1,
+ "files_read": 0,
+ "gold_files": 2,
+ "gold_files_read": 0,
+ "wasted_reads": 0,
+ "files_read_list": [],
+ "patch_files": [
+  "scim/model/src/main/java/org/keycloak/scim/model/user/UserResourceTypeProvider.java"
+ ],
+ "patch_bytes": 1585,
+ "gold_hit": 0,
+ "denials": {},
+ "tools": {
+  "Bash": 10
+ },
+ "old_cli_calls": 0,
+ "is_error": false,
+ "subtype": "success",
+ "build_seconds": null,
+ "resolved": null
+}

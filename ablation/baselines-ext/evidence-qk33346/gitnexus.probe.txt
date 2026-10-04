@@ -1,0 +1,28 @@
+== START nodes matching ['ClientSendRequestHandler.java:ClientSendRequestHandler.setMultipartHeadersAndPrepareBody']: 1
+   Method:rr-client-runtime/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java:ClientSendRequestHandler.setMultipartHeadersAndPrepareBody#2
+== CLOSURE over ['CALLS'] from starts: 80 nodes
+  target 'BlockingOperationNotAllowedException' in closure: 0
+  target 'VertxRequestHandler' in closure: 0
+  target 'MultiByteHttpData' in closure: 7
+     Constructor:rr-client-runtime/org/jboss/resteasy/reactive/client/impl/multipart/MultiByteHttpData.java:ExecutorWithContext.ExecutorWithContext#1
+     Constructor:rr-client-runtime/org/jboss/resteasy/reactive/client/impl/multipart/MultiByteHttpData.java:MultiByteHttpData.MultiByteHttpData#9
+     Method:rr-client-runtime/org/jboss/resteasy/reactive/client/impl/multipart/MultiByteHttpData.java:MultiByteHttpData.isReady#1
+     Method:rr-client-runtime/org/jboss/resteasy/reactive/client/impl/multipart/MultiByteHttpData.java:MultiByteHttpData.setContentTransferEncoding#1
+     Method:rr-client-runtime/org/jboss/resteasy/reactive/client/impl/multipart/MultiByteHttpData.java:MultiByteHttpData.setContentType#1
+     Method:rr-client-runtime/org/jboss/resteasy/reactive/client/impl/multipart/MultiByteHttpData.java:MultiByteHttpData.setFilename#1
+     Method:rr-client-runtime/org/jboss/resteasy/reactive/client/impl/multipart/MultiByteHttpData.java:MultiByteHttpData.suspend#1
+== PAIR edges 'ClientSendRequestHandler.java' -> 'QuarkusMultipartFormUpload': 4
+   IMPORTS File:rr-client-runtime/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java -> File:rr-client-runtime/org/jboss/resteasy/reactive/client/impl/multipart/QuarkusMultipartFormUpload.java java-scope: import
+   CALLS Method:rr-client-runtime/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java:ClientSendRequestHandler.setMultipartHeadersAndPrepareBody#2 -> Method:rr-client-runtime/org/jboss/resteasy/reactive/client/impl/multipart/QuarkusMultipartFormUpload.java:QuarkusMultipartFormUpload.isChunked#0 import-resolved
+   CALLS Method:rr-client-runtime/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java:ClientSendRequestHandler.setMultipartHeadersAndPrepareBody#2 -> Method:rr-client-runtime/org/jboss/resteasy/reactive/client/impl/multipart/QuarkusMultipartFormUpload.java:QuarkusMultipartFormUpload.headers#0 import-resolved
+   CALLS Method:rr-client-runtime/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java:ClientSendRequestHandler.setMultipartHeadersAndPrepareBody#2 -> Constructor:rr-client-runtime/org/jboss/resteasy/reactive/client/impl/multipart/QuarkusMultipartFormUpload.java:QuarkusMultipartFormUpload.QuarkusMultipartFormUpload#5 import-resolved
+== PAIR edges 'MultiByteHttpData.java' -> 'execute': 1
+   HAS_METHOD Class:rr-client-runtime/org/jboss/resteasy/reactive/client/impl/multipart/MultiByteHttpData.java:ExecutorWithContext -> Method:rr-client-runtime/org/jboss/resteasy/reactive/client/impl/multipart/MultiByteHttpData.java:ExecutorWithContext.execute#1 
+== PAIR edges 'AbstractSecurityIdentityAssociation.java' -> 'BlockingOperationNotAllowedException': 2
+   IMPORTS File:security-runtime-spi/io/quarkus/security/spi/runtime/AbstractSecurityIdentityAssociation.java -> File:core-runtime/io/quarkus/runtime/BlockingOperationNotAllowedException.java java-scope: import
+   CALLS Method:security-runtime-spi/io/quarkus/security/spi/runtime/AbstractSecurityIdentityAssociation.java:AbstractSecurityIdentityAssociation.getIdentity#0 -> Constructor:core-runtime/io/quarkus/runtime/BlockingOperationNotAllowedException.java:BlockingOperationNotAllowedException.BlockingOperationNotAllowedException#0 import-resolved
+== GOLD cross-file edges into nodes of file '*handlers/ClientSendRequestHandler.java*' (55 nodes): 3
+   by kind: {'IMPORTS': 1, 'CONTAINS': 1, 'CALLS': 1}
+   IMPORTS File:rr-client-runtime/org/jboss/resteasy/reactive/client/impl/HandlerChain.java [rr-client-runtime/org/jboss/resteasy/reactive/client/impl/HandlerChain.java] -> File:rr-client-runtime/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java java-scope: import
+   CONTAINS Folder:rr-client-runtime/org/jboss/resteasy/reactive/client/handlers [rr-client-runtime/org/jboss/resteasy/reactive/client/handlers] -> File:rr-client-runtime/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java 
+   CALLS Constructor:rr-client-runtime/org/jboss/resteasy/reactive/client/impl/HandlerChain.java:HandlerChain.HandlerChain#7 [rr-client-runtime/org/jboss/resteasy/reactive/client/impl/HandlerChain.java] -> Constructor:rr-client-runtime/org/jboss/resteasy/reactive/client/handlers/ClientSendRequestHandler.java:ClientSendRequestHandler.ClientSendRequestHandler#6 import-resolved

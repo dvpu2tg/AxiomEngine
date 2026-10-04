@@ -1,0 +1,45 @@
+{
+ "instance": "keycloak-51735",
+ "arm": "two",
+ "exit": 0,
+ "wall_s": 532,
+ "turns": 30,
+ "cost_usd": 0.31121659999999995,
+ "tokens_in": 38,
+ "tokens_out": 4219,
+ "cache_read": 622713,
+ "cache_create": 36102,
+ "ctx_ingested": 53100,
+ "first_edit_turn": 27,
+ "ctx_before_first_edit": 48472,
+ "explore_calls": 8,
+ "graph_calls": 9,
+ "edit_calls": 1,
+ "run_calls": 2,
+ "files_read": 4,
+ "gold_files": 2,
+ "gold_files_read": 0,
+ "wasted_reads": 3,
+ "files_read_list": [
+  "scim/model/src/main/java/org/keycloak/scim/model/user/UserResourceTypeProvider.java",
+  "server-spi-private/src/main/java/org/keycloak/userprofile/DefaultUserProfile.java",
+  "services/src/main/java/org/keycloak/userprofile/DeclarativeUserProfileProvider.java",
+  "services/src/main/java/org/keycloak/userprofile/DefaultUserProfile.java"
+ ],
+ "patch_files": [
+  "scim/model/src/main/java/org/keycloak/scim/model/user/UserResourceTypeProvider.java"
+ ],
+ "patch_bytes": 1168,
+ "gold_hit": 0,
+ "denials": {},
+ "tools": {
+  "Bash": 13,
+  "Read": 6,
+  "Edit": 1
+ },
+ "old_cli_calls": 0,
+ "is_error": false,
+ "subtype": "success",
+ "build_seconds": 6,
+ "resolved": null
+}

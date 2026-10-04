@@ -1,0 +1,27 @@
+diff --git a/extensions/hibernate-orm/deployment/src/main/java/io/quarkus/hibernate/orm/deployment/HibernateOrmProcessor.java b/extensions/hibernate-orm/deployment/src/main/java/io/quarkus/hibernate/orm/deployment/HibernateOrmProcessor.java
+index 02a0485d..ca2db0dc 100644
+--- a/extensions/hibernate-orm/deployment/src/main/java/io/quarkus/hibernate/orm/deployment/HibernateOrmProcessor.java
++++ b/extensions/hibernate-orm/deployment/src/main/java/io/quarkus/hibernate/orm/deployment/HibernateOrmProcessor.java
+@@ -131,7 +131,6 @@
+ import io.quarkus.hibernate.orm.deployment.spi.AdditionalPersistenceUnitBuildItem;
+ import io.quarkus.hibernate.orm.deployment.spi.DatabaseKindDialectBuildItem;
+ import io.quarkus.hibernate.orm.deployment.spi.SqlLoadScriptDefaultBuildItem;
+-import io.quarkus.hibernate.orm.dev.HibernateOrmDevIntegrator;
+ import io.quarkus.hibernate.orm.runtime.HibernateOrmPersistenceUnitProviderHelper;
+ import io.quarkus.hibernate.orm.runtime.HibernateOrmRecorder;
+ import io.quarkus.hibernate.orm.runtime.HibernateOrmRuntimeConfig;
+@@ -832,8 +831,12 @@ public void build(RecorderContext recorderContext, HibernateOrmRecorder recorder
+             integratorClasses.add((Class<? extends Integrator>) recorderContext.classProxy(integratorClassName));
+         }
+         if (launchMode.getLaunchMode() == LaunchMode.DEVELOPMENT) {
+-            integratorClasses.add(HibernateOrmDevIntegrator.class);
+-            integratorClasses.add(SchemaManagementIntegrator.class);
++            // Referenced by name: these classes may live in a class loader (e.g. runtime-dev in remote dev)
++            // that differs from the one the deployment class literal would resolve to.
++            integratorClasses.add((Class<? extends Integrator>) recorderContext
++                    .classProxy("io.quarkus.hibernate.orm.dev.HibernateOrmDevIntegrator"));
++            integratorClasses.add((Class<? extends Integrator>) recorderContext
++                    .classProxy(SchemaManagementIntegrator.class.getName()));
+         }
+ 
+         Map<String, List<HibernateOrmIntegrationStaticDescriptor>> integrationStaticDescriptors = HibernateOrmIntegrationStaticConfiguredBuildItem
