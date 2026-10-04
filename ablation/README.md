@@ -8,7 +8,7 @@ covers every file in this folder.
 
 ## Headline figure
 
-![First-contact turn and total turns per task, text search versus graph context injected](figures/ablation-arms.svg)
+![First-contact turn and total turns per task, text search versus graph context injected](figures/ablation-arms.png)
 
 Left: the turn at which the agent first touches a file the real fix changed;
 a colored x marks runs that never reached one. Right: total turns to finish.
@@ -29,7 +29,7 @@ Regenerates from `results.jsonl`.
 ## Layout
 
 - `TASKS.txt` — every task directory mapped to its upstream public issue URL.
-- `figures/` — the rendered arms chart (SVG).
+- `figures/` — the rendered arms chart (PNG for the README, SVG vector).
 - `results.jsonl` — one record per (task, arm) run: gold hit, first-gold turn,
   turns, tokens, cost, CLI query count. Authoritative source for the section.
 - `FINAL-TABLE.txt` — the same records rendered as a table.
