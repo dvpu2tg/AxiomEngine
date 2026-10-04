@@ -1,0 +1,20 @@
+You are working in the repository at the current directory (keycloak/keycloak, java). Resolve the GitHub issue below by changing the source code.
+Rules: do not modify or add tests; do not commit or run git commands that alter history; work only inside this directory.
+The test suite is run with `mvn -q test -Dtest=<TestClass>` (e.g. `mvn -q test -Dtest=NodeTest`); dependencies are installed.
+When the fix is complete, reply with a one-paragraph summary of what you changed and why.
+
+<issue>
+# Flaky test: org.keycloak.testsuite.forms.BruteForceTest#testExceedMaxTemporaryLockouts
+
+## org.keycloak.testsuite.forms.BruteForceTest#testExceedMaxTemporaryLockouts
+[Keycloak CI - Base IT (5)](https://github.com/keycloak/keycloak/actions/runs/34145869963/job/101818732929) / [Pull Request #52498](https://github.com/keycloak/keycloak/pull/52498)
+
+```
+org.opentest4j.AssertionFailedError: Expected error event ==> expected: <true> but was: <false>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertTrue.failNotTrue(AssertTrue.java:63)
+	at org.junit.jupiter.api.AssertTrue.assertTrue(AssertTrue.java:36)
+...
+```
+</issue>

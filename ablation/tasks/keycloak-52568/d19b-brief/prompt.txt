@@ -1,0 +1,47 @@
+You are working in the repository at the current directory (keycloak/keycloak, java). Resolve the GitHub issue below by changing the source code.
+Rules: do not modify or add tests; do not commit or run git commands that alter history; work only inside this directory.
+The test suite is run with `mvn -q test -Dtest=<TestClass>` (e.g. `mvn -q test -Dtest=NodeTest`); dependencies are installed.
+When the fix is complete, reply with a one-paragraph summary of what you changed and why.
+
+<issue>
+# ResourceIndicatorsPostProcessor error does not log appropriate error event
+
+### Before reporting an issue
+
+- [x] I have read and understood the above terms for submitting issues, and I understand that my issue may be closed without action if I do not follow them.
+
+### Area
+
+oidc
+
+### Describe the bug
+
+ResourceIndicatorsPostProcessor is a class for cheching resource indicators validation.
+When a TokenInterceptorException error is thrown, no appropriate event error is logged.
+
+### Version
+
+26.7.1
+
+### Regression
+
+- [ ] The issue is a regression
+
+### Expected behavior
+
+ResourceIndicatorsPostProcessor is a class for cheching resource indicators validation.
+When a TokenInterceptorException error is thrown, no appropriate event error is logged.
+
+### Actual behavior
+
+ResourceIndicatorsPostProcessor is a class for cheching resource indicators validation.
+When a TokenInterceptorException error is thrown, no event is logged.
+
+### How to Reproduce?
+
+Execute a flow (fe grant type client_credentials) with a rejecting resource (fe due to not being valid URI)
+
+### Anything else?
+
+It would be better at least for the error to log the resources
+</issue>

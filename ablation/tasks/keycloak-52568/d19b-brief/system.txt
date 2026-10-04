@@ -1,0 +1,15 @@
+## Call-graph analysis of this issue (generated; every row is a repo file:line — treat as evidence, verify by reading)
+
+### What the issue is about (ranked from the issue text)
+candidate targets from the text (2 shown, best first — where it was written, how specific it is, how central):
+    30  class ResourceIndicatorsPostProcessor   [type]   — `ResourceIndicatorsPostProcessor` in prose
+    30  class TokenInterceptorException   [type]   — `TokenInterceptorException` in prose
+
+(run the impact of the best one with --top 1, or of the best few as one change set with --top N)
+graph refresh: OFF (--no-refresh, or AXIOMENGINE_NO_REFRESH is set), no refresh is running — this answer is from a graph that predates edits to services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java; no row of this answer lies in those files; `axiomengine index` rebuilds it
+
+### chain link-path-1-ResourceIndicatorsPostProcessor-to-TokenEndpoint
+axiomengine path: no such directory: /tmp/kc-link (the repository to ask). Nothing was built or asked; pass a directory that exists, or leave it out to use the current one.
+
+### chain link-path-2-TokenInterceptorException-to-TokenEndpoint
+axiomengine path: no such directory: /tmp/kc-link (the repository to ask). Nothing was built or asked; pass a directory that exists, or leave it out to use the current one.

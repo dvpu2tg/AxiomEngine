@@ -1,0 +1,38 @@
+{
+ "instance": "keycloak-52568",
+ "arm": "brief",
+ "exit": 0,
+ "wall_s": 72,
+ "turns": 15,
+ "cost_usd": 0.14897380000000002,
+ "tokens_in": 20,
+ "tokens_out": 2626,
+ "cache_read": 233449,
+ "cache_create": 18996,
+ "ctx_ingested": 24136,
+ "first_edit_turn": null,
+ "ctx_before_first_edit": null,
+ "explore_calls": 4,
+ "graph_calls": 0,
+ "edit_calls": 4,
+ "run_calls": 1,
+ "files_read": 0,
+ "gold_files": 1,
+ "gold_files_read": 0,
+ "wasted_reads": 0,
+ "files_read_list": [],
+ "patch_files": [
+  "services/src/main/java/org/keycloak/protocol/oidc/endpoints/TokenEndpoint.java"
+ ],
+ "patch_bytes": 1356,
+ "gold_hit": 1,
+ "denials": {},
+ "tools": {
+  "Bash": 9
+ },
+ "old_cli_calls": 0,
+ "is_error": false,
+ "subtype": "success",
+ "build_seconds": null,
+ "resolved": null
+}

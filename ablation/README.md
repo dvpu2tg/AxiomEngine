@@ -35,3 +35,7 @@ covers every file in this folder.
 - `d19-two` — graph exposed as a live CLI tool the agent must query.
 - `d19f-two`, `d19v2-two` — earlier injected-prompt variants, retained for
   completeness; the paper reports `d19-raw` and `d19b-brief`.
+
+Integrity note: `stream_sha256` values inside `results.jsonl` were computed on
+the pre-anonymization transcripts; `MANIFEST.sha256` is authoritative for the
+files shipped here.

@@ -1,0 +1,22 @@
+diff --git a/services/src/main/java/org/keycloak/services/managers/DefaultBruteForceProtector.java b/services/src/main/java/org/keycloak/services/managers/DefaultBruteForceProtector.java
+index 388a71b0..ae96d680 100644
+--- a/services/src/main/java/org/keycloak/services/managers/DefaultBruteForceProtector.java
++++ b/services/src/main/java/org/keycloak/services/managers/DefaultBruteForceProtector.java
+@@ -251,6 +251,8 @@ public class DefaultBruteForceProtector implements BruteForceProtector {
+         });
+         final HttpRequest bruteForceHttpRequest = new BruteForceHttpRequest(uriInfo);
+         final HttpResponse bruteForceHttpResponse = new BruteForceHttpResponse();
++        // capture the time when the login happened, not when the queued job gets executed
++        final long failureTime = Time.currentTimeMillis();
+         executor.execute(() -> KeycloakModelUtils.runJobInTransaction(factory, s -> {
+             s.getContext().setRealm(s.realms().getRealm(realm.getId()));
+             s.getContext().setHttpRequest(bruteForceHttpRequest);
+@@ -258,7 +260,7 @@ public class DefaultBruteForceProtector implements BruteForceProtector {
+             if (success) {
+                 success(s, realm, user.getId(), categories);
+             } else {
+-                failure(s, realm, user.getId(), clientConnection.getRemoteHost(), Time.currentTimeMillis(), categories);
++                failure(s, realm, user.getId(), clientConnection.getRemoteHost(), failureTime, categories);
+             }
+         }));
+     }
