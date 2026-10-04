@@ -1,0 +1,18 @@
+Upstream issue references for every task directory.
+Task identifiers in the paper abbreviate these (KC-52670 = keycloak-52670).
+The seven tasks reported in the paper: keycloak-52670, keycloak-52568,
+quarkus-51130, quarkus-33346, quarkus-53785, keycloak-51735, keycloak-52502.
+
+keycloak-47120     https://github.com/keycloak/keycloak/issues/47120
+keycloak-51735     https://github.com/keycloak/keycloak/issues/51735
+keycloak-52502     https://github.com/keycloak/keycloak/issues/52502
+keycloak-52568     https://github.com/keycloak/keycloak/issues/52568
+keycloak-52640     https://github.com/keycloak/keycloak/issues/52640
+keycloak-52642     https://github.com/keycloak/keycloak/issues/52642
+keycloak-52669     https://github.com/keycloak/keycloak/issues/52669
+keycloak-52670     https://github.com/keycloak/keycloak/issues/52670
+keycloak-52681     https://github.com/keycloak/keycloak/issues/52681
+keycloak-52706     https://github.com/keycloak/keycloak/issues/52706
+quarkus-33346      https://github.com/quarkusio/quarkus/issues/33346
+quarkus-51130      https://github.com/quarkusio/quarkus/issues/51130
+quarkus-53785      https://github.com/quarkusio/quarkus/issues/53785

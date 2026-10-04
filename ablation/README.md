@@ -8,6 +8,7 @@ covers every file in this folder.
 
 ## Layout
 
+- `TASKS.txt` — every task directory mapped to its upstream public issue URL.
 - `results.jsonl` — one record per (task, arm) run: gold hit, first-gold turn,
   turns, tokens, cost, CLI query count. Authoritative source for the section.
 - `FINAL-TABLE.txt` — the same records rendered as a table.
