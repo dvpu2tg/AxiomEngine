@@ -6,9 +6,18 @@ Quarkus, solved by the same model under different delivery conditions.
 Every number in the section regenerates from `results.jsonl`; `MANIFEST.sha256`
 covers every file in this folder.
 
+## Headline figure
+
+![First-contact turn and total turns per task, text search versus graph context injected](figures/ablation-arms.svg)
+
+Left: the turn at which the agent first touches a file the real fix changed;
+a colored x marks runs that never reached one. Right: total turns to finish.
+Regenerates from `results.jsonl`.
+
 ## Layout
 
 - `TASKS.txt` — every task directory mapped to its upstream public issue URL.
+- `figures/` — the rendered arms chart (SVG).
 - `results.jsonl` — one record per (task, arm) run: gold hit, first-gold turn,
   turns, tokens, cost, CLI query count. Authoritative source for the section.
 - `FINAL-TABLE.txt` — the same records rendered as a table.
